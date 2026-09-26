@@ -1,7 +1,5 @@
 import AppKit
 
-// SidePulse menu-bar app. An accessory app (no Dock icon; LSUIElement in the
-// bundle's Info.plist); everything else happens in AppDelegate.
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()

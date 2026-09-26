@@ -1,19 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse write [PROGRAM|-] [--device P] [--file-name NAME] [--dry-run] [--manual]`
-///
-/// 1. Program: the argument, all of stdin for `-`, or piped stdin when no argument
-///    is given (whitespace-only piped input counts as none). Escapes (`\n` `\r`
-///    `\t` `\\`) are decoded exactly once, then the program is validated
-///    (512 bytes / 20 lines).
-/// 2. Target: `--device`, else the single discovered SidePulse volume.
-/// 3. The app shows agent status on devices in Agent mode and would restore it at
-///    its next update: `--manual` switches the device to Manual first (and asks a
-///    running app to reload settings); otherwise a running app earns a warning.
-/// 4. Writes `LEDS.LED` in place (`LedWriter`).
-///
-/// Exit codes: 0 ok, 2 invalid program / no or ambiguous device, 1 write failure.
 enum WriteCommand: CLICommand {
     static let spec = CommandSpec(
         name: "write",
@@ -73,21 +60,17 @@ enum WriteCommand: CLICommand {
         return ExitCode.ok
     }
 
-    /// The raw (undecoded) program text, or nil when none was given.
     static func programText(_ argument: String?, stdin: StandardInput) -> String? {
         if argument == "-" { return String(decoding: stdin.readAll(), as: UTF8.self) }
         if let argument { return argument }
-        // Implicit stdin: only when something is actually piped in (never block on a
-        // terminal or on a pipe nobody writes to).
+        // Never block on a terminal or on a pipe nobody writes to.
         guard !stdin.isTTY, stdin.hasPendingData(0.25) else { return nil }
         let piped = String(decoding: stdin.readAll(), as: UTF8.self)
         return isBlankAfterDecoding(piped) ? nil : piped
     }
 
-    /// True when `raw` decodes (`LedText.decodeEscapes`) to whitespace only: every
-    /// character is whitespace or one of the escapes `\n`, `\r`, `\t`. Python strips
-    /// the implicit stdin program after decoding, so a piped literal `\n` is "no
-    /// program" too.
+    /// Python strips the implicit stdin program after decoding, so a piped literal `\n` counts as
+    /// no program too.
     static func isBlankAfterDecoding(_ raw: String) -> Bool {
         var characters = raw.makeIterator()
         while let character = characters.next() {
@@ -100,17 +83,14 @@ enum WriteCommand: CLICommand {
         return true
     }
 
-    /// Device id used in settings: the volume root path, as `DeviceCandidate.id`
-    /// spells it for the same volume. Only `.`/`..` segments are removed:
-    /// `standardizedFileURL` would also strip a leading `/private` from existing
-    /// paths, and settings would then be keyed differently from the runtime's.
+    /// Not `standardizedFileURL`, which strips a leading `/private` and would key settings
+    /// differently from `DeviceCandidate.id`.
     static func deviceID(forTarget target: URL) -> String {
         target.deletingLastPathComponent().standardized.path
     }
 
-    /// `--manual` handling and the "the app will restore agent status" warning.
-    /// Nothing happens for a volume that is not mounted: the write is about to fail,
-    /// and a Manual entry for it would only leave a phantom device in settings.
+    /// Skips unmounted volumes because the write is about to fail and a Manual entry would leave a
+    /// phantom device in settings.
     static func coordinateWithApp(target: URL, manual: Bool, dryRun: Bool, env: CLIEnvironment,
                                   volumeExists: (String) -> Bool = { ProviderSelection.directoryExists(URL(fileURLWithPath: $0)) }) {
         let id = deviceID(forTarget: target)
@@ -136,8 +116,8 @@ enum WriteCommand: CLICommand {
             env.stderr.line("\(prefix): could not switch \(name) to Manual: \(ErrorText.describe(error))")
             return
         }
-        // Make a running app pick the change up before we write. The app waits up to
-        // 2 s for an LED write that started with the old settings, so allow 3 s.
+        // The app waits up to 2 s for an LED write started with the old settings, so allow 3 s for
+        // the reload.
         let reply = env.app.request("reload-settings", JSONObject(), 3)
         env.stdout.line("Set \(name) (\(id)) to Manual: SidePulse will not overwrite it "
             + "(switch back under Devices in the menu bar).")

@@ -1,17 +1,11 @@
 import AppKit
 import SidePulseCore
 
-/// Template images for the status item and the session-row glyphs: the state's SF
-/// Symbol drawn aspect-fit at 15×15 in the centre of an 18×18 canvas, so static and
-/// animated frames always have the same size. Each image is rendered once into
-/// 1x and 2x bitmaps and cached (a state has at most `IconAnimation.frameCount`
-/// frames); template images follow the menu bar's appearance by themselves.
+/// Every image uses the same fixed canvas so static and animated frames always have the same size.
 @MainActor
 enum IconRenderer {
     private static var cache: [String: NSImage] = [:]
 
-    /// `frame` is an animation frame index (see `IconAnimation`); nil, or a state that
-    /// does not animate, gives the static image.
     static func image(for state: DisplayState, frame: Int? = nil) -> NSImage {
         let index = StatusBarPresentation.animates(state) ? frame.map { $0 % IconAnimation.frameCount } : nil
         let key = "\(state.rawValue):\(index ?? -1)"

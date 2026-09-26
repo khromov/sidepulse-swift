@@ -1,30 +1,9 @@
 import Foundation
 
-/// Marks our Codex hooks trusted by asking Codex for their hashes
-/// (`codex app-server --stdio` JSON-RPC: initialize → hooks/list) and writing
-/// `[hooks.state."<key>"]\ntrusted_hash = "<currentHash>"` tables.
-///
-/// Exchange observed with codex-cli 0.153.4 (one JSON object per line):
-/// ```
-/// → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"sidepulse","version":"…"},"capabilities":null}}
-/// ← {"id":1,"result":{"userAgent":"sidepulse/0.153.4 …","codexHome":"/Users/x/.codex","platformFamily":"unix","platformOs":"macos"}}
-/// → {"jsonrpc":"2.0","method":"initialized"}
-/// → {"jsonrpc":"2.0","id":2,"method":"hooks/list","params":{"cwds":["/Users/x"]}}
-/// ← {"method":"remoteControl/status/changed","params":{…}}          (notification, skipped)
-/// ← {"id":2,"result":{"data":[{"cwd":"/Users/x","hooks":[{"key":"/Users/x/.codex/config.toml:pre_tool_use:0:0",
-///     "eventName":"preToolUse","handlerType":"command","command":"… hook-log --provider codex ; true",
-///     "matcher":"*","timeoutSec":10,"sourcePath":"/Users/x/.codex/config.toml","source":"user",
-///     "currentHash":"sha256:…","trustStatus":"untrusted", …}],"warnings":[],"errors":[]}]}}
-/// ```
-/// After writing the tables the same request reports `"trustStatus":"trusted"`.
-/// Keys are `<sourcePath>:<snake_event>:<group>:<handler>`; the hash does not
-/// depend on the position. Codex resolves its home from `CODEX_HOME`, else
-/// `$HOME/.codex`, and lists nothing when `[features] hooks = false`.
+/// Codex runs a hook only once `[hooks.state."<key>"]` holds its current hash, which binds to the exact
+/// command string, so we ask `codex app-server --stdio` for it (`hooks/list`, as of codex-cli 0.153.4).
 public enum CodexTrust {
-    /// `$CODEX_CLI_PATH`, /Applications/ChatGPT.app/Contents/Resources/codex,
-    /// /Applications/Codex.app/Contents/Resources/codex, then `codex` on PATH and in
-    /// the usual install directories (`commonBinDirectories`), which matter when
-    /// the app runs under launchd's minimal PATH.
+    /// Also searches the usual install directories because the app runs under launchd's minimal PATH.
     public static func findCodexBinary(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         let fm = FileManager.default
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
@@ -42,23 +21,13 @@ public enum CodexTrust {
         }
     }
 
-    /// Returns hooks listed by Codex for `configFile` whose command satisfies
-    /// `HookCommand.isCurrentStyleCommand`, as key → currentHash. Timeout per
-    /// request (default 8 s). The child's HOME is inherited.
-    ///
-    /// - Parameter environment: the child's environment (default: this
-    ///   process's). Codex reads `CODEX_HOME`/`HOME` from it to find its config.
-    /// - Throws: `CodexTrustError` when Codex cannot be started, answers with an
-    ///   error, exits early or does not answer in time. The child is always
-    ///   stopped (stdin closed, then SIGTERM, then SIGKILL).
+    /// Codex finds its home through `CODEX_HOME`/`HOME` in `environment`, so that must agree with `configFile`.
     public static func fetchHashes(codexPath: String, configFile: URL, timeout: TimeInterval = 8,
                                    environment: [String: String]? = nil) throws -> [String: String] {
         let result = try listHooks(codexPath: codexPath, configFile: configFile, timeout: timeout, environment: environment)
         return hashes(fromHooksList: result, configFile: configFile)
     }
 
-    /// The raw `hooks/list` result (`{"data":[{"cwd","hooks":[…],"warnings","errors"}]}`)
-    /// for the home that contains `configFile`.
     public static func listHooks(codexPath: String, configFile: URL, timeout: TimeInterval = 8,
                                  environment: [String: String]? = nil) throws -> JSONValue {
         let cwd = configFile.deletingLastPathComponent().deletingLastPathComponent()
@@ -79,8 +48,6 @@ public enum CodexTrust {
         }
     }
 
-    /// ~/.local/bin, /opt/homebrew/bin, /usr/local/bin, ~/.bun/bin,
-    /// ~/.npm-global/bin, ~/.volta/bin and the newest ~/.nvm/versions/node/*/bin.
     static func commonBinDirectories(home: String) -> [String] {
         var dirs = [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin",
                     home + "/.bun/bin", home + "/.npm-global/bin", home + "/.volta/bin"]
@@ -92,7 +59,6 @@ public enum CodexTrust {
         return dirs
     }
 
-    /// Filters a `hooks/list` result down to our hooks from `configFile`.
     static func hashes(fromHooksList result: JSONValue, configFile: URL) -> [String: String] {
         guard case .array(let entries)? = result["data"] else { return [:] }
         let wanted = canonicalPath(configFile.path)
@@ -111,9 +77,6 @@ public enum CodexTrust {
         return out
     }
 
-    /// Pure text transform: ensure `[hooks.state]` exists, then for each key replace
-    /// or insert the `trusted_hash` line of `[hooks.state."<escaped key>"]`.
-    /// New tables are appended at the end, in Codex event order.
     public static func applyTrustedHashes(_ hashes: [String: String], to text: String) -> String {
         guard !hashes.isEmpty else { return text }
         var lines = TOMLLines(text).lines
@@ -140,8 +103,6 @@ public enum CodexTrust {
         return result == text ? text : result
     }
 
-    /// fetch + apply + atomic write. Returns number of hooks trusted.
-    /// A changed existing file is backed up first (`<file>.bak.<stamp>`).
     @discardableResult
     public static func refresh(configFile: URL, codexPath: String, timeout: TimeInterval = 8,
                                environment: [String: String]? = nil) throws -> Int {
@@ -155,8 +116,7 @@ public enum CodexTrust {
         var backup: URL?
     }
 
-    /// `refresh`, reporting whether the file changed. `backupAt` nil = no backup
-    /// (the caller already made one).
+    /// A nil `backupAt` skips the backup because the caller already made one this run.
     static func refreshConfig(configFile: URL, codexPath: String, timeout: TimeInterval,
                               environment: [String: String]?, backupAt: Date?) throws -> RefreshOutcome {
         let hashes = try fetchHashes(codexPath: codexPath, configFile: configFile, timeout: timeout, environment: environment)
@@ -171,13 +131,9 @@ public enum CodexTrust {
         return RefreshOutcome(trusted: hashes.count, changed: true, backup: backup)
     }
 
-    /// Environment for a Codex child that must see `paths.home` as its home:
-    /// this process's environment overlaid with `paths.environment` and
-    /// `HOME = paths.home`. An inherited `CODEX_HOME` is dropped unless
-    /// `paths.environment` sets it, so a scratch home never reaches the real
-    /// `~/.codex`. With `codexPath`, its directory (and its symlink target's) comes
-    /// first on PATH: an npm-installed `codex` is a `#!/usr/bin/env node` script and
-    /// node sits next to it, which launchd's minimal PATH does not include.
+    /// An inherited `CODEX_HOME` is dropped so a scratch home never reaches the real `~/.codex`.
+    /// `codexPath`'s directory goes first on PATH because an npm-installed `codex` runs `env node`,
+    /// and node sits next to it, outside launchd's minimal PATH.
     public static func childEnvironment(for paths: SidePulsePaths, codexPath: String? = nil,
                                         base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
         var env = base
@@ -192,14 +148,12 @@ public enum CodexTrust {
         return env
     }
 
-    /// `realpath(3)`, or the standardized path when the file does not exist.
     static func canonicalPath(_ path: String) -> String {
         guard let resolved = realpath(path, nil) else { return URL(fileURLWithPath: path).standardizedFileURL.path }
         defer { free(resolved) }
         return String(cString: resolved)
     }
 
-    /// Keys sorted by Codex event order, then group and handler index.
     static func orderedKeys<S: Sequence>(_ keys: S) -> [String] where S.Element == String {
         let order = Dictionary(uniqueKeysWithValues: HookProvider.codex.events.enumerated().map {
             (CodexHookInstaller.snakeCase($0.element), $0.offset)
@@ -233,8 +187,6 @@ public enum CodexTrustError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// A child process speaking newline-delimited JSON-RPC over stdin/stdout.
-/// Notifications and server requests are skipped while waiting for a response.
 final class JSONRPCChild: @unchecked Sendable {
     private let process = Process()
     private let input = Pipe()
@@ -245,7 +197,6 @@ final class JSONRPCChild: @unchecked Sendable {
     private var lines: [String] = []
     private var outputClosed = false
     private var stderrTail = Data()
-    /// Signalled once the child has exited (kept signalled; see `waitForExit`).
     private let exited = DispatchSemaphore(value: 0)
 
     init(executable: String, arguments: [String], environment: [String: String]?, directory: URL) throws {
@@ -318,8 +269,6 @@ final class JSONRPCChild: @unchecked Sendable {
         try send(.object(["jsonrpc": .string("2.0"), "method": .string(method)]))
     }
 
-    /// Sends a request and waits for the response with the same id.
-    /// Returns its `result`.
     func request(id: Int, method: String, params: JSONValue, timeout: TimeInterval) throws -> JSONValue {
         try send(.object(["jsonrpc": .string("2.0"), "id": JSONValue(id), "method": .string(method), "params": params]))
         let deadline = Date().addingTimeInterval(timeout)
@@ -340,7 +289,6 @@ final class JSONRPCChild: @unchecked Sendable {
         }
     }
 
-    /// The next stdout line, or nil at EOF / deadline.
     private func nextLine(deadline: Date) -> String? {
         condition.lock()
         defer { condition.unlock() }
@@ -358,8 +306,6 @@ final class JSONRPCChild: @unchecked Sendable {
         return text.split(separator: "\n").suffix(3).joined(separator: " | ").trimmingCharacters(in: .whitespaces)
     }
 
-    /// Closes stdin, then escalates SIGTERM → SIGKILL; waits until the child
-    /// has exited (Foundation reaps it).
     func stop() {
         try? input.fileHandleForWriting.close()
         if !waitForExit(0.5) {
@@ -372,7 +318,6 @@ final class JSONRPCChild: @unchecked Sendable {
         clearHandlers()
     }
 
-    /// Waits up to `seconds` for the child to exit, without spinning a run loop.
     private func waitForExit(_ seconds: TimeInterval) -> Bool {
         guard exited.wait(timeout: .now() + seconds) == .success else { return false }
         exited.signal()   // stay signalled for any later wait

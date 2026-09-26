@@ -1,12 +1,10 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Session-row selection, titles and detail text. Vectors ported from the Python
-/// tests `test_status_bar_*` in tests/test_sidepulse.py.
+/// Vectors ported from the Python `test_status_bar_*` tests in tests/test_sidepulse.py.
 final class PresentationSessionRowsTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
-    /// Resolver that never touches the filesystem: plain cwd basename.
     private let basename: SessionRows.ProjectResolver = { cwd in
         cwd.map { ($0 as NSString).lastPathComponent }
     }

@@ -1,28 +1,12 @@
 import Darwin
 import Foundation
 
-/// Socket protocol (Unix stream socket at `SidePulsePaths.socketPath`). One message
-/// per connection: the client writes one compact UTF-8 JSON object (≤1 MiB), then
-/// shuts down its write side (or closes). The server reads to EOF and optionally
-/// replies with bytes, then closes.
-///
-/// Messages:
-/// - Event (from hooks, no reply): `{"provider":"claude","line":{…record…}}`
-/// - Command: `{"command":"<name>", …args}` → reply
-///   - `ping` → `{"ok":true,"pid":123,"version":"0.1.0"}`
-///   - `status` → MonitorSnapshot JSON
-///   - `open-settings` → `ok`
-///   - `reload-settings` → `ok`, or `{"ok":false,"error":"LED write in progress"}`
-///     when a write that started with the old settings is still running
-///   - unknown → `{"ok":false,"error":"unknown command"}`
+/// One message per connection: the client shuts down its write side (or closes) after sending, because
+/// the server reads to EOF before it replies.
 public enum IPCMessage: Sendable, Equatable {
     case event(provider: String, line: JSONObject)
     case command(name: String, args: JSONObject)
 
-    /// nil for invalid JSON / unrecognized shapes.
-    ///
-    /// A string `command` key wins (its other keys become `args`); otherwise a
-    /// string `provider` plus an object `line` is an event.
     public static func parse(_ data: Data) -> IPCMessage? {
         guard !data.isEmpty, let value = try? JSONValue.parse(data), case .object(let object) = value else { return nil }
         if case .string(let name)? = object["command"] {
@@ -36,7 +20,6 @@ public enum IPCMessage: Sendable, Equatable {
         return nil
     }
 
-    /// Compact JSON bytes.
     public func encoded() -> Data {
         var object = JSONObject()
         switch self {
@@ -51,18 +34,14 @@ public enum IPCMessage: Sendable, Equatable {
     }
 }
 
-/// Standard reply bodies shared by the server and its handlers.
 public enum IPCReply {
-    /// `ok` (open-settings, reload-settings).
     public static let ok = Data("ok".utf8)
 
-    /// `{"ok":true,"pid":<pid>,"version":"<version>"}`.
     public static func ping(pid: pid_t = getpid(), version: String = SidePulseConstants.version) -> Data {
         let object: JSONObject = ["ok": .bool(true), "pid": JSONValue(Int(pid)), "version": .string(version)]
         return Data(JSONValue.object(object).serialized().utf8)
     }
 
-    /// `{"ok":false,"error":"<message>"}`.
     public static func error(_ message: String) -> Data {
         let object: JSONObject = ["ok": .bool(false), "error": .string(message)]
         return Data(JSONValue.object(object).serialized().utf8)
@@ -72,21 +51,15 @@ public enum IPCReply {
 }
 
 public enum EventSocketClient {
-    /// Largest reply `request` accepts.
     public static let maxReplyBytes = 8 << 20
 
-    /// Fire-and-forget event send (tests; the hook sends pre-encoded bytes with
-    /// `send`). Returns true if the whole message was written.
+    /// Only tests use this; the hook sends pre-encoded bytes with `send`.
     @discardableResult
     static func sendEvent(provider: String, line: JSONObject, socketPath: String,
                                  timeout: TimeInterval = SidePulseConstants.hookSendTimeout) -> Bool {
         send(IPCMessage.event(provider: provider, line: line).encoded(), socketPath: socketPath, timeout: timeout)
     }
 
-    /// Sends one pre-encoded message and closes, all within `timeout` (connect and
-    /// write share one deadline). false if it is larger than `maxEventBytes`, no
-    /// server listens, the socket file is not owned by the current user, or the
-    /// deadline passes.
     @discardableResult
     public static func send(_ message: Data, socketPath: String,
                             timeout: TimeInterval = SidePulseConstants.hookSendTimeout) -> Bool {
@@ -97,11 +70,7 @@ public enum EventSocketClient {
         return UnixSocket.writeAll(fd, message, deadline: deadline)
     }
 
-    /// Sends a command, shuts down the write side, reads the reply to EOF (≤ 8 MiB)
-    /// within `timeout`. nil if no server / timeout.
-    ///
-    /// Also nil for replies over `maxReplyBytes`. A server that closes without
-    /// replying yields empty data. `timeout` covers connect, send and reply.
+    /// A server that closes without replying yields empty data, not nil.
     public static func request(_ command: String, args: JSONObject = JSONObject(), socketPath: String,
                                timeout: TimeInterval = 2) -> Data? {
         let message = IPCMessage.command(name: command, args: args).encoded()
@@ -117,7 +86,6 @@ public enum EventSocketClient {
         return nil
     }
 
-    /// `ping` round-trip succeeded.
     public static func isServerRunning(socketPath: String, timeout: TimeInterval = 0.5) -> Bool {
         guard let reply = request("ping", socketPath: socketPath, timeout: timeout),
               let value = try? JSONValue.parse(reply) else { return false }
@@ -126,7 +94,6 @@ public enum EventSocketClient {
 }
 
 public enum EventSocketError: Error, Equatable, LocalizedError {
-    /// Another live server answered `ping` on this path.
     case alreadyRunning(String)
     case bindFailed(String)
 
@@ -138,31 +105,15 @@ public enum EventSocketError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Accept loop on a background thread; each connection is read with a 2 s timeout
-/// on a concurrent queue, so one slow client never blocks the accept loop. The
-/// handler is called on an internal serial queue, in ACCEPT order (a reorder
-/// buffer holds early finishers), and returns optional reply bytes. Ordering
-/// matters: a hook's PreToolUse connection is accepted before its PostToolUse
-/// connection, and applying them reversed would leave a row stuck on Tool Running.
-/// A message is held behind an unfinished earlier connection for at most
-/// `reorderGrace`, so a stalled client cannot delay everyone else.
-///
-/// If the handler returns nil for `ping`, the server answers with `IPCReply.ping()`
-/// itself, so `EventSocketClient.isServerRunning` always works. Messages over
-/// `maxMessageBytes`, invalid JSON and unknown shapes are dropped without calling
-/// the handler. The accept thread keeps the server alive until `stop()`.
+/// Connections are read concurrently but delivered in accept order, so a hook's PreToolUse is never applied
+/// after its PostToolUse; `reorderGrace` caps how long a stalled client can hold later messages back.
 public final class EventSocketServer: @unchecked Sendable {
     public let path: String
     // Tunables (internal: tests shorten them before `start()`).
-    /// Per-connection read deadline.
     var readTimeout: TimeInterval = 2
-    /// Deadline for writing a reply.
     let writeTimeout: TimeInterval = 2
-    /// Larger messages are dropped.
     let maxMessageBytes = SidePulseConstants.maxEventBytes
-    /// How long `start()` waits to connect to an existing socket file.
     var probeTimeout: TimeInterval = 1
-    /// Max time a finished message waits for an earlier, still-reading connection.
     var reorderGrace: TimeInterval = 0.25
 
     private let handler: @Sendable (IPCMessage) -> Data?
@@ -174,7 +125,6 @@ public final class EventSocketServer: @unchecked Sendable {
     private let connectionQueue = DispatchQueue(label: "sidepulse.events.connections", attributes: .concurrent)
     private let handlerQueue = DispatchQueue(label: "sidepulse.events.handler")
 
-    /// A connection whose read finished, waiting for its turn (handlerQueue only).
     private struct Completed {
         var message: IPCMessage?
         var fd: Int32
@@ -184,11 +134,9 @@ public final class EventSocketServer: @unchecked Sendable {
     private var deliveryCycle = -1
     private var nextDelivery = 0
     private var pendingDelivery: [Int: Completed] = [:]
-    /// Slots given up on after `reorderGrace`; delivered late when they finish.
     private var skippedDelivery = Set<Int>()
     private var releaseScheduled = false
 
-    /// State of one `start()`…`stop()` cycle.
     private struct Listening {
         var fd: Int32
         var wakeRead: Int32
@@ -205,24 +153,13 @@ public final class EventSocketServer: @unchecked Sendable {
 
     deinit { stop() }
 
-    /// True between a successful `start()` and `stop()`.
     public var isRunning: Bool {
         lock.lock(); defer { lock.unlock() }
         return listening != nil
     }
 
-    /// Creates the parent dir (0700). If a server already answers ping at `path`,
-    /// throws `.alreadyRunning` WITHOUT touching the socket file. Otherwise unlinks a
-    /// stale file, binds, chmod 0600, listens.
-    ///
-    /// "Answers" means accepts a connection within `probeTimeout`: a live instance
-    /// whose handler is busy (or hung) still owns the socket and must not be
-    /// displaced. Only a refused connection (nobody listening, e.g. after a crash)
-    /// or a file that is not our socket counts as stale. The parent directory must
-    /// belong to the current user (the `/tmp` fallback could be pre-created by
-    /// someone else), otherwise `.bindFailed`. Paths longer than `sun_path` allows
-    /// (103 bytes) throw `.bindFailed`. Calling `start()` on a running server does
-    /// nothing.
+    /// The parent directory must be ours because the `/tmp` fallback could have been pre-created by
+    /// another user.
     public func start() throws {
         lock.lock(); defer { lock.unlock() }
         guard listening == nil else { return }
@@ -300,13 +237,8 @@ public final class EventSocketServer: @unchecked Sendable {
         thread.start()
     }
 
-    /// Stops accepting and unlinks the socket file only if it is still ours (same inode).
-    ///
-    /// Messages that arrive after `stop()` never reach the handler, and a later
-    /// `start()` never receives work left over from this cycle. A message already
-    /// being dispatched when `stop()` is called may still be delivered once:
-    /// `stop()` does not wait for the handler, so calling it from inside the
-    /// handler (or while the handler waits on the caller) cannot deadlock.
+    /// Doesn't wait for the handler, so calling it from inside the handler cannot deadlock; a message
+    /// already being dispatched may still be delivered once.
     public func stop() {
         lock.lock()
         guard let state = listening else { lock.unlock(); return }
@@ -328,15 +260,14 @@ public final class EventSocketServer: @unchecked Sendable {
 
     // MARK: Internals
 
-    /// Some process accepts connections on `path`. A crashed server's leftover file
-    /// refuses the connection; any listener is alive, even if it never replies.
+    /// Connects instead of pinging, because a live instance whose handler is busy or hung must not be
+    /// displaced.
     private func anotherServerListens() -> Bool {
         guard let fd = UnixSocket.connect(path: path, deadline: SocketDeadline(after: probeTimeout)) else { return false }
         close(fd)
         return true
     }
 
-    /// The server is still in the `start()` cycle `cycle`.
     private func isServing(_ cycle: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return listening != nil && generation == cycle
@@ -403,7 +334,6 @@ public final class EventSocketServer: @unchecked Sendable {
         }
     }
 
-    /// Delivers consecutive finished slots. handlerQueue only.
     private func drainDeliveries(cycle: Int) {
         while let next = pendingDelivery.removeValue(forKey: nextDelivery) {
             nextDelivery += 1
@@ -411,7 +341,6 @@ public final class EventSocketServer: @unchecked Sendable {
         }
     }
 
-    /// While messages wait behind an unfinished slot, re-check after the grace period.
     private func scheduleRelease(cycle: Int) {
         guard !pendingDelivery.isEmpty, !releaseScheduled else { return }
         releaseScheduled = true
@@ -423,7 +352,6 @@ public final class EventSocketServer: @unchecked Sendable {
         }
     }
 
-    /// Skips unfinished slots in front of messages that waited at least `reorderGrace`.
     private func releaseStale(cycle: Int) {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let grace = UInt64(max(0, reorderGrace) * 1_000_000_000)
@@ -439,7 +367,6 @@ public final class EventSocketServer: @unchecked Sendable {
         drainDeliveries(cycle: cycle)
     }
 
-    /// Runs the handler for one message and sends its reply. handlerQueue only.
     private func dispatch(_ item: Completed, cycle: Int) {
         let fd = item.fd
         guard let message = item.message, isServing(cycle) else { close(fd); return }
@@ -456,7 +383,6 @@ public final class EventSocketServer: @unchecked Sendable {
 
 // MARK: - POSIX helpers
 
-/// Monotonic deadline for socket operations.
 struct SocketDeadline {
     private let end: UInt64
 
@@ -465,7 +391,6 @@ struct SocketDeadline {
         end = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) &+ UInt64(min(nanos, 1e18))
     }
 
-    /// Milliseconds left for `poll`, rounded up; 0 once passed.
     var remainingMilliseconds: Int32 {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         guard end > now else { return 0 }
@@ -496,7 +421,7 @@ enum UnixSocket {
         return address
     }
 
-    /// Close-on-exec (child processes must not inherit sockets), no SIGPIPE, non-blocking.
+    /// Close-on-exec because child processes must not inherit sockets.
     static func configure(_ fd: Int32) {
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
@@ -504,7 +429,6 @@ enum UnixSocket {
         _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
     }
 
-    /// `path` (after symlinks) is a socket owned by the effective user.
     static func isOwnSocket(_ path: String) -> Bool {
         var info = stat()
         return stat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFSOCK && info.st_uid == geteuid()
@@ -514,11 +438,8 @@ enum UnixSocket {
         "\(call): \(String(cString: strerror(errno)))"
     }
 
-    /// Non-blocking connect bounded by `deadline`. Returns a configured fd.
-    ///
-    /// Refuses (nil, without connecting) unless `path` is a socket owned by the
-    /// current user: records carry prompts, and the `/tmp` fallback directory
-    /// could have been pre-created by another local user.
+    /// Refuses sockets not owned by the current user because records carry prompts and the `/tmp`
+    /// fallback could have been pre-created by another user.
     static func connect(path: String, deadline: SocketDeadline) -> Int32? {
         guard isOwnSocket(path), var addr = address(path) else { return nil }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -539,8 +460,7 @@ enum UnixSocket {
         return nil
     }
 
-    /// Waits until `fd` is ready for `event` (or has an error/hangup the next call
-    /// will report). false on timeout.
+    /// Also returns true on error or hangup, leaving the next call to report it.
     static func wait(_ fd: Int32, for event: Int32, deadline: SocketDeadline) -> Bool {
         var descriptor = pollfd(fd: fd, events: Int16(event), revents: 0)
         while true {
@@ -572,7 +492,6 @@ enum UnixSocket {
         }
     }
 
-    /// Reads to EOF. `.tooLarge` as soon as more than `limit` bytes arrive.
     static func readAll(_ fd: Int32, limit: Int, deadline: SocketDeadline) -> ReadResult {
         var result = Data()
         var chunk = [UInt8](repeating: 0, count: 64 << 10)

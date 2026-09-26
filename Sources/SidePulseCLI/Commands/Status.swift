@@ -1,11 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse status [--json] [--all] [--offline]`: one-shot agent status.
-///
-/// Asks the running app (`status` socket command); when it does not answer, or
-/// with `--offline`, rebuilds the snapshot from the hook logs with the same
-/// state machine and the user's timeouts.
 enum StatusCommand: CLICommand {
     static let spec = CommandSpec(
         name: "status",
@@ -33,8 +28,6 @@ enum StatusCommand: CLICommand {
 }
 
 extension SnapshotLoader {
-    /// The app's snapshot unless `offline`, else (or when the app does not answer)
-    /// the one rebuilt from the logs.
     func load(_ env: CLIEnvironment, offline: Bool) -> (MonitorSnapshot, SnapshotOrigin) {
         if !offline, let snapshot = fromApp(env) { return (snapshot, .app) }
         return (fromLogs(env), offline ? .logsOffline : .logsAppNotRunning)

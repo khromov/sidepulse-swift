@@ -6,7 +6,6 @@ import XCTest
 private func at(_ seconds: TimeInterval) -> Date { Date(timeIntervalSinceReferenceDate: seconds) }
 
 final class PowerKeepAwakePolicyTests: XCTestCase {
-    /// Python test_keep_awake_holds_working_then_graces_done.
     func testWorkingHoldsThenDoneGraces() {
         var policy = KeepAwakePolicy(grace: 300)
         XCTAssertTrue(policy.agentsActive(mode: .working, now: at(100)))
@@ -17,7 +16,6 @@ final class PowerKeepAwakePolicyTests: XCTestCase {
         XCTAssertFalse(policy.agentsActive(mode: .idleReady, now: at(411)))
     }
 
-    /// Python test_keep_awake_ask_grace_expires_without_refresh_extension.
     func testAskGraceIsNotExtendedByRefreshes() {
         var policy = KeepAwakePolicy(grace: 300)
         XCTAssertTrue(policy.agentsActive(mode: .waitingForInput, now: at(100)))
@@ -77,7 +75,6 @@ final class PowerKeepAwakePolicyTests: XCTestCase {
         BatteryState(present: present, percent: percent, onACPower: plugged, charging: false)
     }
 
-    /// Python test_sleep_prevention_battery_safeguard_activates_only_on_battery.
     func testSafeguardActivatesOnlyOnBattery() {
         XCTAssertTrue(KeepAwakePolicy.safeguardActive(battery: battery(19, plugged: false), minBatteryPercent: 20))
         XCTAssertFalse(KeepAwakePolicy.safeguardActive(battery: battery(19, plugged: true), minBatteryPercent: 20))
@@ -125,7 +122,6 @@ final class PowerBatteryTests: XCTestCase {
         } else {
             XCTAssertNil(state.percent)
         }
-        // Stable across quick successive reads.
         XCTAssertEqual(BatteryState.read().present, state.present)
     }
 
@@ -177,7 +173,6 @@ final class PowerBatteryTests: XCTestCase {
 }
 
 final class PowerKeepAwakeAssertionTests: XCTestCase {
-    /// Our process's power assertions of type PreventUserIdleSystemSleep, by name.
     private func heldAssertionNames() -> [String] {
         var byProcess: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&byProcess) == kIOReturnSuccess,

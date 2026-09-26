@@ -1,7 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Ports of the collector state-machine tests in tests/test_sidepulse.py.
 final class StatusEngineTests: XCTestCase {
     private let t0 = TimeFormat.parse("2026-09-20T10:00:00Z")!
 
@@ -9,14 +8,12 @@ final class StatusEngineTests: XCTestCase {
         .string(TimeFormat.pythonISO(t0.addingTimeInterval(offset)))
     }
 
-    /// A Codex-style wrapped line.
     private func codexLine(_ event: String, at offset: TimeInterval, _ fields: JSONObject = [:]) -> JSONObject {
         var inner: JSONObject = ["hook_event_name": .string(event)]
         for (key, value) in fields { inner[key] = value }
         return ["logged_at": stamp(offset), "event": .object(inner)]
     }
 
-    /// A flat (Claude-style) line.
     private func claudeLine(_ event: String, at offset: TimeInterval, _ fields: JSONObject = [:]) -> JSONObject {
         var line: JSONObject = ["logged_at": stamp(offset), "hook_event_name": .string(event)]
         for (key, value) in fields { line[key] = value }
@@ -28,8 +25,8 @@ final class StatusEngineTests: XCTestCase {
     // MARK: Aggregation and snapshot rules
 
     func testAggregatesHighestPriorityStatus() {
-        // Python's version uses an idle_prompt, which is ignored without a row here
-        // (testIdlePromptWithoutHistoryIsIgnored); a permission prompt still asks.
+        // Python's version uses an idle_prompt, which is ignored here without a row, so
+        // this uses a permission prompt.
         let engine = StatusEngine(config: MonitorConfig(staleAfter: 999_999_999))
         engine.ingest(provider: "codex", line: codexLine("PreToolUse", at: 0, ["session_id": .string("codex-session"), "tool_name": .string("Bash")]))
         engine.ingest(provider: "claude", line: claudeLine("Notification", at: 1, [
@@ -111,8 +108,7 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(snapshot.staleStatuses.first?.mode, .completed)
     }
 
-    /// Regression: Claude sends idle_prompt about a minute after SessionStart too; a
-    /// session nobody has typed into must not show Ask for the idle timeout.
+    /// Regression: Claude also sends idle_prompt about a minute after SessionStart.
     func testIdlePromptDoesNotTurnFreshSessionIntoAsk() {
         let engine = StatusEngine()
         let idlePrompt: JSONObject = [
@@ -133,8 +129,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     func testSettledPostToolUseRowIsStillWorkingForTransitionRules() {
-        // The PostToolUse row only settles to Completed in the snapshot; the stored
-        // row is Working, so a later Notification still applies.
+        // The row settles to Completed only in the snapshot, so a later Notification still applies.
         let engine = StatusEngine()
         engine.ingest(provider: "claude", line: claudeLine("PostToolUse", at: 0, ["session_id": .string("s"), "tool_name": .string("Read")]))
         XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(121)).aggregate.mode, .completed)
@@ -238,8 +233,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     /// Regression (real log): an approved command that exits non-zero logs
-    /// PostToolUseFailure, not PostToolUse; the row stayed on Ask for the rest of
-    /// the turn while the agent kept working.
+    /// PostToolUseFailure, not PostToolUse, and the row stayed on Ask.
     func testFailedApprovedCommandReleasesPermission() {
         let engine = StatusEngine()
         let session: JSONObject = ["session_id": .string("s"), "tool_name": .string("Bash")]
@@ -261,9 +255,8 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(5)).aggregate.mode, .toolRunning)
     }
 
-    /// Regression (real log): a subagent's own SubagentStop was ignored behind its
-    /// sticky prompt, and the turn-ending events never carry its agent_id, so the
-    /// row showed Ask for the whole idle timeout.
+    /// Regression (real log): turn-ending events never carry a subagent's agent_id, so
+    /// ignoring its own SubagentStop left the row on Ask.
     func testSubagentStopReleasesItsPermission() {
         let engine = StatusEngine()
         let agent: JSONObject = ["session_id": .string("s"), "agent_id": .string("a49ad5bb06ef208c9"),
@@ -321,8 +314,8 @@ final class StatusEngineTests: XCTestCase {
 
     // MARK: Orphaned subagents
 
-    /// Regression (real log): Claude quit mid-tool; the subagent never got a
-    /// SubagentStop, so its row stayed Tool Running (LEDs and keep-awake) for an hour.
+    /// Regression (real log): Claude quit mid-tool and the subagent, never getting a
+    /// SubagentStop, stayed Tool Running for an hour.
     func testSessionEndCompletesTheSessionsActiveSubagents() throws {
         let engine = StatusEngine()
         func sub(_ event: String, _ agent: String, at offset: TimeInterval, session: String = "s", provider: String = "claude",
@@ -594,7 +587,6 @@ final class StatusEngineTests: XCTestCase {
         tie.load([status(.working, "PreToolUse", -5)])
         XCTAssertTrue(tie.reconcile(with: [status(.completed, "Stop", -5)]))
 
-        // New keys are added.
         let empty = StatusEngine()
         XCTAssertTrue(empty.reconcile(with: [status(.working, "UserPromptSubmit", -10)]))
         XCTAssertEqual(empty.statuses.count, 1)
@@ -632,8 +624,7 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(restarted.statuses[key]?.displayName, "demo-app: Ship the release notes (abcdef12)")
         XCTAssertEqual(restarted.statuses["claude:agent:feedface00"]?.displayName, "demo-app: Ship the release notes (agent feedface)")
 
-        // A newer recovered row (events missed while the app was down) is taken, with
-        // the known label.
+        // A newer recovered row is taken but keeps the known label.
         scan.ingest(provider: "claude", line: line("UserPromptSubmit", 20, prompt: "one more thing"))
         scan.ingest(provider: "claude", line: line("Stop", 30))
         XCTAssertTrue(restarted.reconcile(with: Array(scan.statuses.values)))
@@ -653,8 +644,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     /// Regression: a log scan whose tail window missed a session's Stop took the
-    /// idle_prompt that followed as Ask (restart recovery, `status --offline`).
-    /// Without a row, idle_prompt is ignored; other Notifications still create one.
+    /// idle_prompt that followed as Ask.
     func testIdlePromptWithoutHistoryIsIgnored() {
         let engine = StatusEngine()
         XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("Notification", at: 60, [
@@ -669,8 +659,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     func testReconcilePrefersCodexIndexTitleOverRestoredTitle() {
-        // A Codex thread renamed while the app was down: the index title wins over
-        // the title restored from latest.json, as it does for live events.
+        // A Codex thread renamed while the app was down.
         let session = "cccccccc-dddd-7eee-8fff-aaaaaaaaaaaa"
         let titles = [session: "Renamed thread"]
         func agentRow(_ name: String) -> AgentStatus {

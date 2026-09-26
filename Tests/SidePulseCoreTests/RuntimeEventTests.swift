@@ -2,8 +2,6 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Events and commands over the real event socket drive the runtime and the fake
-/// devices' LEDS.LED.
 final class RuntimeEventTests: XCTestCase {
     private var world: RuntimeWorld!
 
@@ -31,7 +29,6 @@ final class RuntimeEventTests: XCTestCase {
         world.updateSettings { $0.setBrightness(128, forDevice: world.deviceID("SidePulsePro")) }
         let runtime = try world.startRuntime()
 
-        // Startup: nothing is going on, so both show Idle.
         waitForProgram("PulseDot", RuntimePrograms.expected(.idleReady, ledCount: 2))
         waitForProgram("SidePulsePro", RuntimePrograms.expected(.idleReady, ledCount: 8, brightness: 128))
 
@@ -56,7 +53,6 @@ final class RuntimeEventTests: XCTestCase {
         XCTAssertEqual(runtime.snapshot().aggregate.mode, .completed)
         XCTAssertEqual(runtime.snapshot().statuses.first?.agentID, "claude:session:s1")
 
-        // Custom animations from settings apply per state.
         runtime.updateSettings { $0.setAnimation("kitt", for: .working) }
         XCTAssertTrue(world.send(RuntimeRecords.prompt("s2")))
         waitForProgram("PulseDot", RuntimePrograms.program("kitt", ledCount: 2))
@@ -74,8 +70,6 @@ final class RuntimeEventTests: XCTestCase {
         XCTAssertEqual(runtime.snapshot().aggregate.mode, .working)
     }
 
-    /// 200 events in a burst over the socket: LED syncs coalesce, and the device
-    /// ends on the final state.
     func testBurstOf200SocketEventsEndsInTheFinalMode() throws {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
@@ -91,8 +85,7 @@ final class RuntimeEventTests: XCTestCase {
             }
         }
         for line in burst { XCTAssertTrue(world.send(line)) }
-        // Hooks are separate connections, so their order is only guaranteed once
-        // each was handled; the final Stop goes last.
+        // Each hook is its own connection, so wait for all of them before sending the final Stop.
         XCTAssertTrue(runtimeWait(timeout: 10) { runtime.ingestedEventCount == 199 })
         XCTAssertTrue(world.send(RuntimeRecords.stop()))
         waitForProgram("PulseDot", RuntimePrograms.expected(.completed, ledCount: 2), timeout: 5)
@@ -103,8 +96,6 @@ final class RuntimeEventTests: XCTestCase {
         XCTAssertLessThanOrEqual(runtime.leds.syncPassCount - passesBefore, 201)
     }
 
-    /// Ordered ingestion from another thread while LED writes are in flight: every
-    /// request after the last write is honoured, so the final mode always lands.
     func testRapidIngestWhileSyncsAreInFlightEndsInTheFinalMode() throws {
         world.addDevice("PulseDot")
         let runtime = try world.startRuntime(world.options(serveSocket: false))

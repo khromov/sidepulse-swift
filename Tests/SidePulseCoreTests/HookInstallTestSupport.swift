@@ -2,8 +2,7 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// A throwaway home + SIDEPULSE_HOME under the temp directory. Never touches the
-/// real ~/.claude, ~/.codex or ~/Library.
+/// Never touches the real ~/.claude, ~/.codex or ~/Library.
 final class HookInstallSandbox {
     let root: URL
     let home: URL
@@ -29,15 +28,13 @@ final class HookInstallSandbox {
         String(decoding: try Data(contentsOf: url), as: UTF8.self)
     }
 
-    /// Backup files next to `url`.
     func backups(of url: URL) -> [URL] {
         let dir = url.deletingLastPathComponent()
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.filter { $0.hasPrefix(url.lastPathComponent + ".bak.") }.sorted().map { dir.appendingPathComponent($0) }
     }
 
-    /// An executable `SidePulse.app/Contents/Helpers/sidepulse` in the sandbox (a
-    /// CLI path the doctor accepts); returns its path.
+    /// Lives in an app bundle so the doctor accepts it as the SidePulse CLI.
     func makeBundledCLI() throws -> String {
         let cli = root.appendingPathComponent("SidePulse.app/Contents/Helpers/sidepulse")
         try write("#!/bin/sh\n", to: cli)
@@ -45,8 +42,7 @@ final class HookInstallSandbox {
         return cli.path
     }
 
-    /// Adds a `trusted_hash` for the SidePulse hook of each `events` (the first
-    /// group of each event) to the Codex config, as `CodexTrust.refresh` would.
+    /// Mimics `CodexTrust.refresh`, assuming our hook is the first group of each event.
     func trustCodexHooks(_ events: [String] = HookProvider.codex.events) throws {
         let config = paths.codexConfigFile
         var hashes: [String: String] = [:]
@@ -66,7 +62,6 @@ enum HookInstallTestData {
     static var claudeCommand: String { HookCommand.command(cliPath: cli, provider: .claude) }
     static var codexCommand: String { HookCommand.command(cliPath: cli, provider: .codex) }
 
-    /// Every handler command in a Claude settings document, per event.
     static func claudeCommands(_ text: String) throws -> [String: [String]] {
         guard case .object(let hooks)? = try JSONValue.parse(text)["hooks"] else { return [:] }
         var out: [String: [String]] = [:]

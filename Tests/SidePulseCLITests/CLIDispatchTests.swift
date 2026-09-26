@@ -96,16 +96,13 @@ final class CLIDispatchTests: XCTestCase {
         let harness = CLIHarness()
         XCTAssertEqual(harness.run(["write"]), 2)
         XCTAssertEqual(harness.stderr.text, "sidepulse write: Provide an LED program (as an argument, '-' or on stdin).\n")
-        // leds --device without --once.
         let leds = CLIHarness()
         XCTAssertEqual(leds.run(["leds", "--device", "/Volumes/PulseDot"]), 2)
         XCTAssertTrue(leds.stderr.text.hasPrefix("usage: sidepulse leds"))
         XCTAssertTrue(leds.stderr.text.contains("--device requires --once"))
-        // live with a bad interval.
         let live = CLIHarness()
         XCTAssertEqual(live.run(["live", "--interval", "0"]), 2)
         XCTAssertTrue(live.stderr.text.contains("argument --interval: must be greater than 0"))
-        // app --foreground with a non-start action.
         let app = CLIHarness()
         XCTAssertEqual(app.run(["app", "stop", "--foreground"]), 2)
         XCTAssertTrue(app.stderr.text.contains("--foreground can only be combined with start"))

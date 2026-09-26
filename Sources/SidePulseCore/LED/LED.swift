@@ -1,19 +1,12 @@
 import Foundation
 
 public enum LedError: Error, LocalizedError, Equatable {
-    /// "No SidePulse Pro or SidePulse Dot device found. Mount the device, or pass --device /path/to/SidePulseDot."
     case noDevice
-    /// "Multiple possible devices found. Pass --device with one of:\n  <root>\n  <root>"
     case multipleDevices([String])
-    /// Validation message, e.g. "LED program is empty." /
-    /// "LED program is 513 bytes; max is 512." / "LED program has 21 lines; max is 20."
     case invalidProgram(String)
-    /// Underlying write/read failure description.
     case writeFailed(String)
-    /// open() was refused (EPERM/EACCES), e.g. by the macOS privacy permission for
-    /// removable volumes. Same text as `writeFailed`.
+    /// open() was refused (EPERM/EACCES), typically by the macOS removable-volume privacy permission.
     case accessDenied(String)
-    /// "Unknown animation: <id>"
     case unknownAnimation(String)
 
     public var errorDescription: String? {
@@ -28,17 +21,12 @@ public enum LedError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Program text helpers (spec led-device §4-5).
 public enum LedText {
     public static let maxBytes = 512
     public static let maxLines = 20
 
-    /// `\n` `\r` `\t` `\\` → LF CR TAB backslash; any other backslash is kept literally.
-    /// Decode exactly once at the input boundary (CLI arg / stdin).
-    ///
-    /// Works on Unicode scalars (like Python code points), so a backslash followed
-    /// by a combining mark is still seen as a backslash. A lone trailing backslash
-    /// is kept.
+    /// Decode exactly once at the input boundary; it scans Unicode scalars (like Python code
+    /// points) so a backslash before a combining mark still counts.
     public static func decodeEscapes(_ text: String) -> String {
         let scalars = Array(text.unicodeScalars)
         var output = String.UnicodeScalarView()
@@ -61,9 +49,7 @@ public enum LedText {
         return String(output)
     }
 
-    /// Splits `text` into lines like Python `str.splitlines()` for the common
-    /// separators (`\n`, `\r\n`, `\r`). Separators are not included, a trailing
-    /// separator does not add an empty line, and "" gives [].
+    /// Matches Python `str.splitlines()` for the common separators (`\n`, `\r\n`, `\r`).
     public static func splitLines(_ text: String) -> [String] {
         let scalars = Array(text.unicodeScalars)
         var lines: [String] = []
@@ -86,14 +72,11 @@ public enum LedText {
         return lines
     }
 
-    /// Lines as Python `splitlines` for the common separators (\n, \r\n, \r); a
-    /// trailing newline does not add a line; "" → 0.
     public static func lineCount(_ text: String) -> Int {
         splitLines(text).count
     }
 
-    /// Throws `.invalidProgram` for "" (empty), > 512 UTF-8 bytes, or > 20 lines
-    /// (`max(lineCount, 1)`). The host does not check DSL syntax.
+    /// The host checks only size limits, never DSL syntax.
     public static func validate(_ program: String) throws {
         guard !program.isEmpty else {
             throw LedError.invalidProgram("LED program is empty.")
@@ -109,46 +92,32 @@ public enum LedText {
     }
 }
 
-/// A mounted SidePulse volume.
 public struct DeviceCandidate: Sendable, Equatable, Hashable {
-    /// Volume root, e.g. /Volumes/PulseDot.
     public var root: URL
-    /// root/LEDS.LED
     public var target: URL
-    /// "contains LEDS.LED" or "name matches device".
     public var reason: String
 
     public init(root: URL, target: URL, reason: String) {
         self.root = root; self.target = target; self.reason = reason
     }
 
-    /// Stable device id = the root path (e.g. "/Volumes/PulseDot").
     public var id: String { root.path }
-    /// 2 for Dot/PulseDot names, else 8.
     public var ledCount: Int { DeviceDiscovery.ledCount(forTarget: target) }
-    /// "SidePulse Dot" / "SidePulse Pro" / raw volume name.
     public var displayName: String { DeviceDiscovery.displayName(forVolumeName: root.lastPathComponent) }
 }
 
-/// Device discovery (spec led-device §2-3, §7).
 public enum DeviceDiscovery {
     public static let fileName = "LEDS.LED"
     public static let nameHints = ["sidepulsepro", "sidepulsedot", "pulsedot"]
 
-    /// Volume children that are never devices (the boot volume link and Time Machine).
     static let ignoredVolumeNames: Set<String> = [".timemachine", "Macintosh HD"]
 
-    /// Normalized-name hint → LED count, checked in order (Python `DEVICE_LED_COUNTS`).
     static let ledCountHints: [(hint: String, count: Int)] = [
         ("sidepulsedot", 2),
         ("pulsedot", 2),
         ("sidepulsepro", 8),
     ]
 
-    /// `SIDEPULSE_MOUNT_ROOTS` (colon-separated; set-but-empty = no roots) else [/Volumes].
-    ///
-    /// Blank entries are skipped and `~` is expanded (using the environment's `HOME`
-    /// when present).
     public static func mountRoots(environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
         guard let configured = environment["SIDEPULSE_MOUNT_ROOTS"] else {
             return [URL(fileURLWithPath: "/Volumes", isDirectory: true)]
@@ -160,18 +129,12 @@ public enum DeviceDiscovery {
             .map { URL(fileURLWithPath: expandTilde($0, home: environment["HOME"]), isDirectory: true) }
     }
 
-    /// Children of each root (skip `.timemachine`, `Macintosh HD`, non-local
-    /// mounts, non-directories, errors), sorted by lowercased name, deduped by path.
-    /// Candidate if `<child>/LEDS.LED` exists or the name matches a hint.
-    ///
-    /// Directory checks follow symlinks. Unreadable roots count as empty. Network
-    /// filesystems (SMB, AFP, NFS…) mounted under a root are skipped without being
-    /// looked at: a stat on a dead one blocks until its client gives up.
+    /// Network mounts under a root are skipped unexamined because a stat on a dead one blocks until
+    /// its client gives up.
     public static func discover(roots: [URL]? = nil, fileName: String = DeviceDiscovery.fileName) -> [DeviceCandidate] {
         discover(roots: roots, fileName: fileName, skipping: nonLocalMountPoints())
     }
 
-    /// `discover` that skips the children whose path is in `skipped` (tests).
     static func discover(roots: [URL]?, fileName: String, skipping skipped: Set<String>) -> [DeviceCandidate] {
         let fm = FileManager.default
         var seen = Set<String>()
@@ -199,8 +162,7 @@ public enum DeviceDiscovery {
         return candidates
     }
 
-    /// Mount points of non-local filesystems, from the kernel's mount table
-    /// (`getfsstat` with MNT_NOWAIT never contacts the filesystems themselves).
+    /// `MNT_NOWAIT` reads the kernel's mount table without contacting the filesystems themselves.
     static func nonLocalMountPoints() -> Set<String> {
         let capacity = Int(getfsstat(nil, 0, MNT_NOWAIT)) + 8
         guard capacity > 8 else { return [] }
@@ -216,19 +178,13 @@ public enum DeviceDiscovery {
         return points
     }
 
-    /// Lowercase, keep alphanumerics, substring-match any hint.
     public static func isDeviceName(_ name: String) -> Bool {
         let normalized = normalizedName(name)
         return nameHints.contains { contains(normalized, hint: $0) }
     }
 
-    /// Lowercased name with everything but letters and digits removed
-    /// ("SidePulse Dot 1" → "sidepulsedot1"). Used for all name matching.
-    ///
-    /// Filters Unicode scalars like Python's per-code-point `str.isalnum()`
-    /// (letters = categories L*, digits = any numeric type), so a combining mark is
-    /// dropped instead of hiding the letter it is attached to ("Pulse Dot\u{301}"
-    /// still matches).
+    /// Filters Unicode scalars like Python's per-code-point `str.isalnum()`, so a combining mark is
+    /// dropped instead of hiding the letter it is attached to.
     public static func normalizedName(_ name: String) -> String {
         var scalars = String.UnicodeScalarView()
         for scalar in name.lowercased().unicodeScalars where isAlphanumeric(scalar) {
@@ -237,10 +193,8 @@ public enum DeviceDiscovery {
         return String(scalars)
     }
 
-    /// Python `hint in normalized`: a code-point substring test. Searching the
-    /// UTF-8 bytes keeps it exact (an ASCII hint can never match inside a
-    /// multi-byte sequence), unlike `Character` comparison, where a trailing
-    /// grapheme extender would hide the hint's last letter.
+    /// Compares UTF-8 bytes because `Character` comparison would let a trailing grapheme extender
+    /// hide the hint's last letter.
     static func contains(_ normalized: String, hint: String) -> Bool {
         let haystack = Array(normalized.utf8)
         let needle = Array(hint.utf8)
@@ -250,8 +204,7 @@ public enum DeviceDiscovery {
         }
     }
 
-    /// Python `str.isalnum()` for one code point: `isalpha()` (general category
-    /// Lu, Ll, Lt, Lm or Lo) or `isnumeric()` (any Unicode numeric type).
+    /// Python `str.isalnum()` for one code point.
     private static func isAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
         case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter:
@@ -261,15 +214,11 @@ public enum DeviceDiscovery {
         }
     }
 
-    /// Normalized parent dir name: contains "sidepulsedot"/"pulsedot" → 2,
-    /// "sidepulsepro" → 8, default 8.
     public static func ledCount(forTarget target: URL) -> Int {
         let name = normalizedName(target.deletingLastPathComponent().lastPathComponent)
         return ledCountHints.first { contains(name, hint: $0.hint) }?.count ?? 8
     }
 
-    /// Normalized name containing sidepulsedot/pulsedot → "SidePulse Dot",
-    /// sidepulsepro → "SidePulse Pro", else the raw name (or "SidePulse Device" if empty).
     public static func displayName(forVolumeName name: String) -> String {
         let normalized = normalizedName(name)
         if contains(normalized, hint: "sidepulsedot") || contains(normalized, hint: "pulsedot") { return "SidePulse Dot" }
@@ -277,10 +226,6 @@ public enum DeviceDiscovery {
         return name.isEmpty ? "SidePulse Device" : name
     }
 
-    /// Explicit `devicePath` (tilde-expanded): if its last component uppercased is
-    /// LEDS.LED it is the target, else `path/fileName`. Otherwise discover: 0 →
-    /// `.noDevice`, >1 → `.multipleDevices(roots)`, 1 → its target (with fileName).
-    ///
     /// No existence check is made for an explicit path; the write reports it.
     public static func resolveTarget(devicePath: String?, fileName: String = DeviceDiscovery.fileName,
                                      roots: [URL]? = nil) throws -> URL {
@@ -293,9 +238,6 @@ public enum DeviceDiscovery {
         return candidates[0].target
     }
 
-    /// Python `target_from_device_path`: a path whose last component is `LEDS.LED`
-    /// (any case) is already the target; anything else is a folder and gets
-    /// `fileName` appended.
     public static func target(forDevicePath path: URL, fileName: String = DeviceDiscovery.fileName) -> URL {
         if path.lastPathComponent.uppercased() == DeviceDiscovery.fileName.uppercased() {
             return path
@@ -303,14 +245,12 @@ public enum DeviceDiscovery {
         return path.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    /// Follows symlinks, like Python `Path.is_dir()`; errors count as "not a directory".
+    /// Follows symlinks, like Python `Path.is_dir()`.
     private static func isDirectory(_ url: URL) -> Bool {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
     }
 
-    /// `~` / `~/x` expansion. Uses `home` when given, else Foundation's rules
-    /// (which also handle `~user`).
     static func expandTilde(_ path: String, home: String? = nil) -> String {
         if let home, !home.isEmpty, path == "~" || path.hasPrefix("~/") {
             return home + path.dropFirst()
@@ -319,18 +259,11 @@ public enum DeviceDiscovery {
     }
 }
 
-/// Writes to the device (spec led-device §6). NOT atomic on purpose: the firmware
-/// watches the LEDS.LED directory entry. open(O_WRONLY|O_CREAT) → truncate →
-/// write → fsync (errors ignored) → close; fsync the parent dir when the file was
-/// new. Never creates the parent directory (a missing volume must fail).
+/// Writes in place, not atomically, because the firmware watches the LEDS.LED directory entry, and
+/// never creates the parent directory so a missing volume fails.
 public enum LedWriter {
-    /// Validates then writes the program exactly as given (no trailing newline added).
-    ///
-    /// `shouldWrite` is asked once the file is open, right before it is changed:
-    /// open() can wait a long time (a macOS permission prompt, a slow card) and the
-    /// caller may no longer want the write by then. If it says no, the file is
-    /// closed untouched and false is returned. An open() refused with EPERM or
-    /// EACCES throws `.accessDenied`.
+    /// `shouldWrite` is asked after open() and before truncating, because open() can block on a
+    /// macOS permission prompt or a slow card and the caller may no longer want the write.
     @discardableResult
     public static func write(_ program: String, to target: URL, shouldWrite: () -> Bool = { true }) throws -> Bool {
         try LedText.validate(program)
@@ -368,15 +301,14 @@ public enum LedWriter {
                 throw failure
             }
             if written == 0 {
-                // A regular file never accepts zero bytes of a non-empty write;
-                // bail out instead of spinning on a misbehaving mount.
+                // Bail out instead of spinning on a misbehaving mount that accepts zero bytes.
                 close(fd)
                 throw LedError.writeFailed("Could not write \(path): no bytes were written")
             }
             offset += written
         }
-        // Best effort: the bytes are with the OS once the file is closed, so a
-        // filesystem that refuses to sync must not fail the write.
+        // The bytes are with the OS once the file is closed, so a filesystem that refuses to sync
+        // must not fail the write.
         _ = fsync(fd)
         if close(fd) != 0 && errno != EINTR {
             throw posixFailure("Could not write", path)
@@ -387,12 +319,10 @@ public enum LedWriter {
         return true
     }
 
-    /// Current content (UTF-8, lossy) or nil.
     public static func read(_ target: URL) -> String? {
         FileUtil.readText(target)
     }
 
-    /// Flushes a new file's directory entry. Errors are ignored.
     private static func syncDirectory(_ directory: URL) {
         let fd = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return }
@@ -409,14 +339,10 @@ public enum LedWriter {
     }
 }
 
-/// Touches `<volume>/keepalive` at most once per `interval` per path, on a
-/// background queue (a hung FAT mount must not block the caller). Thread-safe.
-///
-/// This keeps a MacBook SD reader from powering off a SidePulse Pro after about
-/// three idle minutes. At most one touch per path is in flight: a touch stuck on
-/// a hung mount never piles up further threads for that path.
+/// Keeps a MacBook SD reader from powering off a SidePulse Pro after about three idle minutes.
+/// Touches run in the background with at most one in flight per path, so a hung FAT mount neither
+/// blocks the caller nor piles up threads.
 public final class KeepaliveToucher: @unchecked Sendable {
-    /// Name of the file touched at the volume root.
     public static let fileName = "keepalive"
     /// Targets that sit at the volume root, so their sibling is touched.
     static let volumeFileNames: Set<String> = [DeviceDiscovery.fileName.uppercased(), "KEEPALIVE", "STATUS.TXT"]
@@ -435,14 +361,11 @@ public final class KeepaliveToucher: @unchecked Sendable {
         self.init(interval: interval, touch: { try KeepaliveToucher.touchFile($0) })
     }
 
-    /// - Parameter touch: performs one touch (tests inject a recorder). Runs on a
-    ///   background queue.
     public init(interval: TimeInterval = 60, touch: @escaping @Sendable (URL) throws -> Void) {
         self.interval = interval
         self.touch = touch
     }
 
-    /// For LEDS.LED/KEEPALIVE/STATUS.TXT targets → sibling `keepalive`, else `target/keepalive`.
     public static func keepaliveFile(for target: URL) -> URL {
         if volumeFileNames.contains(target.lastPathComponent.uppercased()) {
             return target.deletingLastPathComponent().appendingPathComponent(fileName, isDirectory: false)
@@ -450,10 +373,8 @@ public final class KeepaliveToucher: @unchecked Sendable {
         return target.appendingPathComponent(fileName, isDirectory: false)
     }
 
-    /// Returns the files whose touch was scheduled now (rate limit recorded before
-    /// the attempt, so failures also wait `interval`).
-    ///
-    /// A `now` earlier than the last touch (wall clock moved back) does not block.
+    /// The rate limit is recorded before the attempt so failures also wait `interval`, and a wall
+    /// clock that moved back does not block.
     @discardableResult
     public func poke(targets: [URL], now: Date = Date()) -> [URL] {
         var scheduled: [URL] = []
@@ -486,28 +407,22 @@ public final class KeepaliveToucher: @unchecked Sendable {
         return scheduled
     }
 
-    /// Error of the most recently finished touch, nil after a success.
     public var lastError: String? {
         lock.lock(); defer { lock.unlock() }
         return storedLastError
     }
 
-    /// Keepalive files whose touch has been running for more than `seconds` (a hung
-    /// mount, or open() waiting on a macOS permission prompt).
     func stalledFiles(after seconds: TimeInterval) -> Set<String> {
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock(); defer { lock.unlock() }
         return Set(inFlight.filter { now - $0.value > seconds }.keys)
     }
 
-    /// Blocks until scheduled touches finish or `timeout` passes. Returns false on timeout.
     @discardableResult
     public func waitForPendingTouches(timeout: TimeInterval = 5) -> Bool {
         group.wait(timeout: .now() + timeout) == .success
     }
 
-    /// Like `/usr/bin/touch`: creates the file if missing and sets its access and
-    /// modification times to now.
     public static func touchFile(_ url: URL) throws {
         let fd = open(url.path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
         guard fd >= 0 else { throw FileUtil.posixError("touch \(url.path)") }

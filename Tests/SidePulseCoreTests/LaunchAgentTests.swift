@@ -1,8 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// In-memory launchd for exercising LaunchAgentManager / LegacyPythonMigration
-/// without touching the real launchd.
 final class LaunchAgentFakeLaunchd: @unchecked Sendable {
     private let lock = NSLock()
     private var _calls: [[String]] = []
@@ -89,9 +87,8 @@ final class LaunchAgentManagerTests: XCTestCase {
         XCTAssertEqual(manager.plistURL, box.home.appendingPathComponent("Library/LaunchAgents/io.sidepulse.swift.plist"))
     }
 
-    /// Regression: under launchd the app had PATH=/usr/bin:/bin:/usr/sbin:/sbin, so
-    /// an npm-installed codex (`#!/usr/bin/env node`) could not start and Codex trust
-    /// failed from the menu. The plist carries the installing shell's PATH.
+    /// Regression: launchd's minimal PATH kept an npm-installed codex (`#!/usr/bin/env node`) from
+    /// starting, so Codex trust failed from the menu.
     func testPlistCarriesTheInstallingPath() throws {
         let box = try HookInstallSandbox(extraEnvironment: ["PATH": "/opt/node/bin:relative/bin:/usr/local/bin:/usr/bin"])
         let manager = LaunchAgentManager(paths: box.paths)
@@ -286,8 +283,8 @@ final class LaunchAgentMigrationTests: XCTestCase {
     }
 }
 
-/// Real launchd round trip with a throwaway `/bin/sleep` agent. Opt-in:
-/// `SIDEPULSE_LAUNCHCTL_TESTS=1 swift test --filter LaunchAgentLaunchctlTests`.
+/// Opt-in with `SIDEPULSE_LAUNCHCTL_TESTS=1` because it round-trips a throwaway `/bin/sleep` agent
+/// through the real launchd.
 final class LaunchAgentLaunchctlTests: XCTestCase {
     func testRealLaunchdRoundTrip() throws {
         guard ProcessInfo.processInfo.environment["SIDEPULSE_LAUNCHCTL_TESTS"] == "1" else {

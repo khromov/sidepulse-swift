@@ -1,7 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse version` / `--version` / `-V`.
 enum VersionCommand: CLICommand {
     static let spec = CommandSpec(name: "version", synopsis: "", summary: "Print the version")
 

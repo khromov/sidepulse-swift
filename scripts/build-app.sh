@@ -1,22 +1,8 @@
 #!/bin/sh
 # Builds build/SidePulse.app from this Swift package.
 #
-#   scripts/build-app.sh [--debug]
-#
-# Layout:
-#   SidePulse.app/Contents/Info.plist        from Resources/Info.plist (version from
-#                                            SidePulseConstants.version)
-#   SidePulse.app/Contents/MacOS/SidePulse   menu-bar app (SidePulseApp product)
-#   SidePulse.app/Contents/Helpers/sidepulse CLI (sidepulse product). Not in MacOS/:
-#                                            APFS is case-insensitive by default, so
-#                                            "SidePulse" and "sidepulse" would collide.
-#
-# Signing: with SIDEPULSE_CODESIGN_IDENTITY set (a name or hash from
-# `security find-identity -v -p codesigning`, e.g. "Developer ID Application: …")
-# the helper and the bundle are signed with that certificate. Its designated
-# requirement survives rebuilds, so macOS keeps the removable-volume permission
-# the app needs for the device across updates. Otherwise they are signed ad hoc
-# (codesign -s -), and macOS asks for that permission again after every rebuild.
+# Sign with SIDEPULSE_CODESIGN_IDENTITY to keep macOS's removable-volume permission
+# across rebuilds; an ad-hoc signature changes every build, so macOS asks again.
 set -eu
 
 usage() {
@@ -51,6 +37,8 @@ APP="$ROOT/build/SidePulse.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 
+# The CLI goes in Helpers/ because on case-insensitive APFS MacOS/sidepulse would
+# collide with MacOS/SidePulse.
 cp "$BIN/SidePulseApp" "$APP/Contents/MacOS/SidePulse"
 cp "$BIN/sidepulse" "$APP/Contents/Helpers/sidepulse"
 chmod 755 "$APP/Contents/MacOS/SidePulse" "$APP/Contents/Helpers/sidepulse"

@@ -1,17 +1,5 @@
 #!/bin/sh
 # Removes SidePulse for the current user.
-#
-#   scripts/uninstall.sh [--purge] [--app-dir DIR]
-#
-# 1. `sidepulse uninstall` (agent hooks) and `sidepulse app uninstall` (LaunchAgent)
-# 2. stops a copy started by hand, removes the installed SidePulse.app and the
-#    ~/.local/bin/sidepulse link when it points into a SidePulse.app
-# 3. keeps settings and logs unless --purge
-#
-# The app removed is the one the ~/.local/bin/sidepulse link points into, else the
-# one the LaunchAgent runs, else DIR/SidePulse.app (default ~/Applications);
-# --app-dir DIR always wins. A bundle whose identifier is not io.sidepulse.swift
-# (such as the Python SidePulse.app) is never removed.
 set -eu
 
 LABEL=io.sidepulse.swift
@@ -58,7 +46,8 @@ bundle_id() {
     /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
-# Which SidePulse.app is installed (see the header).
+# Follow the CLI link, then the LaunchAgent, so an app installed with --app-dir is
+# found without it.
 PROGRAM=$(/usr/libexec/PlistBuddy -c 'Print ProgramArguments:0' "$PLIST" 2>/dev/null || true)
 if [ "$APP_DIR_GIVEN" -eq 0 ] && points_into_app "$LINK"; then
     TARGET=$(readlink "$LINK")

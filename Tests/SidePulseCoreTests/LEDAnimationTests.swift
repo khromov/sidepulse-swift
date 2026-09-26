@@ -20,7 +20,6 @@ private func withoutColors(_ program: String) -> String {
     return result
 }
 
-/// Built-in catalog and embedded programs (spec led-device §9, §18).
 final class LEDAnimationLibraryTests: XCTestCase {
     let expectedCatalog: [(String, String, Bool)] = [
         ("off", "Slow Off", false),
@@ -181,7 +180,6 @@ final class LEDAnimationLibraryTests: XCTestCase {
         }
     }
 
-    /// Byte-for-byte comparison with the Python resources (skipped without a checkout).
     func testEmbeddedProgramsMatchPythonResourceFiles() throws {
         guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
         let dir = repo.appendingPathComponent("src/sidepulse/resources/animations")
@@ -195,7 +193,6 @@ final class LEDAnimationLibraryTests: XCTestCase {
     }
 }
 
-/// Cyan / Ember / Purple profiles (spec led-device §14, §19).
 final class LEDProfileTests: XCTestCase {
     func testBuiltInProfiles() throws {
         XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), ["profile:cyan", "profile:ember", "profile:purple"])
@@ -235,7 +232,6 @@ final class LEDProfileTests: XCTestCase {
         XCTAssertNil(AnimationProfiles.matching(custom))
     }
 
-    /// The shipped profiles/*.json (minus lid states) equal the built-ins.
     func testProfilesMatchPythonProfileDocuments() throws {
         guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
         for profile in AnimationProfiles.builtIn {
@@ -255,7 +251,6 @@ final class LEDProfileTests: XCTestCase {
     }
 }
 
-/// Brightness math and program generation (spec led-device §10).
 final class LEDProgramTests: XCTestCase {
     func testNormalizeBrightnessRoundsHalfToEven() {
         let vectors: [(Double?, Int)] = [
@@ -309,9 +304,7 @@ final class LEDProgramTests: XCTestCase {
         }
     }
 
-    /// Python's `re` on `str`: `\s` includes U+001C–U+001F, `\d` is any Nd digit,
-    /// and IGNORECASE folds U+0130/U+0131 to `i` and U+017F to `s`. Expected values
-    /// come from the Python implementation.
+    /// Expected values come from the Python implementation.
     func testBrightnessLineMatchesPythonUnicodeRegex() {
         let vectors: [(String, Int, String)] = [
             ("\u{1F}brightness\u{1F}40\u{1F}\n#fff", 200, "brightness 31\n#fff"),

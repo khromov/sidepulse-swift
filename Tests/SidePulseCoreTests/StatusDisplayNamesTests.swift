@@ -3,8 +3,8 @@ import XCTest
 
 final class StatusDisplayNamesTests: XCTestCase {
     func testFallbackProviderLabels() {
-        // Expected values produced by sidepulse.models.provider_label, except for the
-        // dropped opencode provider (Python kept its lowercase spelling).
+        // Expected values produced by sidepulse.models.provider_label, except opencode,
+        // which Python kept lowercase.
         let vectors: [(String, String)] = [
             ("codex", "Codex"), ("claude", "Claude"), ("grok", "Grok"), ("opencode", "Opencode"),
             ("junie", "Junie"), ("cursor", "Cursor"), ("my-agent2x", "My-Agent2X"), ("they're", "They'Re"),

@@ -1,10 +1,8 @@
 import XCTest
 @testable import SidePulseCore
 
-/// End-to-end trust check against the real `codex` binary, run in a throwaway
-/// HOME (Codex resolves `$HOME/.codex`; `CODEX_HOME` is removed from the child
-/// environment). Skipped when Codex is not installed or
-/// `SIDEPULSE_SKIP_CODEX_TESTS=1`.
+/// Runs the real `codex` in a throwaway HOME, and `childEnvironment` drops `CODEX_HOME`, so the real
+/// `~/.codex` is never touched.
 final class HookInstallRealCodexTests: XCTestCase {
     typealias T = HookInstallTestData
 
@@ -56,12 +54,10 @@ final class HookInstallRealCodexTests: XCTestCase {
         let user = listed.first { $0["command"]?.stringValue == "say done >> /tmp/user-notify.log" }
         XCTAssertEqual(user?["trustStatus"], .string("untrusted"))
 
-        // Reinstall: nothing to do, byte-identical.
         let again = try CodexHookInstaller.install(paths: paths, cliPath: T.cli, dryRun: false)
         XCTAssertFalse(again.changed)
         XCTAssertEqual(try box.read(config), installedText)
 
-        // Uninstall: only the user's hook remains and no trust entry of ours.
         let removed = try CodexHookInstaller.uninstall(paths: paths, dryRun: false)
         XCTAssertTrue(removed.changed)
         let after = try box.read(config)
@@ -71,8 +67,6 @@ final class HookInstallRealCodexTests: XCTestCase {
         XCTAssertEqual(remaining.compactMap { $0["command"]?.stringValue }, ["say done >> /tmp/user-notify.log"])
     }
 
-    /// A user's trusted hook stays trusted when installing removes a legacy
-    /// Python group in front of it (its group index shifts).
     func testUserTrustSurvivesLegacyCleanup() throws {
         let codex = try codexBinary()
         let box = try HookInstallSandbox(extraEnvironment: ["CODEX_CLI_PATH": codex])

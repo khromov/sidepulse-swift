@@ -1,14 +1,10 @@
 import AppKit
 import SidePulseCore
 
-/// The status item's menu. Rendered from a `StatusMenuModel`: rebuilt from scratch
-/// each time it opens (`menuNeedsUpdate`), and updated in place while open whenever
-/// the runtime publishes a snapshot, so open device submenus and sliders survive
-/// live refreshes.
+/// Updates the open menu in place instead of rebuilding it so open device submenus and sliders survive live refreshes.
 @MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
-    /// Called when the menu opens/closes or its row states change (drives animation).
     var onAnimationStateChange: (() -> Void)?
 
     private let services: AppServices
@@ -29,18 +25,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var keepingAwakeItems: [NSMenuItem] = []
     private var launchAtLoginItem: NSMenuItem?
 
-    /// The mutable parts of one device submenu.
     private struct DeviceControls {
         let item: NSMenuItem
         let agent: NSMenuItem
         let manual: NSMenuItem
         let brightnessLabel: NSMenuItem
         let slider: NSSlider
-        /// `Error: …` label; present exactly when the model has an error (part of its shape).
+        /// Fixed at build time because whether there is an error is part of the device's shape.
         let errorLabel: NSMenuItem?
     }
 
-    /// `representedObject` of the Agent Status / Manual items.
     private struct DisplayChoice {
         let deviceID: String
         let display: LedDisplay
@@ -54,7 +48,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.delegate = self
     }
 
-    /// States of the rows currently shown (for row animation).
     var rowStates: [DisplayState] { model?.rowStates ?? [] }
 
     // MARK: NSMenuDelegate
@@ -79,8 +72,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     // MARK: Updates
 
-    /// Live refresh from `runtime.onUpdate`; ignored while the menu is closed (it is
-    /// rebuilt on open anyway).
+    /// Ignored while closed because the menu is rebuilt on open anyway.
     func update(snapshot: MonitorSnapshot) {
         guard isOpen, let old = model else { return }
         let new = makeModel(snapshot: snapshot)
@@ -103,7 +95,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         onAnimationStateChange?()
     }
 
-    /// Sets animated glyphs on the Working/Ask rows of the open menu.
     func animateRows(frame: Int) {
         guard let rows = model?.rows, rows.count == rowItems.count else { return }
         for (item, row) in zip(rowItems, rows) where StatusBarPresentation.animates(row.displayState) {
@@ -111,7 +102,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Restores static glyphs (animation stopped).
     func showStaticRowImages() {
         guard let rows = model?.rows, rows.count == rowItems.count else { return }
         for (item, row) in zip(rowItems, rows) {
@@ -173,7 +163,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Title, glyph and tooltip; clicking reveals the session's folder when known.
     private func configureRow(_ item: NSMenuItem, _ row: SessionRow) {
         item.title = row.menuTitle
         item.toolTip = row.detail
@@ -234,7 +223,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// Python layout: a 230×34 view holding a 0...255 non-continuous slider.
+    /// The 230×34 layout matches the Python app.
     private func makeBrightnessSlider(deviceID: String, brightness: Int) -> (NSMenuItem, NSSlider) {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 34))
         let slider = NSSlider(frame: NSRect(x: 14, y: 6, width: 202, height: 22))
@@ -287,8 +276,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// One item per provider; an agent that is not installed (`menuEnabled` false)
-    /// gets a disabled `Not detected` item instead of a one-click install.
     private func makeHooksItem(_ hooks: [HookState]) -> NSMenuItem {
         let item = NSMenuItem(title: MenuText.hooks, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -309,7 +296,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         launchAtLoginItem?.state = model.launchAtLogin ? .on : .off
     }
 
-    /// Swaps a contiguous run of items for new ones at the same position.
+    /// `old` must be a contiguous run of menu items.
     private func replace(_ old: [NSMenuItem], with new: [NSMenuItem]) -> [NSMenuItem] {
         guard let first = old.first else { return old }
         var index = menu.index(of: first)

@@ -77,9 +77,8 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertEqual(features("[profiles.x]\nhooks = false\n"), "[profiles.x]\nhooks = false\n\n[features]\nhooks = true\n\n")
     }
 
-    /// Regression: root dotted keys already define [features]; appending a
-    /// `[features]` header made the file invalid TOML ("Cannot declare
-    /// ('features',) twice"), so Codex could not load its config at all.
+    /// Regression: a `[features]` header next to root dotted `features.*` keys is invalid TOML,
+    /// so Codex could not load its config.
     func testRootDottedFeaturesGetASiblingKey() {
         let input = "model = 1\nfeatures.js_repl = false\n\n[tui]\nx = 1\n"
         let installed = CodexHookInstaller.installing(into: input, command: cmd)
@@ -91,8 +90,6 @@ final class HookInstallCodexTests: XCTestCase {
                        "model = 1\nfeatures.hooks = true\nfeatures.js_repl = false\n\n[tui]\nx = 1\n")
     }
 
-    /// Regression: lines inside a multi-line value are not keys, so a
-    /// `hooks = false` line inside a string is neither the flag nor rewritten.
     func testLinesInsideMultilineValuesAreNotKeys() {
         let input = "[features]\nnote = \"\"\"\nhooks = false\n\"\"\"\n"
         XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: input))
@@ -103,9 +100,8 @@ final class HookInstallCodexTests: XCTestCase {
                        rootString + "\n[features]\nhooks = true\n\n" + block)
     }
 
-    /// Regression: install rewrote `hooks = false # disabled for now` to `hooks = true`
-    /// (dropping the comment and enabling the user's own disabled hooks for good,
-    /// since uninstall never restored it).
+    /// Regression: rewriting it to `true` enabled the user's disabled hooks for good, since
+    /// uninstall never restored it.
     func testExplicitHooksFalseIsLeftAlone() throws {
         let box = try HookInstallSandbox()
         let original = "[features]\nhooks = false # disabled for now\n\n[[hooks.Stop]]\nmatcher = \"*\"\n"
@@ -122,7 +118,6 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertEqual(try box.read(box.paths.codexConfigFile), original.trimmingCharacters(in: .newlines) + "\n")
     }
 
-    /// `--no-trust` leaves the hooks untrusted; say how to approve them.
     func testNoTrustInstallRemindsAboutApproval() throws {
         let box = try HookInstallSandbox()
         let result = try CodexHookInstaller.install(paths: box.paths, cliPath: T.cli, dryRun: false, trust: false)
@@ -153,8 +148,7 @@ final class HookInstallCodexTests: XCTestCase {
             HookInstallFixtures.pythonCodexConfigReinstalled,
             HookInstallFixtures.pythonCodexConfigTrusted.replacingOccurrences(of: "@CONFIG@", with: cfg),
             "[[hooks.Stop]]\nmatcher = \"*\"\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"say done\"\n",
-            // Legacy block followed by stale trust tables that get dropped: the
-            // block lands in place and must not leave a trailing blank line.
+            // Dropping stale trust tables after an in-place block must not leave a trailing blank line.
             "model = 1\n\n# >>> agent-monitor hooks >>>\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ncommand = '''python3 /x/hook_entry.py --provider codex --log /l ; true'''\n\n# <<< agent-monitor hooks <<<\n\n[hooks.state]\n\n[hooks.state.\"\(cfg):stop:0:0\"]\ntrusted_hash = \"sha256:x\"\n",
         ]
         for input in inputs {
@@ -172,14 +166,12 @@ final class HookInstallCodexTests: XCTestCase {
         let installed = "model = \"x\"\n\n" + block + "\n# my servers\n[mcp_servers.a]\nurl = \"u\"\n"
         XCTAssertEqual(CodexHookInstaller.installing(into: "[features]\nhooks = true\n\n" + installed, command: cmd),
                        "[features]\nhooks = true\n\n" + installed)
-        // At the very top of the file.
         let top = block + "\n[features]\nhooks = true\n"
         XCTAssertEqual(CodexHookInstaller.installing(into: top, command: cmd), top)
     }
 
-    /// Regression: a stray marker in the middle of a table (or above root keys)
-    /// used to become the insertion point, so the keys after it ended up inside
-    /// our last hook table, and uninstall then deleted them with that table.
+    /// Regression: a stray marker used as the insertion point pulled the keys after it into our
+    /// last hook table, and uninstall deleted them.
     func testStrayMarkerNeverSplitsATable() {
         let features = "\n[features]\nhooks = true\n"
         let inTable = "[tui]\na = 1\n# >>> sidepulse hooks >>>\nb = 2\n"
@@ -198,9 +190,8 @@ final class HookInstallCodexTests: XCTestCase {
                        "[tui]\na = 1\n\n" + block + "\n# a note\n\n[mcp_servers.x]\nurl = \"u\"\n" + features)
     }
 
-    /// Regression: TOML cannot extend a hook event (or hooks.state) that is
-    /// defined inline or as a plain table, so install refuses such a file
-    /// instead of writing a config Codex cannot load.
+    /// Regression: TOML cannot extend a hook event defined inline or as a plain table, so
+    /// installing wrote a config Codex cannot load.
     func testStaticHookDefinitionsAreRefused() throws {
         let refused = [
             "[hooks]\nStop = [{ hooks = [{ type = \"command\", command = \"say\" }] }]\n",
@@ -254,9 +245,8 @@ final class HookInstallCodexTests: XCTestCase {
 
     // MARK: Python vectors
 
-    /// Port of test_codex_installer_replaces_monitor_hook_and_preserves_state. The
-    /// Python installer deleted `echo old >> <log>` because it matched the log
-    /// path; the Swift installer keeps user hooks.
+    /// Port of test_codex_installer_replaces_monitor_hook_and_preserves_state, deliberately
+    /// keeping the `echo old >> <log>` user hook that Python deleted by its log path.
     func testInstallPreservesStateAndUserHooks() {
         let input = [
             "[features]", "js_repl = false", "",
@@ -276,7 +266,6 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertEqual(again, text)
     }
 
-    /// Port of test_codex_uninstaller_removes_monitor_hooks_and_preserves_config.
     func testUninstallPreservesConfig() {
         let input = "[features]\njs_repl = false\n\n[hooks.state]\nsource = \"keep-me\"\n"
         let installed = CodexHookInstaller.installing(into: input, command: cmd, configPath: cfg)
@@ -343,7 +332,7 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertEqual(installed, prefix + "\n" + block)
         let removed = CodexHookInstaller.uninstalling(from: python, configPath: cfg)
         XCTAssertEqual(removed, prefix)
-        // Without a config path the trust tables are not touched.
+        // Trust tables keyed by another config path are not touched.
         XCTAssertEqual(T.count("trusted_hash", in: CodexHookInstaller.uninstalling(from: python, configPath: "/elsewhere/config.toml")), 11)
     }
 
@@ -368,9 +357,7 @@ final class HookInstallCodexTests: XCTestCase {
     // MARK: Trust state bookkeeping
 
     func testUserTrustFollowsGroupIndexShifts() {
-        // Two legacy groups (a duplicate left by a hand edit) precede the user's
-        // group. The new block replaces them in place, so the user's group moves
-        // from index 2 to 1 and its trust entries must follow.
+        // The block replaces two legacy groups in place, so the user's group moves from index 2 to 1.
         let legacy = "python3 /x/hook_entry.py --provider codex --log /l ; true"
         let input = """
         [[hooks.PreToolUse]]
@@ -416,7 +403,6 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertFalse(installed.contains("\(cfg):pre_tool_use:0:0"), "the stale legacy hash is not carried over to our hook")
         XCTAssertTrue(installed.contains("sha256:project"), "other config layers are left alone")
 
-        // Trust ours (group 0) and reinstall: nothing moves.
         let trusted = CodexTrust.applyTrustedHashes(["\(cfg):pre_tool_use:0:0": "sha256:ours"], to: installed)
         XCTAssertEqual(CodexHookInstaller.installing(into: trusted, command: cmd, configPath: cfg), trusted)
         // Uninstall: the user's group becomes index 0 again.
@@ -462,7 +448,6 @@ final class HookInstallCodexTests: XCTestCase {
     func testOrphanTrustTablesAreDroppedWithEmptyStateTable() {
         let input = "model = 1\n\n# Provider-neutral status collection. Do not edit inside this block.\n[hooks.state]\n\n[hooks.state.\"\(cfg):stop:0:0\"]\ntrusted_hash = \"sha256:a\"\n\n[hooks.state.\"\(cfg):interrupt:0:0\"]\ntrusted_hash = \"sha256:b\"\n\n# Provider-neutral status collection. Do not edit inside this block.\n"
         XCTAssertEqual(CodexHookInstaller.uninstalling(from: input, configPath: cfg), "model = 1\n")
-        // A [hooks.state] table with its own keys stays.
         let keep = "[hooks.state]\nsource = \"keep\"\n\n[hooks.state.\"\(cfg):stop:0:0\"]\ntrusted_hash = \"sha256:a\"\n"
         XCTAssertEqual(CodexHookInstaller.uninstalling(from: keep, configPath: cfg), "[hooks.state]\nsource = \"keep\"\n")
     }

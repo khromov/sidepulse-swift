@@ -2,8 +2,6 @@ import Foundation
 import XCTest
 @testable import SidePulseCLI
 
-/// `InputReader` backs `write -`. It must never abort on a non-blocking
-/// descriptor (FileHandle does).
 final class CLIInputReaderTests: XCTestCase {
     private func makePipe() -> (read: Int32, write: Int32) {
         var descriptors: [Int32] = [-1, -1]
@@ -35,9 +33,8 @@ final class CLIInputReaderTests: XCTestCase {
         XCTAssertEqual(InputReader.readAll(fd: devNull), Data())
     }
 
-    /// Regression: `FileHandle.readDataToEndOfFile()` raises
-    /// NSFileHandleOperationException (the process aborts) on a non-blocking
-    /// descriptor whose data has not arrived yet.
+    /// Regression: `FileHandle.readDataToEndOfFile()` aborted the process on a non-blocking
+    /// descriptor whose data had not arrived yet.
     func testNonBlockingDescriptorWaitsForLateData() {
         let pipe = makePipe()
         defer { close(pipe.read) }

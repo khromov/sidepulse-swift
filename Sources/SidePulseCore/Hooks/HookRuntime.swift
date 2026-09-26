@@ -1,17 +1,8 @@
 import Darwin
 import Foundation
 
-/// `sidepulse hook-log --provider <claude|codex>`: runs inside every agent hook.
-///
-/// Contract: ALWAYS returns 0, NEVER writes to stdout (Claude injects hook stdout
-/// into the model context), never blocks for long, never throws. Bad/missing
-/// arguments → return 0 silently.
-///
-/// Steps: read stdin → `makeRecord` → append one compact JSON line to
-/// `paths.logFile(for:)` (rotating at `SidePulseConstants.logRotateBytes`) → unless
-/// `SIDEPULSE_DISABLE_EVENT_SOCKET` is 1/true/yes, send
-/// `{"provider":P,"line":RECORD}` to `paths.socketPath` with a 0.2 s timeout. Each
-/// step is independent: a dead socket never loses the log line.
+/// Runs inside every agent hook, so it never throws, never blocks for long, always returns 0 and never
+/// writes to stdout (Claude injects hook stdout into the model context).
 public enum HookRuntime {
     public static func run(arguments: [String], stdin: Data, environment: [String: String],
                            paths: SidePulsePaths, now: Date = Date()) -> Int32 {
@@ -21,10 +12,10 @@ public enum HookRuntime {
         }
         let line = JSONValue.object(record).serialized()
 
-        // Step 1: the durable record. Failure (read-only dir, full disk) is ignored.
+        // The log is the durable record, independent of the socket, so a dead runtime never loses the event.
         try? HookLogStore.append(line: line, to: paths.logFile(for: provider.rawValue))
 
-        // Step 2: live delivery. Built by concatenation so the record is serialized once.
+        // Built by concatenation so the record is serialized only once.
         if !eventSocketDisabled(environment) {
             let message = "{\"provider\":" + JSONValue.string(provider.rawValue).serialized() + ",\"line\":" + line + "}"
             EventSocketClient.send(Data(message.utf8), socketPath: paths.socketPath,
@@ -33,38 +24,28 @@ public enum HookRuntime {
         return 0
     }
 
-    /// The `hook-log` entry point of the `sidepulse` executable: reads stdin
-    /// (`readStandardInput`, bounded by `standardInputTimeout` and
-    /// `standardInputMaxBytes`) and uses the process environment and default paths.
-    /// Prints nothing and returns 0, like `run`.
     public static func runFromProcess(arguments: [String]) -> Int32 {
         let environment = ProcessInfo.processInfo.environment
         return run(arguments: arguments, stdin: readStandardInput(), environment: environment,
                    paths: SidePulsePaths(environment: environment))
     }
 
-    /// Longest time `readStandardInput` waits for the agent to finish writing and
-    /// close stdin. Agents write the payload at once and close, so this only matters
-    /// for a writer that never closes (or never stops), which must not hang the hook.
+    /// Agents write the payload at once and close stdin, so this only stops a writer that never closes from
+    /// hanging the hook.
     public static let standardInputTimeout: TimeInterval = 3
 
-    /// Payload bytes `readStandardInput` keeps (16 MiB); the rest is drained.
     public static let standardInputMaxBytes = 16 << 20
 
-    /// Reads fd 0 to EOF, keeping at most `maxBytes` (the rest is drained and
-    /// discarded so the agent never blocks on a full pipe). Returns empty data when
-    /// stdin is a terminal, so running the command by hand never waits for input.
-    /// Stops at `timeout` with whatever has arrived; works whether or not the
-    /// inherited descriptor is non-blocking.
+    /// Drains input past `maxBytes` so the agent never blocks on a full pipe, and returns empty data on a
+    /// terminal so running the command by hand never waits for input.
     public static func readStandardInput(maxBytes: Int = standardInputMaxBytes,
                                          timeout: TimeInterval = standardInputTimeout) -> Data {
         guard isatty(STDIN_FILENO) == 0 else { return Data() }
         return readInput(fd: STDIN_FILENO, maxBytes: maxBytes, timeout: timeout)
     }
 
-    /// Testable core of `readStandardInput`: waits for readability with `poll`
-    /// before every read, so neither a silent writer nor `EAGAIN` from a
-    /// non-blocking pipe can lose data or stall past the deadline.
+    /// Polls before every read so neither a silent writer nor `EAGAIN` from an inherited non-blocking pipe
+    /// can lose data or stall past the deadline.
     static func readInput(fd: Int32, maxBytes: Int, timeout: TimeInterval) -> Data {
         let deadline = SocketDeadline(after: timeout)
         var data = Data()
@@ -81,9 +62,7 @@ public enum HookRuntime {
         return data
     }
 
-    /// `--provider X` or `--provider=X` (case-insensitive); everything else,
-    /// including legacy `--log PATH` / `--event E`, is ignored. nil when missing,
-    /// valueless or not a supported provider.
+    /// Python-era hook commands also pass `--log PATH` / `--event E`, so every other argument is ignored.
     public static func providerArgument(_ arguments: [String]) -> HookProvider? {
         var value: String?
         var remaining = arguments.makeIterator()
@@ -98,52 +77,19 @@ public enum HookRuntime {
         return HookProvider(rawValue: value.trimmingCharacters(in: .whitespaces).lowercased())
     }
 
-    /// `SIDEPULSE_DISABLE_EVENT_SOCKET` is `1`, `true` or `yes` (case-insensitive).
     public static func eventSocketDisabled(_ environment: [String: String]) -> Bool {
         let value = (environment["SIDEPULSE_DISABLE_EVENT_SOCKET"] ?? "").trimmingCharacters(in: .whitespaces).lowercased()
         return ["1", "true", "yes"].contains(value)
     }
 
-    /// Builds the trimmed record we log and send. Flat object, keys in this order
-    /// (absent values omitted):
-    /// `logged_at` (TimeFormat.iso8601Millis), `hook_event_name` (from
-    /// hook_event_name/hookEventName, raw), `session_id`, `turn_id`, `agent_id`,
-    /// `agent_type`, `cwd`, `tool_name`, `tool_input` ({"command": ≤2000 chars} only
-    /// when tool_input.command is a string), `tool_response` (object: only
-    /// interrupted/success/exit_code keys; string: first 500 chars),
-    /// `tool_response_failed` (bool, `ModeClassifier.toolResponseLooksFailed` on the
-    /// FULL response), `prompt` (≤4000 chars), `last_assistant_message` (fenced
-    /// code blocks removed with the classifier's rule, then ≤16000 chars: if longer
-    /// keep the first 4000 + "\n…\n" + last 12000; omitted when nothing is left),
-    /// `message` (≤2000), `notification_type`, `error` (string ≤500),
-    /// `error_details` (≤500), `source`, `reason`, `background_task_ids` (see
-    /// `backgroundTaskIDs`), `sidepulse_status`,
-    /// `sidepulse_mode`, then origin: `agent_origin`, `agent_origin_kind`,
-    /// `agent_origin_source`, `agent_origin_confidence` (skipped if the payload
-    /// already has agent_origin). Invalid JSON →
-    /// `{"logged_at":…,"hook_event_name":"ParseError","parse_error":"…"}`.
-    /// A Codex payload wrapped as `{"event":{...}}` is unwrapped first.
-    ///
-    /// Details: scalar fields accept strings and numbers (other types are omitted)
-    /// and camelCase spellings (`sessionId`, `toolName`, …) as fallbacks. Fields
-    /// without a listed limit are capped at `defaultFieldLimit`. Lengths count
-    /// Unicode scalars (Python `len`). A number cannot be truncated, so one whose
-    /// literal is longer than the field's limit counts as absent. The kept
-    /// `tool_response` keys go through `bounded` (containers are dropped; the
-    /// failure flag is still computed on the full value), so a hostile payload can
-    /// never produce an oversized record. Empty input counts as `{}`; valid JSON
-    /// that is not an object becomes a ParseError record. When the payload carries
-    /// its own non-empty `agent_origin`/`agentOrigin`, its four origin fields are
-    /// copied instead of `origin`.
+    /// Every field is length-capped so a hostile payload can never produce an oversized record.
     public static func makeRecord(provider: HookProvider, payload: Data, now: Date, origin: AgentOrigin?) -> JSONObject {
         makeRecord(provider: provider, payload: payload, now: now) { origin }
     }
 
-    /// Cap for fields the record contract gives no explicit limit (ids, cwd, …).
     public static let defaultFieldLimit = 1024
 
-    /// Same as the public variant, but only asks for the origin when the payload
-    /// does not carry one (detection walks the process tree).
+    /// Origin detection walks the process tree, so it only runs when the payload does not carry its own origin.
     static func makeRecord(provider: HookProvider, payload: Data, now: Date,
                            detectOrigin: () -> AgentOrigin?) -> JSONObject {
         var record = JSONObject()
@@ -208,9 +154,8 @@ public enum HookRuntime {
 
         record["prompt"] = scalar("prompt", limit: 4000)
         if case .string(let text)? = raw["last_assistant_message"] ?? raw["lastAssistantMessage"] {
-            // Code goes before the cut, so markers and questions are judged on the
-            // same prose as the full message: a cut through a code block would pair
-            // the remaining fences differently and expose code to the classifier.
+            // Strip code before the cut, since a cut through a code block would pair the remaining fences
+            // differently and expose code to the classifier.
             let prose = stripFencedCodeBlocks(text)
             if !prose.isEmpty { record["last_assistant_message"] = .string(headAndTail(prose)) }
         }
@@ -258,16 +203,11 @@ public enum HookRuntime {
         }
     }
 
-    /// Most `background_tasks` entries kept, and the longest id.
     static let maxBackgroundTasks = 32
     static let maxBackgroundTaskIDLength = 128
 
-    /// The ids of Claude's `background_tasks` (`[{"id","type":"subagent"|"shell",
-    /// "status":"running",…}]` on Stop and SubagentStop: the tasks still running),
-    /// in order. The engine closes a session's subagent rows that a parent Stop does
-    /// not list, so a list that cannot be kept whole counts as absent (nil): not an
-    /// array, more than `maxBackgroundTasks` entries, or an entry without a
-    /// non-empty string id of at most `maxBackgroundTaskIDLength` scalars.
+    /// The engine closes subagent rows that a parent Stop does not list, so a list that cannot be kept whole
+    /// counts as absent.
     static func backgroundTaskIDs(_ value: JSONValue?) -> [String]? {
         guard case .array(let tasks)? = value, tasks.count <= maxBackgroundTasks else { return nil }
         var ids: [String] = []
@@ -279,9 +219,6 @@ public enum HookRuntime {
         return ids
     }
 
-    /// `value` if it is small enough to log: null and booleans as they are, numbers
-    /// whose literal fits in `limit` characters, strings truncated to `limit`
-    /// scalars. Arrays, objects and longer numbers → nil.
     static func bounded(_ value: JSONValue, limit: Int) -> JSONValue? {
         switch value {
         case .null, .bool: return value
@@ -291,7 +228,7 @@ public enum HookRuntime {
         }
     }
 
-    /// Keeps the first `limit` Unicode scalars.
+    /// Counts Unicode scalars to match Python's `len`.
     static func truncated(_ text: String, to limit: Int) -> String {
         let scalars = text.unicodeScalars
         guard let end = scalars.index(scalars.startIndex, offsetBy: limit, limitedBy: scalars.endIndex),
@@ -299,7 +236,6 @@ public enum HookRuntime {
         return String(scalars[..<end])
     }
 
-    /// ≤16000 scalars unchanged; longer → first 4000 + "\n…\n" + last 12000.
     static func headAndTail(_ text: String) -> String {
         let scalars = text.unicodeScalars
         guard let limitIndex = scalars.index(scalars.startIndex, offsetBy: 16000, limitedBy: scalars.endIndex),
@@ -310,15 +246,9 @@ public enum HookRuntime {
     }
 }
 
-/// Append-only JSONL files with size-based rotation.
 public enum HookLogStore {
-    /// Appends `line + "\n"` with a single O_APPEND write (creates dirs/file, mode
-    /// 0600). If the file is larger than `rotateAt` before writing, renames it to
-    /// `<name>.1` (replacing any previous `.1`) first.
-    ///
-    /// Missing directories are created with mode 0700 (records contain prompts).
-    /// Concurrent hook processes rotate at most once: the rename happens under an
-    /// `flock` on the old file and only if the path still names that file.
+    /// Concurrent hook processes rotate at most once because the rename happens under an `flock` on the old
+    /// file and only if the path still names that file.
     public static func append(line: String, to url: URL, rotateAt: Int = SidePulseConstants.logRotateBytes) throws {
         let path = url.path
         var fd = try openForAppend(path)

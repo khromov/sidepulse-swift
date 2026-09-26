@@ -2,8 +2,7 @@ import Darwin
 import XCTest
 @testable import SidePulseCore
 
-/// `HookRuntime.readInput`, the stdin reader behind `readStandardInput`, driven
-/// through pipes so the real stdin is never touched.
+/// Driven through pipes so the real stdin is never touched.
 final class HookRuntimeInputTests: XCTestCase {
     private var pipes: [Int32] = []
 
@@ -13,7 +12,6 @@ final class HookRuntimeInputTests: XCTestCase {
         super.tearDown()
     }
 
-    /// (read end, write end); both closed in tearDown unless closed earlier.
     private func makePipe() -> (Int32, Int32) {
         var fds: [Int32] = [-1, -1]
         XCTAssertEqual(pipe(&fds), 0)
@@ -27,9 +25,8 @@ final class HookRuntimeInputTests: XCTestCase {
         pipes.removeAll { $0 == fd }
     }
 
-    /// Hands `fd` to a background writer that writes `data` and closes it. If the
-    /// reader under test gives up early, closing the read end makes the write
-    /// fail with EPIPE, so a regression fails the test instead of hanging it.
+    /// If the reader gives up early, closing the read end fails the write with EPIPE, so a regression fails
+    /// the test instead of hanging it.
     private func writeInBackground(_ fd: Int32, _ data: String, after delay: useconds_t = 0) -> DispatchSemaphore {
         pipes.removeAll { $0 == fd }
         let done = DispatchSemaphore(value: 0)
@@ -60,8 +57,8 @@ final class HookRuntimeInputTests: XCTestCase {
         XCTAssertEqual(HookRuntime.readInput(fd: reader, maxBytes: 1 << 20, timeout: 2), Data(#"{"hook_event_name":"Stop"}"#.utf8))
     }
 
-    /// Regression: a non-blocking stdin used to return empty data (EAGAIN) before
-    /// the agent had written anything, so the event was logged as `{}`.
+    /// Regression: a non-blocking stdin returned empty data (EAGAIN) before the agent wrote, logging the event
+    /// as `{}`.
     func testNonBlockingDescriptorWaitsForTheWriter() {
         let (reader, writer) = makePipe()
         _ = fcntl(reader, F_SETFL, fcntl(reader, F_GETFL) | O_NONBLOCK)
@@ -75,10 +72,8 @@ final class HookRuntimeInputTests: XCTestCase {
         XCTAssertEqual(data, Data(payload.utf8))
     }
 
-    /// Regression: a writer that never closes stdin used to hang the hook forever.
-    /// Runs `readInput` off the test thread. nil if it has not returned by
-    /// `waitLimit` (the caller must then unblock it), so a regression fails the
-    /// test instead of hanging the whole run.
+    /// Returns nil past `waitLimit` (the caller must then unblock the reader) so a regression fails the test
+    /// instead of hanging the whole run.
     private func readInBackground(fd: Int32, maxBytes: Int, timeout: TimeInterval,
                                   waitLimit: TimeInterval) -> (data: Data, elapsed: TimeInterval)? {
         final class Result: @unchecked Sendable { var value: (Data, TimeInterval)? }
@@ -94,7 +89,6 @@ final class HookRuntimeInputTests: XCTestCase {
         return result.value
     }
 
-    /// Regression: a writer that never closes stdin used to hang the hook forever.
     func testWriterThatNeverClosesIsBoundedByTheDeadline() throws {
         let (reader, writer) = makePipe()
         write(writer, #"{"hook_event_name":"Sto"#)
@@ -116,7 +110,6 @@ final class HookRuntimeInputTests: XCTestCase {
         XCTAssertEqual(data, Data(repeating: UInt8(ascii: "x"), count: 1000))
     }
 
-    /// Something like `yes | sidepulse hook-log …` must still return promptly.
     func testEndlessWriterIsBoundedByTheDeadline() {
         let (reader, writer) = makePipe()
         pipes.removeAll { $0 == writer } // closed by the writer thread
@@ -161,7 +154,6 @@ final class HookRuntimeInputTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
     }
 
-    /// The bounds of the `hook-log` stdin path (`runFromProcess`).
     func testDefaultBounds() {
         XCTAssertEqual(HookRuntime.standardInputTimeout, 3)
         XCTAssertEqual(HookRuntime.standardInputMaxBytes, 16 << 20)

@@ -1,17 +1,5 @@
 #!/bin/sh
 # Builds and installs SidePulse for the current user.
-#
-#   scripts/install.sh [--no-setup] [--app-dir DIR] [--sign IDENTITY]
-#
-# 1. scripts/build-app.sh (release), signed with --sign / $SIDEPULSE_CODESIGN_IDENTITY
-#    when given, else ad hoc
-# 2. stops a running SidePulse (launchctl bootout of io.sidepulse.swift, and a copy
-#    started by hand from the install location), then replaces
-#    DIR/SidePulse.app (default ~/Applications); refuses to replace another app's
-#    bundle
-# 3. links ~/.local/bin/sidepulse -> DIR/SidePulse.app/Contents/Helpers/sidepulse
-#    (an existing symlink is replaced, a regular file is moved to sidepulse.previous)
-# 4. runs `sidepulse setup` (hooks + launch at login) unless --no-setup
 set -eu
 
 LABEL=io.sidepulse.swift
@@ -49,9 +37,8 @@ bundle_id() {
     /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
-# Absolute, symlink-free app dir: the ~/.local/bin link must not be relative, and
-# running copies are matched by their exact executable path (the CLI and the app
-# write resolved paths into the LaunchAgent).
+# Absolute and symlink-free, because the ~/.local/bin link must not be relative and
+# running copies are matched by their exact executable path.
 mkdir -p "$APP_DIR"
 APP_DIR=$(CDPATH='' cd -- "$APP_DIR" && pwd -P)
 
@@ -70,7 +57,6 @@ fi
 
 "$SRC_ROOT/scripts/build-app.sh"
 
-# PIDs of SidePulse processes running the installed binary.
 installed_app_pids() {
     for pid in $(pgrep -x SidePulse 2>/dev/null || true); do
         if [ "$(ps -o comm= -p "$pid" 2>/dev/null || true)" = "$APP_BIN" ]; then
@@ -79,7 +65,6 @@ installed_app_pids() {
     done
 }
 
-# Stop the running app so its binary can be replaced.
 WAS_LOADED=0
 if launchctl print "gui/$USER_ID/$LABEL" >/dev/null 2>&1; then
     echo "Stopping SidePulse (launchctl bootout gui/$USER_ID/$LABEL)..."
@@ -91,9 +76,8 @@ for pid in $(installed_app_pids); do
     echo "Stopping SidePulse (pid $pid)..."
     kill "$pid" 2>/dev/null || true
 done
-# Wait (up to 10 s) until the old app has flushed its state and released the event
-# socket; otherwise the new instance started by setup would find it "already
-# running" and exit.
+# Wait for the old app to exit, or the instance setup starts finds the event socket
+# still owned and exits as "already running".
 tries=0
 while [ -n "$(installed_app_pids)" ] && [ "$tries" -lt 50 ]; do
     sleep 0.2
@@ -128,7 +112,6 @@ SETUP_STATUS=0
 if [ "$RUN_SETUP" -eq 1 ]; then
     "$LINK" setup || SETUP_STATUS=$?
 elif [ "$WAS_LOADED" -eq 1 ] && [ -f "$PLIST" ]; then
-    # Bring back the instance we stopped.
     launchctl bootstrap "gui/$USER_ID" "$PLIST" 2>/dev/null || true
 fi
 

@@ -1,7 +1,6 @@
 import Foundation
 
-/// The per-state rows of the Animations settings (Python `ANIMATION_UI_STATES`
-/// without the dropped lid states). The three working modes share one row.
+/// Python `ANIMATION_UI_STATES` minus the dropped lid states.
 public enum AnimationStateRow: String, CaseIterable, Sendable, Identifiable {
     case idle, working, waiting, blocked, completed, unknown
 
@@ -18,8 +17,6 @@ public enum AnimationStateRow: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    /// The mode used to read and write the selection
-    /// (`SidePulseSettings.animationID(for:)` / `setAnimation(_:for:)`).
     public var mode: AgentMode {
         switch self {
         case .idle: return .idleReady
@@ -31,10 +28,8 @@ public enum AnimationStateRow: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    /// Every mode this row controls.
     public var modes: [AgentMode] { self == .working ? AgentMode.workingGroup : [mode] }
 
-    /// The row that controls `mode`.
     public init(mode: AgentMode) {
         switch mode {
         case .idleReady: self = .idle
@@ -47,11 +42,9 @@ public enum AnimationStateRow: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// A picker entry for a duration setting.
 public struct DurationChoice: Sendable, Hashable, Identifiable {
     public var seconds: TimeInterval
     public var label: String
-    /// True for the current value when it is not one of the presets.
     public var isCustom: Bool
 
     public init(seconds: TimeInterval, label: String, isCustom: Bool = false) {
@@ -61,18 +54,12 @@ public struct DurationChoice: Sendable, Hashable, Identifiable {
     public var id: TimeInterval { seconds }
 }
 
-/// Choices and labels for the General settings tab.
 public enum SettingsChoices {
-    /// Idle timeout (rows older than this go stale): 15m, 30m, 1h, 2h, 4h.
     public static let idleTimeoutPresets: [TimeInterval] = [900, 1800, 3600, 7200, 14_400]
-    /// Recent-session retention: 12h, 24h, 48h, 7d.
     public static let retentionPresets: [TimeInterval] = [43_200, 86_400, 172_800, 604_800]
-    /// Keep-awake low-battery threshold slider.
     public static let batteryPercentRange: ClosedRange<Double> = 0...100
     public static let batteryPercentStep: Double = 5
 
-    /// The presets, plus `current` (marked custom, in sorted position) when it is a
-    /// positive finite value that matches no preset (within half a second).
     public static func durationChoices(presets: [TimeInterval], current: TimeInterval) -> [DurationChoice] {
         var choices = presets.map { DurationChoice(seconds: $0, label: durationLabel($0)) }
         if current.isFinite, current > 0, !presets.contains(where: { abs($0 - current) < 0.5 }) {
@@ -82,13 +69,10 @@ public enum SettingsChoices {
         return choices
     }
 
-    /// The choice matching `current` (the custom entry when it is not a preset).
     public static func selectedSeconds(in choices: [DurationChoice], current: TimeInterval) -> TimeInterval {
         choices.min(by: { abs($0.seconds - current) < abs($1.seconds - current) })?.seconds ?? current
     }
 
-    /// `15 min`, `1 hour`, `12 hours`, `48 hours`, `7 days`: minutes below an hour,
-    /// hours up to 48 h (or when not a whole number of days), days above.
     public static func durationLabel(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite, seconds > 0 else { return "0 min" }
         if seconds < 3600 { return "\(number(seconds / 60)) min" }
@@ -99,13 +83,12 @@ public enum SettingsChoices {
         return plural(seconds / 86_400, "day")
     }
 
-    /// `Off` at 0 (the safeguard is disabled), else `N%`.
+    /// 0 disables the low-battery safeguard.
     public static func batteryThresholdLabel(_ percent: Double) -> String {
         guard percent.isFinite, percent > 0 else { return "Off" }
         return "\(Int(percent.rounded()))%"
     }
 
-    /// Rounds a slider value to the step and clamps it to the range.
     public static func snapBatteryPercent(_ value: Double) -> Double {
         guard value.isFinite else { return batteryPercentRange.lowerBound }
         let snapped = (value / batteryPercentStep).rounded() * batteryPercentStep
@@ -119,61 +102,44 @@ public enum SettingsChoices {
     private static func number(_ value: Double) -> String { String(format: "%g", value) }
 }
 
-/// Device labels shared by the menu and the settings window.
 public enum DevicePresentation {
-    /// `round(b / 255 * 100)` with b clamped to 0...255 (no exact .5 ties exist).
+    /// No brightness lands on an exact .5, so the rounding mode doesn't matter.
     public static func brightnessPercent(_ brightness: Int) -> Int {
         Int((Double(min(255, max(0, brightness))) / 255 * 100).rounded())
     }
 
-    /// `Brightness N%`.
     public static func brightnessLabel(_ brightness: Int) -> String {
         "Brightness \(brightnessPercent(brightness))%"
     }
 
-    /// Slider value → stored brightness (rounded, clamped to 0...255).
     public static func brightness(fromSlider value: Double) -> Int {
         guard value.isFinite else { return 255 }
         return Int(min(255, max(0, value.rounded())))
     }
 
-    /// `2 LEDs` / `1 LED`.
     public static func ledCountLabel(_ count: Int) -> String {
         count == 1 ? "1 LED" : "\(count) LEDs"
     }
 
-    /// Settings subtitle: `Connected · 2 LEDs · /Volumes/PulseDot` or
-    /// `Not connected · /Volumes/PulseDot`.
     public static func subtitle(_ device: DeviceInfo) -> String {
         let state = device.connected ? "Connected · \(ledCountLabel(device.ledCount))" : MenuText.notConnected
         return "\(state) · \(device.root.path)"
     }
 }
 
-/// What clicking a provider's hook control does.
 public enum HookAction: String, Sendable {
     case install, uninstall
 
     public var label: String { self == .install ? "Install" : "Uninstall" }
 }
 
-/// The UI's name for a provider's hook state (the menu model and the settings
-/// window read `ProviderDoctorInfo` directly).
 public typealias HookState = ProviderDoctorInfo
 
-/// How the menu and the settings window describe a provider's hooks.
 extension ProviderDoctorInfo: Identifiable {
     public var id: String { provider.rawValue }
 
-    /// Number of events the provider registers (`HookProvider.events`).
     public var expectedCount: Int { provider.events.count }
 
-    /// Long status (settings window, menu tooltip), after Python `hook_status_text`:
-    /// `Installed (12 events)`, `Installed, but Codex hooks are disabled`,
-    /// `Needs repair: the hooks call /x (missing)`, `Partial (5/12 events)`,
-    /// `Installed, not trusted: …`, `Not installed`,
-    /// `Not installed — config created on install`,
-    /// `Not detected — config created on install`, `Error: …`.
     public var statusText: String {
         if let error { return "Error: \(error)" }
         let installed = installedEvents.count
@@ -190,9 +156,6 @@ extension ProviderDoctorInfo: Identifiable {
         return configExists ? "Not installed" : "Not installed \u{2014} config created on install"
     }
 
-    /// Short status for the menu: `Installed`, `Disabled` (the agent's hooks feature
-    /// is off), `Needs repair` (the hooks call a missing or foreign CLI), `Partial`,
-    /// `Installed, not trusted`, `Not installed`, `Not detected`, `Error`.
     public var shortStatus: String {
         if error != nil { return "Error" }
         if fullyInstalled { return "Installed" }
@@ -202,27 +165,20 @@ extension ProviderDoctorInfo: Identifiable {
         return missingEvents.isEmpty ? "Installed, not trusted" : "Partial"
     }
 
-    /// Hooks submenu item title, e.g. `Claude Code — Installed`.
     public var menuTitle: String { "\(provider.label) \u{2014} \(shortStatus)" }
 
-    /// The menu offers no one-click install for an agent that is not installed
-    /// (its config directory is missing); Settings still can.
+    /// No one-click menu install for an agent that isn't installed; Settings still offers it.
     public var menuEnabled: Bool { agentDetected }
 
-    /// Clicking uninstalls a complete install and (re)installs anything else, which
-    /// also repairs the CLI path and refreshes Codex trust.
+    /// Anything short of a full install reinstalls, which also repairs the CLI path and refreshes Codex trust.
     public var toggleAction: HookAction { fullyInstalled ? .uninstall : .install }
 
-    /// `3 legacy Python hooks (removed on install)`, nil when there are none.
     public var legacyText: String? {
         guard legacyHooks > 0 else { return nil }
         return "\(legacyHooks) legacy Python \(legacyHooks == 1 ? "hook" : "hooks") (removed on install)"
     }
 }
 
-/// Human-readable text for any error, shared by the CLI and the app:
-/// `LocalizedError.errorDescription`, then the `NSError` description, then the
-/// error's own `description` (e.g. `JSONError`).
 public enum ErrorText {
     public static func describe(_ error: Error) -> String {
         if let localized = error as? LocalizedError, let text = localized.errorDescription { return text }
@@ -232,7 +188,6 @@ public enum ErrorText {
     }
 }
 
-/// Result messages for hook actions (Python `<Provider> hooks installed.` etc.).
 public enum HookPresentation {
     public static func resultMessage(provider: HookProvider, action: HookAction, changed: Bool) -> String {
         switch (action, changed) {
@@ -247,7 +202,6 @@ public enum HookPresentation {
         "\(provider.label) hooks failed: \(error)"
     }
 
-    /// Detail lines for an alert: notes, then `Backup: …`, then `Config: …`.
     public static func detailLines(notes: [String], backupPath: String?, configPath: String) -> [String] {
         var lines = notes.filter { !$0.isEmpty }
         if let backupPath { lines.append("Backup: \(backupPath)") }

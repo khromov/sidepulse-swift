@@ -90,9 +90,8 @@ final class StatusModeClassifierTests: XCTestCase {
     }
 
     func testOfferWordBoundaryUsesPythonWordCharacters() {
-        // Python's `\b` treats combining marks and ZWJ as non-word characters (ICU's
-        // `\b` does not); letters, digits (incl. No/Nl) and `_` continue the word.
-        // Expected values produced by collector._assistant_message_asks_question.
+        // Expected values produced by collector._assistant_message_asks_question, whose `\b`
+        // treats combining marks and ZWJ as non-word characters where ICU's does not.
         let vectors: [(String, Bool)] = [
             ("Want me to\u{301} push?", true),
             ("Done. Should I\u{301}", true),

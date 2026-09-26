@@ -1,8 +1,7 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Escape decoding, line counting and validation (spec led-device §4-5). Expected
-/// values were produced by the Python implementation.
+/// Expected values were produced by the Python implementation.
 final class LEDTextTests: XCTestCase {
     func testDecodeEscapesMatchesPython() {
         let vectors: [(String, String)] = [
@@ -21,8 +20,8 @@ final class LEDTextTests: XCTestCase {
     }
 
     func testDecodeEscapesWorksOnScalarsNotGraphemes() {
-        // A combining mark after a backslash forms one grapheme with it; the
-        // backslash must still be seen (and kept, since it is not an escape).
+        // The backslash shares a grapheme with the combining mark but must still be seen, and kept
+        // as a non-escape.
         XCTAssertEqual(LedText.decodeEscapes("\\\u{301}"), "\\\u{301}")
         XCTAssertEqual(LedText.decodeEscapes("\\n\u{301}"), "\n\u{301}")
     }
@@ -43,8 +42,7 @@ final class LEDTextTests: XCTestCase {
         }
     }
 
-    /// Contract: only `\n`, `\r\n` and `\r` separate lines (Python's `splitlines`
-    /// also splits on VT, FF, FS/GS/RS, NEL and U+2028/U+2029).
+    /// Deliberate deviation: Python's `splitlines` also splits on VT, FF, FS/GS/RS, NEL and U+2028/U+2029.
     func testOnlyCommonSeparatorsSplitLines() {
         for separator in ["\u{0B}", "\u{0C}", "\u{1C}", "\u{1D}", "\u{1E}", "\u{85}", "\u{2028}", "\u{2029}"] {
             XCTAssertEqual(LedText.splitLines("a\(separator)b"), ["a\(separator)b"], separator.debugDescription)

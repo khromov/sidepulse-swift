@@ -1,19 +1,8 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse setup [claude|codex|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]`
-///
-/// One-shot setup:
-/// 1. remove the Python install's LaunchAgents (`LegacyPythonMigration`) unless
-///    `--no-migrate`;
-/// 2. install hooks (same provider selection as `install`; Python-era hooks are
-///    replaced by the installers);
-/// 3. unless `--no-app`, install and start the menu-bar app's LaunchAgent
-///    (`AppLauncher.install`). When the app bundle cannot be found this step is
-///    skipped with instructions.
-///
-/// The closing line says what was actually set up. Exit 1 if a hook installer or
-/// launchd failed, or when nothing at all was installed (no agent found and no app).
+/// Exits 1 not only when a step failed but also when nothing at all was installed (no agent found
+/// and no app).
 enum SetupCommand: CLICommand {
     static let spec = CommandSpec(
         name: "setup",
@@ -31,7 +20,6 @@ enum SetupCommand: CLICommand {
         ]
     )
 
-    /// What the app step did.
     enum AppStep { case installed, notFound, failed, skipped }
 
     static func run(_ arguments: ParsedArguments, _ env: CLIEnvironment) throws -> Int32 {
@@ -76,7 +64,6 @@ enum SetupCommand: CLICommand {
         return succeeded ? ExitCode.ok : ExitCode.failure
     }
 
-    /// Installs + starts the LaunchAgent (see `AppLauncher.install`).
     static func installApp(_ env: CLIEnvironment, dryRun: Bool) -> AppStep {
         let plist = "  plist: \(env.launchAgent.plistPath.path)"
         guard let binary = env.appLocator.locate() else {

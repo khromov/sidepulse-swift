@@ -6,7 +6,6 @@ public enum HookProvider: String, CaseIterable, Sendable {
 
     public var label: String { self == .claude ? "Claude Code" : "Codex" }
 
-    /// Events registered in the agent config.
     public var events: [String] {
         switch self {
         case .claude:
@@ -22,21 +21,18 @@ public enum HookProvider: String, CaseIterable, Sendable {
         self == .claude ? paths.claudeSettingsFile : paths.codexConfigFile
     }
 
-    /// The agent's config directory (~/.claude, ~/.codex); used to decide whether
-    /// the agent looks installed.
+    /// Used to decide whether the agent looks installed.
     public func configDir(_ paths: SidePulsePaths) -> URL {
         self == .claude ? paths.claudeDir : paths.codexDir
     }
 }
 
 public enum HookCommand {
-    /// Timeout (seconds) written next to every hook we install. The hook itself
-    /// finishes in milliseconds; this only bounds a wedged process.
+    /// Only bounds a wedged process; the hook itself finishes in milliseconds.
     public static let timeoutSeconds = 10
 
-    /// Substrings that identify a SidePulse hook command, current or Python-era.
-    /// Deliberately never a log path or a `>>` redirect: a user's own
-    /// `say done >> /tmp/x.log` hook must never look like ours.
+    /// Deliberately never a log path or a `>>` redirect, so a user's own `say done >> /tmp/x.log` hook
+    /// never looks like ours.
     static let markers = [
         "hook-log --provider",     // current Swift form (and every Python CLI form)
         "hook_entry.py",           // Python installer (non-frozen)
@@ -46,14 +42,12 @@ public enum HookCommand {
         "sidepulse hook-log",      // `sidepulse hook-log` / `python -m sidepulse hook-log`
     ]
 
-    /// `<quoted cli> hook-log --provider <p> ; true` — `; true` makes the hook fail
-    /// open. The CLI path is POSIX-shell-quoted only when needed.
+    /// The trailing `; true` makes the hook fail open.
     public static func command(cliPath: String, provider: HookProvider) -> String {
         "\(shellQuote(cliPath)) hook-log --provider \(provider.rawValue) ; true"
     }
 
-    /// Single-quote shell quoting when the string contains anything outside
-    /// `[A-Za-z0-9_@%+=:,./-]` (Python shlex.quote semantics).
+    /// Python `shlex.quote` semantics.
     public static func shellQuote(_ s: String) -> String {
         if s.isEmpty { return "''" }
         let safe = s.unicodeScalars.allSatisfy { c in
@@ -66,27 +60,16 @@ public enum HookCommand {
         return "'" + s.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
-    /// True for our commands and every Python-era SidePulse hook command:
-    /// contains "hook-log --provider", "hook_entry.py", "sidepulse.cursor_hook",
-    /// "agent-monitor hook-log" (or the pre-rename "agent_monitor hook-log") or
-    /// "sidepulse hook-log". Never matches on log paths or `>>` redirects.
     public static func isSidePulseCommand(_ command: String) -> Bool {
         markers.contains { command.contains($0) }
     }
 
-    /// True only for the current Swift-style command (contains "hook-log --provider"
-    /// and does NOT contain "hook_entry.py"/"agent-monitor"): exactly the shape
-    /// `command(cliPath:provider:)` writes, one shell word followed by
-    /// ` hook-log --provider <claude|codex> ; true`. Every Python form fails it
-    /// (`agent-monitor hook-log …`, `-m sidepulse hook-log …` and every `--log`),
-    /// and so does a foreign command that merely embeds ours
-    /// (`curl … | sh ; /x/sidepulse hook-log …`), which Codex trust must never
-    /// approve. A CLI path that happens to contain `agent-monitor` still passes.
+    /// Only the exact shape `command(cliPath:provider:)` writes, so a foreign command that merely embeds ours
+    /// (`curl … | sh ; /x/sidepulse hook-log …`) never gets Codex trust.
     public static func isCurrentStyleCommand(_ command: String) -> Bool {
         cliPath(of: command) != nil
     }
 
-    /// The CLI a current-style command runs (its first word, unquoted), else nil.
     public static func cliPath(of command: String) -> String? {
         for provider in HookProvider.allCases {
             let suffix = " hook-log --provider \(provider.rawValue) ; true"
@@ -96,8 +79,7 @@ public enum HookCommand {
         return nil
     }
 
-    /// The string `shellQuote` turned into `word`, or nil when `word` is not exactly
-    /// such a single literal shell word.
+    /// Inverse of `shellQuote`: nil for any word it could not have produced.
     static func unquotedShellWord(_ word: String) -> String? {
         guard !word.isEmpty else { return nil }
         if shellQuote(word) == word { return word }
@@ -106,7 +88,6 @@ public enum HookCommand {
         return shellQuote(inner) == word ? inner : nil
     }
 
-    /// A SidePulse command that is not current-style (Python-era).
     public static func isLegacyCommand(_ command: String) -> Bool {
         isSidePulseCommand(command) && !isCurrentStyleCommand(command)
     }
@@ -118,8 +99,6 @@ public struct InstallResult: Sendable, Equatable {
     public var changed: Bool
     public var backupPath: URL?
     public var dryRun: Bool
-    /// Extra notes (e.g. "removed 12 legacy Python hooks", "trusted 11 Codex hooks",
-    /// "Codex not found; approve hooks with /hooks in Codex").
     public var notes: [String]
 
     public init(provider: HookProvider, configPath: URL, changed: Bool, backupPath: URL? = nil, dryRun: Bool, notes: [String] = []) {
@@ -128,10 +107,8 @@ public struct InstallResult: Sendable, Equatable {
     }
 }
 
-/// Install/uninstall dispatch shared by the CLI and the app.
 public enum HookInstaller {
-    /// Runs the provider's installer. Installing needs `cliPath` (`HookCLIPath.resolve`);
-    /// nil throws `HookCLINotFound` rather than writing hooks that run nothing.
+    /// A nil `cliPath` throws `HookCLINotFound` on install rather than writing hooks that run nothing.
     public static func perform(_ action: HookAction, provider: HookProvider, paths: SidePulsePaths, cliPath: String?,
                                dryRun: Bool = false, trust: Bool = true) throws -> InstallResult {
         switch (action, provider) {
@@ -146,21 +123,16 @@ public enum HookInstaller {
     }
 }
 
-/// Distinct values in first-seen order.
 func uniqued(_ values: [String]) -> [String] {
     var seen = Set<String>()
     return values.filter { seen.insert($0).inserted }
 }
 
-/// Errors raised by the hook installers. The config file is never touched when
-/// one of these is thrown.
+/// The config file is never touched when one of these is thrown.
 public enum HookInstallError: Error, Equatable, CustomStringConvertible {
-    /// The config file is not valid JSON.
     case invalidJSON(path: String, message: String)
-    /// The config parses but has a shape we refuse to rewrite (for example
-    /// `"hooks": []`), because rewriting it would destroy user data.
+    /// A shape we refuse to rewrite (e.g. `"hooks": []`) because rewriting it would destroy user data.
     case invalidStructure(path: String, message: String)
-    /// The config file exists but could not be read.
     case unreadable(path: String, message: String)
 
     public var description: String {
@@ -174,7 +146,7 @@ public enum HookInstallError: Error, Equatable, CustomStringConvertible {
         }
     }
 
-    /// Same error, attributed to `path` (the pure transforms do not know it).
+    /// The pure transforms do not know the real path, so callers attach it here.
     func at(_ path: String) -> HookInstallError {
         switch self {
         case .invalidJSON(_, let m): return .invalidJSON(path: path, message: m)
@@ -184,11 +156,9 @@ public enum HookInstallError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// Shared file plumbing for the installers.
 enum HookConfigFile {
-    /// Returns the file's text, nil when it does not exist. Throws when it exists
-    /// but cannot be read or is not UTF-8 (so we never mistake an unreadable file
-    /// for a new one, and never write back a lossy decoding of it).
+    /// Throws rather than returning nil for an unreadable or non-UTF-8 file, so it is never mistaken for a
+    /// new one or written back lossily.
     static func read(_ url: URL) throws -> String? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data: Data
@@ -203,7 +173,6 @@ enum HookConfigFile {
         return text
     }
 
-    /// Backs up (when the file exists) and atomically writes `text`.
     static func write(_ text: String, to url: URL, now: Date) throws -> URL? {
         try FileUtil.ensureWritable(url)
         let backup = try FileUtil.backup(url, now: now)
@@ -216,24 +185,9 @@ enum HookConfigFile {
     }
 }
 
-/// Claude Code: `~/.claude/settings.json` (order-preserving edit via JSONValue).
-/// Install: for each event, drop SidePulse handlers (current + legacy), drop
-/// entries left with no handlers, then append
-/// `{"matcher":"*","hooks":[{"type":"command","command":CMD,"timeout":10}]}`.
-/// Uninstall: remove SidePulse handlers from all events; remove empty events; remove
-/// `hooks` if empty. Non-dict entries / entries without a `hooks` array are kept
-/// untouched. Invalid JSON → throws (file untouched). Output: pretty 2-space JSON +
-/// "\n". Writes are atomic, with a `.bak.<stamp>` backup when the file changed and
-/// existed.
-///
-/// When the transform does not change the parsed document, the original text is
-/// returned byte-for-byte (the user's formatting is only rewritten when we
-/// actually change something). An event that already holds exactly our entry,
-/// and no other SidePulse handler, is left in place, so reinstalling never
-/// reorders a user's hooks. SidePulse handlers under events outside the 12 are
-/// removed too (as uninstall does), so no Python-era hook survives an install.
+/// Unchanged documents come back byte-for-byte and an event already holding exactly our entry is left in
+/// place, so reinstalling never reformats or reorders a user's hooks.
 public enum ClaudeHookInstaller {
-    /// Pure transform. `text` nil/empty = new file.
     public static func installing(into text: String?, command: String) throws -> String {
         let original: JSONValue?
         var root: JSONObject
@@ -257,7 +211,8 @@ public enum ClaudeHookInstaller {
         }
 
         let desired = desiredEntry(command: command)
-        // Other events: only strip our handlers (non-arrays are not ours to judge).
+        // Strip our handlers from other events too so no Python-era hook survives; non-arrays there are not
+        // ours to judge.
         for (event, value) in hooks.entries where !HookProvider.claude.events.contains(event) {
             guard case .array(let entries) = value else { continue }
             let cleaned = entries.compactMap(removingSidePulseHandlers)
@@ -310,9 +265,6 @@ public enum ClaudeHookInstaller {
         return JSONValue.object(root).serialized(pretty: true) + "\n"
     }
 
-    /// Events whose entries contain a current-style SidePulse command. Known
-    /// Claude events come first in `HookProvider.claude.events` order, then any
-    /// other event in file order. Invalid JSON → [].
     public static func installedEvents(in text: String) -> [String] {
         let found = handlerCommands(in: text)
             .filter { HookCommand.isCurrentStyleCommand($0.command) }
@@ -323,12 +275,10 @@ public enum ClaudeHookInstaller {
         return known + others
     }
 
-    /// Distinct CLI paths called by current-style SidePulse commands.
     public static func hookCLIPaths(in text: String) -> [String] {
         uniqued(handlerCommands(in: text).compactMap { HookCommand.cliPath(of: $0.command) })
     }
 
-    /// Count of legacy (Python-era) SidePulse handlers.
     public static func legacyHandlerCount(in text: String) -> Int {
         handlerCommands(in: text).filter { HookCommand.isLegacyCommand($0.command) }.count
     }
@@ -382,7 +332,6 @@ public enum ClaudeHookInstaller {
 
     // MARK: - Helpers
 
-    /// `{"matcher":"*","hooks":[{"type":"command","command":CMD,"timeout":10}]}`
     static func desiredEntry(command: String) -> JSONValue {
         let handler: JSONObject = [
             "type": .string("command"),
@@ -403,8 +352,6 @@ public enum ClaudeHookInstaller {
         return handlers.contains { $0["command"]?.stringValue.map(HookCommand.isSidePulseCommand) ?? false }
     }
 
-    /// The entry without SidePulse handlers; nil when nothing else is left.
-    /// Anything that is not an object with a `hooks` array is returned unchanged.
     static func removingSidePulseHandlers(_ entry: JSONValue) -> JSONValue? {
         guard case .object(var object) = entry, case .array(let handlers)? = object["hooks"] else { return entry }
         let kept = handlers.filter { !($0["command"]?.stringValue.map(HookCommand.isSidePulseCommand) ?? false) }
@@ -414,7 +361,6 @@ public enum ClaudeHookInstaller {
         return .object(object)
     }
 
-    /// (event, command) for every handler with a string command.
     static func handlerCommands(in text: String) -> [(event: String, command: String)] {
         guard let root = try? JSONValue.parse(text), case .object(let hooks)? = root["hooks"] else { return [] }
         var out: [(String, String)] = []

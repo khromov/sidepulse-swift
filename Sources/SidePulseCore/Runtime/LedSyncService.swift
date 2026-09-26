@@ -1,80 +1,45 @@
 import Darwin
 import Foundation
 
-/// Drives LEDs on every connected device. Thread-safe: all device I/O happens on
-/// an internal serial queue (`ioQueue`); the bookkeeping the UI reads (devices,
-/// errors) sits behind a lock, so `connectedDevices` and `deviceInfos(settings:)`
-/// never wait for a slow SD write.
-///
-/// - `requestSync(mode:)` is coalesced: if a sync is running, a dirty flag makes it
-///   run once more afterwards (never drops the latest mode — fixes the Python bug).
-/// - Per device: Manual → skip; Agent → `AgentLedController.sync(mode:animationID:)`
-///   with the device brightness and `settings.animationID(for: mode)`.
-/// - Agent writes (syncs and previews) check the settings again once LEDS.LED is
-///   open, and skip a device that meanwhile became Manual: open() can wait minutes
-///   on the macOS removable-volume prompt.
-/// - While a preview is active (until its deadline) normal syncs are deferred; when
-///   it ends controllers are reset and the latest mode is re-synced.
-/// - Keepalive: `KeepaliveToucher.poke` for connected 8-LED devices (Agent or
-///   Manual) on each sync / tick. Only an SD reader powers a card down, so Dots
-///   (USB) are never touched.
-/// - A write or keepalive touch stuck for more than `stallNotice` shows as the
-///   device's error (`waitingForPermissionMessage`); an open() refused by macOS
-///   shows `accessDeniedMessage`.
-///
-/// Controller resets (`resetControllers`, hot-plug changes, previews ending) are
-/// recorded under the lock and applied on the I/O queue right before the next
-/// sync, so they are always ordered before it and never race a write.
+/// Device I/O runs on the serial `ioQueue` while what the UI reads sits behind `lock`,
+/// so readers never wait for a slow SD write (see docs/ARCHITECTURE.md, Runtime threading).
 public final class LedSyncService: @unchecked Sendable {
-    /// Device error while a write or keepalive touch has been stuck for more than
-    /// `stallNotice` (normally open() waiting on the macOS permission prompt).
+    /// Shown for any stall past `stallNotice`, since that is almost always open()
+    /// blocked on the macOS removable-volume prompt.
     static let waitingForPermissionMessage = "Waiting for macOS permission to access this device — check for a system prompt"
-    /// Device error when macOS refused to open LEDS.LED (EPERM/EACCES).
     static let accessDeniedMessage = "macOS denied access. Allow SidePulse in System Settings › Privacy & Security "
         + "› Files and Folders (Removable Volumes)"
 
-    /// Validate programs but never write them (nor touch keepalive files).
     public let dryRun: Bool
 
     private let settingsProvider: @Sendable () -> SidePulseSettings
     private let roots: [URL]?
     private let log: @Sendable (String) -> Void
     private let keepalive: KeepaliveToucher
-    /// Monotonic seconds, for preview deadlines and stuck writes.
     private let clock: @Sendable () -> TimeInterval
-    /// Device discovery (`DeviceDiscovery.discover`; tests inject slow/fake ones).
     private let discover: @Sendable ([URL]?) -> [DeviceCandidate]
     /// Seconds after which a running write or keepalive touch counts as stuck.
     let stallNotice: TimeInterval
 
-    /// Serial queue for every LEDS.LED read/write (internal for tests).
     let ioQueue = DispatchQueue(label: "sidepulse.leds.io", qos: .utility)
-    /// Writes that passed their settings check and are changing LEDS.LED.
     private let writesInProgress = DispatchGroup()
 
     private let lock = NSLock()
     private var shared = Shared()
 
-    /// Lock-protected state.
     private struct Shared {
         var devices: [DeviceCandidate] = []
-        /// Device id → "target|dev:ino" of the connected set (hot-plug detection).
         var signatures: [String: String] = [:]
         var resetAll = false
         var resetIDs: Set<String> = []
-        /// Latest mode passed to requestSync/syncNow (restored after previews).
         var latestMode: AgentMode?
         var syncScheduled = false
         var previewToken = 0
-        /// Set while a preview plays; cleared by its restore.
+        /// Cleared by the preview's restore rather than by comparing it with the clock.
         var previewUntil: TimeInterval?
-        /// Last write error per device id.
         var errors: [String: String] = [:]
-        /// Device id → `clock()` when its running LEDS.LED write started.
         var writesStarted: [String: TimeInterval] = [:]
-        /// Errors as `checkDeviceStatus` last saw them.
         var reportedErrors: [String: String] = [:]
-        /// Sync passes performed (diagnostics / tests).
         var syncPasses = 0
         var keepaliveError: String?
     }
@@ -90,11 +55,6 @@ public final class LedSyncService: @unchecked Sendable {
         self.init(settings: settings, roots: roots, dryRun: dryRun, log: log, keepalive: KeepaliveToucher())
     }
 
-    /// - Parameters:
-    ///   - keepalive: toucher for `<volume>/keepalive` (tests inject a recorder).
-    ///   - clock: monotonic seconds used for preview deadlines and stuck writes.
-    ///   - discover: device discovery for `pollDevices` (tests inject slow ones).
-    ///   - stallNotice: seconds after which a write or touch counts as stuck.
     init(settings: @escaping @Sendable () -> SidePulseSettings,
          roots: [URL]?,
          dryRun: Bool,
@@ -121,12 +81,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     // MARK: Devices
 
-    /// Re-discovers devices; resets controllers of changed/removed devices. Returns
-    /// true if the connected set changed.
-    ///
-    /// A device counts as changed when its target or the identity (device and
-    /// inode) of its volume root changed, so a different card mounted under the
-    /// same name gets its program rewritten. Discovery runs on the calling thread.
+    /// Runs discovery on the calling thread, which a hung mount can block.
     @discardableResult
     public func pollDevices() -> Bool {
         let found = discover(roots)
@@ -154,14 +109,12 @@ public final class LedSyncService: @unchecked Sendable {
         return changed
     }
 
-    /// Currently connected devices (from the last poll).
     public var connectedDevices: [DeviceCandidate] {
         locked { $0.devices }
     }
 
-    /// Connected + remembered devices merged with `settings` (the runtime passes
-    /// the settings the UI sees), sorted (connected first, then name), names
-    /// disambiguated. Never blocks on device I/O.
+    /// Takes `settings` so the runtime can pass the UI's settings, including changes
+    /// still being saved.
     public func deviceInfos(settings: SidePulseSettings) -> [DeviceInfo] {
         let (devices, errors) = shownErrors()
         var infos: [DeviceInfo] = []
@@ -189,9 +142,6 @@ public final class LedSyncService: @unchecked Sendable {
         return Self.disambiguated(infos)
     }
 
-    /// Connected devices and the error to show per device id: the last write
-    /// error, or `waitingForPermissionMessage` while a write or keepalive touch has
-    /// been running for more than `stallNotice`.
     private func shownErrors() -> (devices: [DeviceCandidate], errors: [String: String]) {
         let stalledTouches = keepalive.stalledFiles(after: stallNotice)
         let now = clock()
@@ -207,9 +157,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Called on the runtime's device tick. Returns true when a device's shown
-    /// error (including the waiting notice) changed since the last call, so an
-    /// open menu can refresh. Logs a stuck device once, when first seen.
+    /// Returns true when a shown error changed since the last call, so an open menu
+    /// can refresh.
     func checkDeviceStatus() -> Bool {
         let (devices, errors) = shownErrors()
         let previous = locked { state -> [String: String] in
@@ -224,9 +173,8 @@ public final class LedSyncService: @unchecked Sendable {
         return errors != previous
     }
 
-    /// Duplicate names: the first entry (in display order) keeps the plain name,
-    /// later ones get their volume name appended ("SidePulse Dot (PulseDot 1)"),
-    /// falling back to the full root path, so every name is unique.
+    /// Expects `infos` in display order, because the first of each duplicate keeps the
+    /// plain name.
     static func disambiguated(_ infos: [DeviceInfo]) -> [DeviceInfo] {
         var counts: [String: Int] = [:]
         for info in infos { counts[info.name, default: 0] += 1 }
@@ -252,7 +200,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// "target|dev:ino" of the volume root ("missing" when it cannot be stat'ed).
+    /// Includes the volume root's dev:ino so a different card mounted under the same
+    /// name counts as changed and gets its program rewritten.
     static func signature(of device: DeviceCandidate) -> String {
         var info = stat()
         let identity = stat(device.root.path, &info) == 0 ? "\(info.st_dev):\(info.st_ino)" : "missing"
@@ -261,7 +210,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     // MARK: Syncing
 
-    /// Async, coalesced.
+    /// Coalesced without ever dropping the latest mode, which the Python version could.
     public func requestSync(mode: AgentMode) {
         let schedule = locked { state -> Bool in
             state.latestMode = mode
@@ -274,9 +223,7 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Synchronous sync of all devices (CLI `leds --once`). Keyed by device id.
-    ///
-    /// Manual devices are skipped (not in the result). Runs even while a preview plays.
+    /// Unlike `requestSync`, runs even while a preview plays.
     @discardableResult
     public func syncNow(mode: AgentMode) -> [String: LedSyncResult] {
         ioQueue.sync {
@@ -285,11 +232,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Plays `animationID` on all connected Agent-mode devices for `seconds`, then
-    /// restores live status. A newer preview cancels the older restore.
-    ///
-    /// Unknown animation ids are ignored (logged). Each device gets its own LED
-    /// count variant and brightness.
+    /// Normal syncs wait for the preview's restore, and a newer preview cancels the
+    /// older restore.
     public func preview(animationID: String, seconds: TimeInterval = 3) {
         guard AnimationLibrary.animation(id: animationID) != nil else {
             log("leds: preview skipped, unknown animation \(animationID)")
@@ -310,11 +254,7 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// One-off write to one device (e.g. "off" when switching to Manual), on the
-    /// I/O queue without waiting; `completion` runs there.
-    ///
-    /// Fails for a device that is not connected (as of the last poll) and for
-    /// invalid programs. Dry runs only validate. Resets the device's controller.
+    /// `completion` runs on the I/O queue.
     func writeOnceAsync(program: String, deviceID: String, completion: @escaping @Sendable (Error?) -> Void) {
         ioQueue.async { [self] in
             do {
@@ -326,7 +266,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Forget dedupe state (nil = all devices) so the next sync rewrites.
+    /// Forces the next sync to rewrite; applied on the I/O queue right before that sync,
+    /// so a reset never races a write.
     public func resetControllers(deviceID: String? = nil) {
         locked { state in
             if let deviceID {
@@ -337,16 +278,10 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Keepalive only (called from the refresh timer).
-    ///
-    /// Touches `<volume>/keepalive` of every connected 8-LED device (rate limited to
-    /// once a minute per volume by `KeepaliveToucher`); never in dry runs.
     public func touchKeepalive(now: Date = Date()) {
         touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now)
     }
 
-    /// Blocks until work queued on the I/O queue so far has finished, or `timeout`
-    /// passes. Returns false on timeout.
     @discardableResult
     public func waitUntilIdle(timeout: TimeInterval = 5) -> Bool {
         let done = DispatchSemaphore(value: 0)
@@ -354,22 +289,16 @@ public final class LedSyncService: @unchecked Sendable {
         return done.wait(timeout: .now() + timeout) == .success
     }
 
-    /// Blocks until the LEDS.LED writes that already passed their settings check
-    /// have finished, or `timeout` passes. Writes still waiting in open() are not
-    /// waited for: they check the settings once it returns. Returns false on timeout.
+    /// Skips writes still blocked in open(), which re-check the settings once it returns.
     func waitForWrites(timeout: TimeInterval) -> Bool {
         writesInProgress.wait(timeout: .now() + timeout) == .success
     }
 
-    /// Blocks until keepalive touches already scheduled have finished, or `timeout`
-    /// passes (a hung mount). Returns false on timeout.
     @discardableResult
     func waitForKeepaliveTouches(timeout: TimeInterval) -> Bool {
         keepalive.waitForPendingTouches(timeout: timeout)
     }
 
-    /// Ends a playing preview now (cancelling its timed restore) and restores live
-    /// status; nothing happens when no preview plays. Asynchronous.
     func finishPreviewNow() {
         ioQueue.async { [self] in
             let (active, mode) = locked { state -> (Bool, AgentMode?) in
@@ -383,10 +312,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Sync passes performed so far (tests / diagnostics).
     var syncPassCount: Int { locked { $0.syncPasses } }
 
-    /// True while a preview holds off normal syncs.
     var isPreviewing: Bool { locked { $0.previewUntil != nil } }
 
     // MARK: I/O queue
@@ -454,7 +381,6 @@ public final class LedSyncService: @unchecked Sendable {
         return controller
     }
 
-    /// Stores the device's error; logs only when it changes.
     private func record(error: String?, for device: DeviceCandidate) {
         let previous = locked { state -> String? in
             let previous = state.errors[device.id]
@@ -513,10 +439,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// `LedWriter.write` to `device`, recorded as running (so a stuck write shows)
-    /// and with a refused open() reported as `accessDeniedMessage`. An `agentOnly`
-    /// write is skipped (false) if, once the file is open, the device is no longer
-    /// in Agent mode or LED output is off.
+    /// An `agentOnly` write returns false without writing if the device left Agent mode
+    /// while open() was blocked.
     private func write(_ program: String, to device: DeviceCandidate, agentOnly: Bool) throws -> Bool {
         locked { $0.writesStarted[device.id] = clock() }
         var entered = false

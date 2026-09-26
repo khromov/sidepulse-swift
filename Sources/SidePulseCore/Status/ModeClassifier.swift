@@ -1,20 +1,6 @@
 import Foundation
 
-/// Event → mode rules (Python `mode_for_event` and helpers). Order matters; see
-/// spec collector §4.
 public enum ModeClassifier {
-    /// 1. Interrupt → idleReady (before markers)
-    /// 2. explicitMode(raw) → that mode (applies to every event)
-    /// 3. PostToolUseFailure | PermissionDenied | StopFailure → blockedError
-    /// 4. PermissionRequest → waitingForInput
-    /// 5. Notification: completion → completed; needs input → waitingForInput; else working
-    /// 6. PreToolUse → toolRunning
-    /// 7. PostToolUse: failed tool response → blockedError, else working
-    /// 8. UserPromptSubmit | PreCompact | PostCompact | SubagentStart → working
-    /// 9. Stop | SubagentStop: asks question → waitingForInput, else completed
-    /// 10. SessionEnd → completed
-    /// 11. SessionStart → idleReady
-    /// 12. else nil
     public static func mode(for event: HookEvent) -> AgentMode? {
         let raw = event.raw
         // An interrupted turn is inactive, but it has not completed its work.
@@ -49,8 +35,6 @@ public enum ModeClassifier {
 
     // MARK: Explicit markers
 
-    /// `raw.sidepulse_status`, then `raw.sidepulse_mode` (strings, normalized via
-    /// `normalizeMarkerValue`), then `markerMode(in: last_assistant_message || message)`.
     public static func explicitMode(raw: JSONObject) -> AgentMode? {
         for key in ["sidepulse_status", "sidepulse_mode"] {
             if let value = raw[key]?.stringValue, let mode = normalizeMarkerValue(value) { return mode }
@@ -59,10 +43,8 @@ public enum ModeClassifier {
         return markerMode(in: text)
     }
 
-    /// Whole-line marker syntaxes, tried in this order. Python compiles them with
-    /// `(?im)`, where `^`/`$` only treat `\n` as a line break; ICU's
-    /// `useUnixLineSeparators` gives the same anchors. `\s` is Python's Unicode
-    /// whitespace, so a marker comment may span lines (as in Python).
+    /// `useUnixLineSeparators` makes `^`/`$` treat only `\n` as a line break, like
+    /// Python's `(?im)`.
     private static let markerPatterns: [TextRegex] = {
         let s = "[\(PyText.regexSpaceClass)]"
         let name = #"(?:sidepulse|agent[-_ ]monitor)"#
@@ -74,9 +56,6 @@ public enum ModeClassifier {
         ].map { TextRegex($0, options: [.caseInsensitive, .anchorsMatchLines, .useUnixLineSeparators]) }
     }()
 
-    /// Strips fenced ``` blocks, then tries the three whole-line marker patterns
-    /// (case-insensitive, multiline) in pattern order, matches in document order;
-    /// first value that maps to a mode wins.
     public static func markerMode(in text: String) -> AgentMode? {
         let stripped = stripFencedCodeBlocks(text)
         // Cheap pre-check: every syntax contains one of these words.
@@ -101,7 +80,6 @@ public enum ModeClassifier {
         "idle": .idleReady, "ready": .idleReady, "idle_ready": .idleReady,
     ]
 
-    /// `re.sub('[^a-z0-9]+','_', v.strip().lower()).strip('_')` then the vocabulary map.
     public static func normalizeMarkerValue(_ value: String) -> AgentMode? {
         var out: [UInt8] = []
         var previousWasSeparator = false
@@ -131,8 +109,6 @@ public enum ModeClassifier {
         "permission", "approval", "confirm",
     ]
 
-    /// `"{type} {message}"` (each stripped + lowercased) contains a completion phrase,
-    /// or type is `idle_prompt` with message done/complete/completed.
     public static func notificationIsCompletion(raw: JSONObject) -> Bool {
         let type = PyText.strip(PyText.str(raw["notification_type"])).lowercased()
         let message = PyText.strip(PyText.str(raw["message"])).lowercased()
@@ -141,8 +117,7 @@ public enum ModeClassifier {
         return type == "idle_prompt" && ["done", "complete", "completed"].contains(message)
     }
 
-    /// `"{type} {message}"` lowercased contains an input-needed phrase. These are
-    /// plain substrings, so "confirmed" matches too (as in Python).
+    /// The phrases are plain substrings, so "confirmed" matches too, as in Python.
     public static func notificationNeedsInput(raw: JSONObject) -> Bool {
         let text = "\(PyText.str(raw["notification_type"])) \(PyText.str(raw["message"]))".lowercased()
         return PyText.contains(text, anyOf: inputNeededPhrases)
@@ -150,11 +125,7 @@ public enum ModeClassifier {
 
     // MARK: Tool failures
 
-    /// Object: interrupted == true, success == false, or exit_code not null/0
-    /// (string "0" counts as failed). String: lowercased contains "exit code: 1" or
-    /// "traceback". Also honours our hook record's precomputed
-    /// `raw.tool_response_failed` bool when the caller passes the whole raw object
-    /// through `toolFailed(raw:)`.
+    /// A string `exit_code`, even "0", counts as failed, as in Python.
     public static func toolResponseLooksFailed(_ value: JSONValue?) -> Bool {
         switch value {
         case .object(let response)?:
@@ -177,8 +148,6 @@ public enum ModeClassifier {
         }
     }
 
-    /// `raw.tool_response_failed` (bool) if present, else
-    /// `toolResponseLooksFailed(raw.tool_response)`.
     public static func toolFailed(raw: JSONObject) -> Bool {
         if let precomputed = raw["tool_response_failed"]?.boolValue { return precomputed }
         return toolResponseLooksFailed(raw["tool_response"])
@@ -193,10 +162,8 @@ public enum ModeClassifier {
         "anything you want", "anything you'd like", "anything else you want", "anything else you'd like",
     ]
 
-    /// Python's trailing `\b` is spelled as "not followed by a Python word character"
-    /// (`str.isalnum()` or `_`): ICU's `\w` also counts combining marks, so ICU's `\b`
-    /// finds no boundary in "want me to\u{301}" where Python does. The character
-    /// before the boundary is always an ASCII letter, so the lookahead is exact.
+    /// Python's trailing `\b` is spelled as a lookahead because ICU's `\w` also counts
+    /// combining marks, so ICU's `\b` finds no boundary in "want me to\u{301}".
     private static let offerPattern = TextRegex(
         #"(?:^|[.!?][\#(PyText.regexSpaceClass)]+)(?:want me to|need me to|should i|should we|do you want me to)(?![\p{L}\p{N}_])"#)
 
@@ -209,11 +176,6 @@ public enum ModeClassifier {
         "which ", "what ", "where ", "when ", "who ", "why ", "how ", "can you ", "could you ",
     ] + requestPrefixes
 
-    /// Question heuristic for Stop/SubagentStop (spec collector §4d).
-    ///
-    /// Code is removed first (fenced blocks, then inline spans). Of the non-empty
-    /// lines (Python `splitlines`), the last 8 are checked from the end, skipping
-    /// Claude status lines; true as soon as one line asks a concrete question.
     public static func assistantMessageAsksQuestion(_ text: String?) -> Bool {
         guard let text else { return false }
         let lines = PyText.splitLines(stripInlineCode(stripFencedCodeBlocks(text)))
@@ -226,9 +188,6 @@ public enum ModeClassifier {
         return false
     }
 
-    /// One line: not ending with `:`, not a casual closer, and either an offer
-    /// ("Want me to push?") at the start or after a sentence end, or a line that
-    /// starts with a question/request prefix (question words need a trailing `?`).
     static func lineAsksQuestion(_ line: String) -> Bool {
         let text = PyText.strip(line)
         guard !text.isEmpty else { return false }

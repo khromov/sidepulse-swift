@@ -1,10 +1,7 @@
 import AppKit
 import SidePulseCore
 
-/// Owns the runtime and the UI. Startup: create `SidePulseRuntime(paths: .current)`
-/// and start it; if another instance already serves the event socket, hand over to
-/// it (`handOver`) and exit 0 (so the LaunchAgent does not restart us). Then show
-/// the status item.
+/// Exits 0 when another instance already serves the event socket so the LaunchAgent does not restart us.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let paths = SidePulsePaths.current
@@ -56,10 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController.update(snapshot: runtime.snapshot())
     }
 
-    /// Another instance owns the socket. Started by the LaunchAgent (nobody is
-    /// looking), only log it. Opened by hand, ask the other instance to show its
-    /// Settings, like a Finder re-open; only a headless runtime (`sidepulse run`)
-    /// cannot, and that is worth an alert.
+    /// A LaunchAgent start only logs because nobody is looking; a manual open asks the other instance to show
+    /// Settings and alerts only when it is a headless runtime that cannot.
     private func handOver(socketPath: String) {
         DiagnosticsLog.shared.log("app: another instance serves \(socketPath); exiting")
         guard ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] != SidePulseConstants.launchAgentLabel else { return }
@@ -72,7 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 + "\(socketPath). Stop it, then open SidePulse again.")
     }
 
-    /// Finder re-open (double-clicking the app while it runs) shows Settings.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showSettings()
         return true
@@ -84,9 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Runtime events
 
-    /// Runs `body` on the main actor. The runtime promises main-queue callbacks, so
-    /// this is normally inline; a callback from another queue is hopped to main
-    /// instead of tripping `assumeIsolated` (a crash would make launchd restart us).
+    /// Hops a stray off-main callback to main instead of tripping `assumeIsolated`, since a crash would make
+    /// launchd restart us.
     nonisolated private static func onMain(_ body: @escaping @MainActor () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated(body)
@@ -115,9 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettings()
     }
 
-    /// `launchctl bootout` (install/upgrade, `sidepulse app stop`) sends SIGTERM and
-    /// `sidepulse app start --foreground` forwards Ctrl-C as SIGINT; terminate normally
-    /// so the runtime flushes latest.json and releases the keep-awake assertion.
+    /// SIGTERM (`launchctl bootout`) and SIGINT terminate normally so the runtime flushes latest.json and
+    /// releases the keep-awake assertion.
     private func handleTerminationSignals() {
         terminationSignals = [SIGTERM, SIGINT].map { number in
             signal(number, SIG_IGN)
@@ -138,8 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DiagnosticsLog.shared.flush()
     }
 
-    /// Accessory apps have no visible main menu, but its key equivalents still work
-    /// while a SidePulse window is key (⌘, ⌘W ⌘Q, and copy in the settings window).
+    /// Accessory apps have no visible main menu, but its key equivalents still work while a SidePulse window is key.
     private func installMainMenu() {
         let mainMenu = NSMenu()
 

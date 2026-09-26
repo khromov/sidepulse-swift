@@ -1,11 +1,7 @@
 import Foundation
 
-/// Helpers shared by the LED test files (namespaced so other test files can use
-/// the same names freely).
+/// Namespaced so other test files can use the same helper names freely.
 enum LEDTestSupport {
-    /// The Python checkout used for differential checks: `$SIDEPULSE_PYTHON_REPO`,
-    /// else `../sidepulse` next to this package. Nil when absent (those tests are
-    /// skipped).
     static func pythonRepo() -> URL? {
         let fm = FileManager.default
         var candidates: [URL] = []
@@ -18,13 +14,12 @@ enum LEDTestSupport {
         }
     }
 
-    /// Root of this Swift package (the directory holding Package.swift).
     static func packageRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    /// lid-open*, lid-closed*, ember-lid-open*, purple-lid-open* (dropped in the port).
+    /// Lid animations were deliberately dropped in the port.
     static func isLidAnimation(_ name: String) -> Bool {
         name.hasPrefix("lid-") || name.contains("-lid-")
     }

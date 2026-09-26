@@ -1,7 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Per-device write gate (spec led-device §11), driven by a fake clock and temp files.
 final class LEDControllerTests: XCTestCase {
     private final class FakeClock {
         var now: TimeInterval = 1000
@@ -192,8 +191,7 @@ final class LEDControllerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
     }
 
-    /// A write the sync service declined (the device became Manual while open()
-    /// waited) is not remembered, so the next sync writes again.
+    /// The sync service declines a write when the device became Manual while open() waited.
     func testDeclinedWriteIsNotRemembered() throws {
         let target = try device("SidePulseDot")
         let controller = AgentLedController(target: target)

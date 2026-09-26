@@ -2,14 +2,7 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// A throwaway world for runtime tests, entirely under a short `/tmp` directory
-/// (so the socket path fits `sun_path`):
-///
-/// ```
-/// <root>/home   fake HOME (never the real one)
-/// <root>/s      SIDEPULSE_HOME (settings.json, latest.json, logs/, events.sock)
-/// <root>/m      mount root with fake device folders (<root>/m/PulseDot/LEDS.LED …)
-/// ```
+/// Everything lives under a short `/tmp` root so the socket path fits `sun_path`.
 final class RuntimeWorld {
     let root: URL
     let home: URL
@@ -30,7 +23,6 @@ final class RuntimeWorld {
         precondition(paths.socketPath.hasPrefix(root.path), "socket must live in the temp world")
     }
 
-    /// Stops every runtime made here, then deletes the world.
     func tearDown() {
         for runtime in runtimes { runtime.stop() }
         runtimes.removeAll()
@@ -39,7 +31,6 @@ final class RuntimeWorld {
 
     // MARK: Devices
 
-    /// Creates `<mounts>/<name>` with a LEDS.LED holding `content` (nil = no file).
     @discardableResult
     func addDevice(_ name: String, content: String? = "boot") -> URL {
         let volume = mounts.appendingPathComponent(name, isDirectory: true)
@@ -50,8 +41,7 @@ final class RuntimeWorld {
         return volume
     }
 
-    /// Deletes the device folder. Retries because an asynchronous keepalive touch
-    /// can recreate a file inside it while it is being removed.
+    /// Retries because an asynchronous keepalive touch can recreate a file inside the folder mid-removal.
     func removeDevice(_ name: String) {
         let volume = mounts.appendingPathComponent(name, isDirectory: true)
         for _ in 0..<50 where FileManager.default.fileExists(atPath: volume.path) {
@@ -60,7 +50,6 @@ final class RuntimeWorld {
         }
     }
 
-    /// Device id (volume root path), as discovery spells it.
     func deviceID(_ name: String) -> String {
         mounts.appendingPathComponent(name, isDirectory: true).path
     }
@@ -79,8 +68,7 @@ final class RuntimeWorld {
 
     // MARK: Runtime
 
-    /// Socket on, keep-awake off, temp mounts, fast device polling, a long refresh
-    /// interval (tests call `refresh()`), short latest.json delay.
+    /// The refresh interval is long because tests call `refresh()` themselves.
     func options(serveSocket: Bool = true) -> RuntimeOptions {
         var options = RuntimeOptions()
         options.serveSocket = serveSocket
@@ -132,7 +120,6 @@ final class RuntimeWorld {
     }
 }
 
-/// Hook records like the ones `sidepulse hook-log` forwards.
 enum RuntimeRecords {
     static func event(_ name: String, session: String = "s1", secondsAgo: Double = 0,
                       _ extra: [String: JSONValue] = [:]) -> JSONObject {
@@ -146,31 +133,25 @@ enum RuntimeRecords {
         return line
     }
 
-    /// Working.
     static func prompt(_ session: String = "s1", secondsAgo: Double = 0) -> JSONObject {
         event("UserPromptSubmit", session: session, secondsAgo: secondsAgo, ["prompt": .string("Fix the tests")])
     }
 
-    /// Tool running (working group).
     static func tool(_ session: String = "s1", name: String = "Bash") -> JSONObject {
         event("PreToolUse", session: session, ["tool_name": .string(name)])
     }
 
-    /// Ask (sticky permission prompt).
     static func permission(_ session: String = "s1", command: String = "rm -rf build") -> JSONObject {
         event("PermissionRequest", session: session,
               ["tool_name": .string("Bash"), "tool_input": .object(["command": .string(command)])])
     }
 
-    /// Done.
     static func stop(_ session: String = "s1", secondsAgo: Double = 0) -> JSONObject {
         event("Stop", session: session, secondsAgo: secondsAgo, ["last_assistant_message": .string("All done.")])
     }
 }
 
 enum RuntimePrograms {
-    /// The program the runtime should write for `mode` (default animations unless
-    /// `settings` says otherwise).
     static func expected(_ mode: AgentMode, ledCount: Int, brightness: Int = 255,
                          settings: SidePulseSettings = SidePulseSettings()) -> String {
         program(settings.animationID(for: mode), ledCount: ledCount, brightness: brightness)
@@ -186,8 +167,7 @@ enum RuntimePrograms {
     }
 }
 
-/// Polls `condition`, spinning the main run loop so main-queue callbacks
-/// (`onUpdate`) are delivered meanwhile.
+/// Spins the main run loop instead of sleeping so main-queue `onUpdate` callbacks are delivered meanwhile.
 @discardableResult
 func runtimeWait(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
     let end = Date().addingTimeInterval(timeout)
@@ -198,13 +178,11 @@ func runtimeWait(timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
     return condition()
 }
 
-/// Spins the main run loop for `seconds`.
 func runtimeSpin(_ seconds: TimeInterval) {
     let end = Date().addingTimeInterval(seconds)
     while Date() < end { RunLoop.current.run(until: min(end, Date().addingTimeInterval(0.01))) }
 }
 
-/// Records keep-awake requests instead of holding a power assertion.
 final class FakeKeepAwake: KeepAwakeHolding, @unchecked Sendable {
     private let lock = NSLock()
     private var held = false
@@ -222,7 +200,6 @@ final class FakeKeepAwake: KeepAwakeHolding, @unchecked Sendable {
     }
 }
 
-/// A battery whose state tests change; counts reads.
 final class FakeBattery: @unchecked Sendable {
     private let lock = NSLock()
     private var current: BatteryState
@@ -246,7 +223,6 @@ final class FakeBattery: @unchecked Sendable {
     }
 }
 
-/// Thread-safe list for callbacks.
 final class RuntimeInbox<Element>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [Element] = []

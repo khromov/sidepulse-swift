@@ -3,13 +3,11 @@ import XCTest
 @testable import SidePulseCLI
 import SidePulseCore
 
-/// Collects everything written to a `TextOutput`.
 final class CLIOutputCapture {
     private(set) var text = ""
     var output: TextOutput { TextOutput { [unowned self] in self.text += $0 } }
 }
 
-/// Records the calls made to `LaunchAgentOperations`.
 final class CLIFakeLaunchAgent {
     var state = LaunchAgentStatus(installed: false, loaded: false)
     var installChanged = true
@@ -20,7 +18,6 @@ final class CLIFakeLaunchAgent {
     private(set) var stops = 0
     private(set) var uninstalls = 0
     private(set) var migrations: [Bool] = []
-    /// App binaries started without the LaunchAgent (`openApp`).
     private(set) var opened: [String] = []
 
     func operations(plistPath: URL) -> LaunchAgentOperations {
@@ -53,12 +50,11 @@ final class CLIFakeLaunchAgent {
     static func plist(_ arguments: [String]) -> String { "PLIST " + arguments.joined(separator: " ") }
 }
 
-/// A scripted app on the other end of the socket.
 final class CLIFakeApp {
     var running = false
-    /// Replies per command name; missing = no answer.
+    /// A command missing here gets no answer.
     var replies: [String: Data] = [:]
-    /// Called before answering a command (e.g. to "start" the app after N tries).
+    /// Runs before the reply is looked up, so a test can script the app starting after N tries.
     var onRequest: ((String) -> Void)?
     private(set) var requests: [String] = []
 
@@ -74,7 +70,6 @@ final class CLIFakeApp {
     }
 }
 
-/// A `CLIEnvironment` in a temp directory with captured output and test doubles.
 /// Nothing here touches the user's real files, launchd or the real app socket.
 final class CLIHarness {
     let root: URL
@@ -133,7 +128,6 @@ final class CLIHarness {
     @discardableResult
     func run(_ arguments: [String]) -> Int32 { SidePulseCLI.run(arguments, environment: env) }
 
-    /// Creates an executable file (fake app binary) and returns its path.
     @discardableResult
     func makeExecutable(_ url: URL) -> String {
         let fm = FileManager.default
@@ -143,14 +137,13 @@ final class CLIHarness {
         return url.path
     }
 
-    /// Installs a fake `SidePulse.app` under the harness `/Applications`.
     @discardableResult
     func installFakeApp() -> String {
         makeExecutable(AppLocator.appBinary(inBundle: applicationsDir.appendingPathComponent(AppLocator.bundleName)))
     }
 }
 
-/// Snapshot values mirroring the ones used to generate `CLIPythonGolden`.
+/// Must match the values used to generate `CLIPythonGolden`.
 enum CLIFixtures {
     /// 2026-09-26T10:00:00Z
     static let now = Date(timeIntervalSince1970: 1_790_416_800)

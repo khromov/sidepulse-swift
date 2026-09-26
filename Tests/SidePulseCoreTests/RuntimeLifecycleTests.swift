@@ -2,8 +2,6 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Startup (latest.json + log recovery), single instance, hot-plug, keep-awake and
-/// shutdown.
 final class RuntimeLifecycleTests: XCTestCase {
     private var world: RuntimeWorld!
 
@@ -45,7 +43,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(start), 0.4, "coalesced for ~latestSaveDelay")
         runtime.stop()
 
-        // A new instance (no hook logs) restores the rows from latest.json.
         let restarted = try world.startRuntime(options)
         let snapshot = restarted.snapshot()
         XCTAssertEqual(snapshot.statuses.count, 21)
@@ -95,12 +92,11 @@ final class RuntimeLifecycleTests: XCTestCase {
 
     func testMissedStopInTheLogsIsAppliedAtStart() throws {
         world.addDevice("PulseDot")
-        // latest.json still says Working (the app was not running when Stop fired)…
+        // latest.json still says Working because the app was not running when the logged Stop fired.
         let stale = AgentStatus(provider: "claude", agentID: "claude:session:r1", displayName: "project-r1 (r1)",
                                 mode: .working, updatedAt: Date().addingTimeInterval(-60), eventName: "UserPromptSubmit",
                                 sessionID: "r1", cwd: "/tmp/project-r1")
         try LatestStore(url: world.paths.latestFile).save([stale])
-        // …but the hook log has the Stop.
         try world.writeLog(provider: "claude", records: [
             RuntimeRecords.prompt("r1", secondsAgo: 60),
             RuntimeRecords.stop("r1", secondsAgo: 30),
@@ -116,7 +112,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(snapshot.aggregate.mode, .working)
         waitForProgram("PulseDot", RuntimePrograms.expected(.working, ledCount: 2))
         runtime.waitUntilIdle()
-        // The reconciled rows were written back.
         let saved = LatestStore(url: world.paths.latestFile).load()
         XCTAssertEqual(saved.first { $0.agentID == "claude:session:r1" }?.mode, .completed)
     }
@@ -157,7 +152,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: world.paths.latestFile), latestBefore)
         second.stop()
 
-        // The first instance still serves.
         XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: world.paths.socketPath))
         first.ingest(provider: "claude", line: RuntimeRecords.prompt())
         let reply = try XCTUnwrap(world.request("status"))
@@ -185,7 +179,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         waitForProgram("PulseDot", RuntimePrograms.expected(.waitingForInput, ledCount: 2))
         XCTAssertEqual(runtime.leds.connectedDevices.map(\.id), [world.deviceID("PulseDot")])
 
-        // Mount a Pro mid-run: it gets the current program within a poll or two.
         world.addDevice("SidePulsePro")
         waitForProgram("SidePulsePro", RuntimePrograms.expected(.waitingForInput, ledCount: 8), timeout: 2)
         XCTAssertEqual(Set(runtime.leds.connectedDevices.map(\.id)), [world.deviceID("PulseDot"), world.deviceID("SidePulsePro")])
@@ -194,7 +187,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         }, "new devices are remembered")
         XCTAssertEqual(runtime.deviceInfos().filter(\.connected).count, 2)
 
-        // Unmount it: dropped from the connected set, still remembered.
         world.removeDevice("SidePulsePro")
         XCTAssertTrue(runtimeWait(timeout: 2) { runtime.leds.connectedDevices.count == 1 })
         let infos = runtime.deviceInfos()
@@ -250,7 +242,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.keepAwakeActive)
         XCTAssertFalse(holder.isHeld)
 
-        // Low battery on battery power: never held.
         battery.state = BatteryState(present: true, percent: 10, onACPower: false, charging: false)
         runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
         runtime.waitUntilIdle()
@@ -260,7 +251,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         runtime.waitUntilIdle()
         XCTAssertTrue(runtime.keepAwakeActive)
 
-        // Policy changes apply at once.
         runtime.updateSettings { $0.sleepPolicy = .never }
         runtime.waitUntilIdle()
         XCTAssertFalse(runtime.keepAwakeActive)
@@ -345,11 +335,9 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2),
                        "a playing preview is ended; LEDs keep live status")
 
-        // Timers are gone: a newly mounted device is not written.
         world.addDevice("SidePulsePro")
         runtimeSpin(0.4)
         XCTAssertEqual(world.program("SidePulsePro"), "boot")
-        // Events after stop change the snapshot but drive nothing.
         runtime.ingest(provider: "claude", line: RuntimeRecords.stop("bye"))
         runtime.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
@@ -379,9 +367,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), working)
         XCTAssertEqual(world.settingsStore.load().display(forDevice: dot), .manual, "the setting itself is still saved")
 
-        // Started again (the device is Manual now): back to Agent, previews work.
-        // The event taken while stopped survives the restart (latest.json has the
-        // older Working row).
+        // The event ingested while stopped survives the restart; latest.json only has the older Working row.
         try runtime.start()
         XCTAssertEqual(runtime.snapshot().aggregate.mode, .waitingForInput)
         runtime.setDeviceDisplay(.agent, deviceID: dot)
@@ -426,8 +412,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(finished.items, [world.mounts.appendingPathComponent("SidePulsePro/keepalive").path])
     }
 
-    /// Regression: `sidepulse run --interval 1e12` trapped in Dispatch (intervals
-    /// are now clamped; NaN falls back to the default).
+    /// Regression: `sidepulse run --interval 1e12` trapped in Dispatch.
     func testExtremeIntervalsAreClampedInsteadOfCrashing() throws {
         world.addDevice("PulseDot")
         var options = world.options()
@@ -463,7 +448,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         options.startupDiscoveryTimeout = 0.2
         options.deviceDiscovery = { roots in
             calls.append(true)
-            if calls.count == 1 { release.wait() } // the first discovery hangs
+            if calls.count == 1 { release.wait() }
             return DeviceDiscovery.discover(roots: roots ?? [mounts])
         }
         defer { release.signal() }
@@ -545,8 +530,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(lines.filter { $0.contains("works again") }.count, 1, lines.joined(separator: "\n"))
     }
 
-    /// start()/stop() cycles and concurrent stop() calls while hooks, `status` and
-    /// `ping` hit the socket: no crash or deadlock, and the runtime still works.
     func testStartStopCyclesUnderSocketTraffic() throws {
         world.addDevice("PulseDot")
         let runtime = world.makeRuntime()

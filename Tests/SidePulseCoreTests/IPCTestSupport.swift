@@ -3,10 +3,8 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Helpers shared by the HookRuntime / IPC / Power tests.
 enum IPCTestSupport {
-    /// A fresh directory under /tmp with a short name, so socket paths stay far
-    /// below the 104-byte `sun_path` limit (the default temp dir is too long).
+    /// The default temp dir is too long for the 104-byte `sun_path` limit.
     static func makeShortTempDir(_ prefix: String = "spt") -> URL {
         var template = Array("/tmp/\(prefix).XXXXXX".utf8CString)
         let created = template.withUnsafeMutableBufferPointer { buffer -> Bool in
@@ -22,7 +20,6 @@ enum IPCTestSupport {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Polls `condition` until it is true or `timeout` passes.
     @discardableResult
     static func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) -> Bool {
         let end = Date().addingTimeInterval(timeout)
@@ -33,7 +30,6 @@ enum IPCTestSupport {
         return condition()
     }
 
-    /// Leaves a socket file with nobody listening (a crashed server's leftover).
     static func makeStaleSocket(at path: String) {
         guard var address = UnixSocket.address(path) else { return XCTFail("bad socket path \(path)") }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -44,7 +40,6 @@ enum IPCTestSupport {
         close(fd)
     }
 
-    /// A socket that listens but never accepts or reads (a hung server).
     static func makeSilentListener(at path: String) -> Int32 {
         guard var address = UnixSocket.address(path) else { XCTFail("bad socket path \(path)"); return -1 }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -61,7 +56,6 @@ enum IPCTestSupport {
         return lstat(path, &info) == 0 ? info.st_ino : nil
     }
 
-    /// Runs `body` with fds 1 and 2 redirected to a file; returns what was written.
     static func captureStandardStreams(in directory: URL, _ body: () -> Void) -> Data {
         let capture = directory.appendingPathComponent("captured-\(UUID().uuidString).out")
         fflush(stdout)
@@ -84,7 +78,6 @@ enum IPCTestSupport {
         return (try? Data(contentsOf: capture)) ?? Data()
     }
 
-    /// Thread-safe collector for handler callbacks.
     final class Inbox<Element>: @unchecked Sendable {
         private let lock = NSLock()
         private var storage: [Element] = []

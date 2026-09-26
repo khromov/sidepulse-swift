@@ -2,8 +2,7 @@ import XCTest
 @testable import SidePulseCLI
 import SidePulseCore
 
-/// `leds` / `run` checks that happen before the runtime is created (the runtime
-/// itself is covered by CLIIntegrationTests).
+/// The runtime itself is covered by CLIIntegrationTests.
 final class CLILedsCommandTests: XCTestCase {
     func testForegroundRefusesWhileTheAppDrivesTheLEDs() {
         for arguments in [["leds"], ["run"], ["leds", "--dry-run", "--interval", "5"], ["agent-monitor", "leds"]] {

@@ -33,7 +33,6 @@ private func readFile(_ url: URL) throws -> String {
     String(decoding: try Data(contentsOf: url), as: UTF8.self)
 }
 
-/// Mount scanning, names, LED counts and target resolution (spec led-device §2-3, §7).
 final class LEDDiscoveryTests: XCTestCase {
     func testEmptyDotFolderIsFoundByName() throws {
         let root = try makeTempDirectory(self)
@@ -188,8 +187,6 @@ final class LEDDiscoveryTests: XCTestCase {
         XCTAssertEqual(DeviceDiscovery.normalizedName("Pulse_Dot-\u{C9}"), "pulsedot\u{E9}")
     }
 
-    /// Python filters code points (`str.isalnum()`), not grapheme clusters: a
-    /// combining mark is dropped rather than hiding the letter it decorates.
     /// Expected values come from the Python implementation.
     func testNormalizedNameFiltersCodePointsLikePython() {
         let vectors: [(String, Bool, String)] = [
@@ -199,8 +196,8 @@ final class LEDDiscoveryTests: XCTestCase {
             ("SIDEPULSEPRO\u{B2}", true, "sidepulsepro\u{B2}"),
             ("SidePulse\u{2167}", false, "sidepulse\u{2177}"),
             ("\u{130}", false, "i"),
-            // U+FF9E is a letter (Lm) that also extends a grapheme: the hint must
-            // still match code point by code point.
+            // U+FF9E is a letter (Lm) that also extends a grapheme, so the hint must still match
+            // code point by code point.
             ("PulseDot\u{FF9E}", true, "pulsedot\u{FF9E}"),
         ]
         for (name, isDevice, normalized) in vectors {
@@ -239,8 +236,8 @@ final class LEDDiscoveryTests: XCTestCase {
         XCTAssertEqual(DeviceDiscovery.displayName(forVolumeName: ""), "SidePulse Device")
     }
 
-    /// Regression: discovery stat'ed every child of /Volumes, so one dead network
-    /// mount stalled hot-plug detection. Non-local mount points are skipped unseen.
+    /// Regression: discovery stat'ed every child of /Volumes, so one dead network mount stalled
+    /// hot-plug detection.
     func testSkippedMountPointsAreNeverLookedAt() throws {
         let root = try makeTempDirectory(self)
         let share = try makeDirectory(root, "NAS SidePulseDot")
@@ -296,7 +293,6 @@ final class LEDDiscoveryTests: XCTestCase {
     }
 }
 
-/// In-place device writes (spec led-device §6).
 final class LEDWriterTests: XCTestCase {
     func testWritesProgramExactlyWithoutTrailingNewline() throws {
         let device = try makeDirectory(try makeTempDirectory(self), "SidePulsePro")
@@ -408,7 +404,6 @@ final class LEDWriterTests: XCTestCase {
     }
 }
 
-/// SD-reader keepalive touches (spec led-device §12).
 final class LEDKeepaliveTests: XCTestCase {
     private final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
