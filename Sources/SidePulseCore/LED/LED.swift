@@ -49,26 +49,11 @@ public enum LedText {
         return String(output)
     }
 
-    /// Matches Python `str.splitlines()` for the common separators (`\n`, `\r\n`, `\r`).
+    /// Only `\n`, `\r` and `\r\n` break lines; `isNewline` would also split on VT, FF and U+2028.
     public static func splitLines(_ text: String) -> [String] {
-        let scalars = Array(text.unicodeScalars)
-        var lines: [String] = []
-        var start = 0
-        var index = 0
-        while index < scalars.count {
-            let scalar = scalars[index]
-            guard scalar == "\n" || scalar == "\r" else {
-                index += 1
-                continue
-            }
-            lines.append(String(String.UnicodeScalarView(scalars[start..<index])))
-            let isCRLF = scalar == "\r" && index + 1 < scalars.count && scalars[index + 1] == "\n"
-            index += isCRLF ? 2 : 1
-            start = index
-        }
-        if start < scalars.count {
-            lines.append(String(String.UnicodeScalarView(scalars[start...])))
-        }
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r" || $0 == "\r\n" })
+            .map(String.init)
+        if lines.last == "" { lines.removeLast() }
         return lines
     }
 
@@ -180,49 +165,23 @@ public enum DeviceDiscovery {
 
     public static func isDeviceName(_ name: String) -> Bool {
         let normalized = normalizedName(name)
-        return nameHints.contains { contains(normalized, hint: $0) }
+        return nameHints.contains { normalized.contains($0) }
     }
 
-    /// Filters Unicode scalars like Python's per-code-point `str.isalnum()`, so a combining mark is
-    /// dropped instead of hiding the letter it is attached to.
+    /// Keeps only ASCII letters and digits, so spaces, punctuation and combining marks never split a hint.
     public static func normalizedName(_ name: String) -> String {
-        var scalars = String.UnicodeScalarView()
-        for scalar in name.lowercased().unicodeScalars where isAlphanumeric(scalar) {
-            scalars.append(scalar)
-        }
-        return String(scalars)
-    }
-
-    /// Compares UTF-8 bytes because `Character` comparison would let a trailing grapheme extender
-    /// hide the hint's last letter.
-    static func contains(_ normalized: String, hint: String) -> Bool {
-        let haystack = Array(normalized.utf8)
-        let needle = Array(hint.utf8)
-        guard needle.count <= haystack.count else { return false }
-        return (0...(haystack.count - needle.count)).contains { start in
-            haystack[start..<(start + needle.count)].elementsEqual(needle)
-        }
-    }
-
-    /// Python `str.isalnum()` for one code point.
-    private static func isAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.properties.generalCategory {
-        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter:
-            return true
-        default:
-            return scalar.properties.numericType != nil
-        }
+        String(String.UnicodeScalarView(name.lowercased().unicodeScalars.filter { ("a"..."z").contains($0) || ("0"..."9").contains($0) }))
     }
 
     public static func ledCount(forTarget target: URL) -> Int {
         let name = normalizedName(target.deletingLastPathComponent().lastPathComponent)
-        return ledCountHints.first { contains(name, hint: $0.hint) }?.count ?? 8
+        return ledCountHints.first { name.contains($0.hint) }?.count ?? 8
     }
 
     public static func displayName(forVolumeName name: String) -> String {
         let normalized = normalizedName(name)
-        if contains(normalized, hint: "sidepulsedot") || contains(normalized, hint: "pulsedot") { return "SidePulse Dot" }
-        if contains(normalized, hint: "sidepulsepro") { return "SidePulse Pro" }
+        if normalized.contains("pulsedot") { return "SidePulse Dot" }
+        if normalized.contains("sidepulsepro") { return "SidePulse Pro" }
         return name.isEmpty ? "SidePulse Device" : name
     }
 

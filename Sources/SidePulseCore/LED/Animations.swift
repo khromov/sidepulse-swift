@@ -84,76 +84,14 @@ public enum LedProgram {
         Int((Double(clampBrightness(brightness)) / 255 * 100).rounded(.toNearestOrEven))
     }
 
-    /// A `brightness` token that is not the whole line (e.g. in a `;` segment) is left alone,
-    /// matching Python's `re.fullmatch`.
+    /// Built-in animations never set their own brightness (a test checks), so dimming is one prepended line.
     public static func applyBrightness(_ program: String, _ brightness: Int) -> String {
         let value = clampBrightness(brightness)
-        var foundBrightness = false
-        let lines = LedText.splitLines(program).map { line -> String in
-            guard let authored = authoredBrightness(line) else { return line }
-            foundBrightness = true
-            let scaled = (Double(authored * value) / 255).rounded(.toNearestOrEven)
-            return "brightness \(Int(scaled))"
-        }
-        let joined = lines.joined(separator: "\n")
-        if foundBrightness || value >= 255 { return joined }
-        return "brightness \(value)\n\(joined)"
+        return value >= 255 ? program : "brightness \(value)\n\(program)"
     }
 
     public static func program(animationID: String, ledCount: Int, brightness: Int) throws -> String {
         applyBrightness(try AnimationLibrary.program(id: animationID, ledCount: ledCount), brightness)
-    }
-
-    /// Hand-rolled `^\s*brightness\s+(\d+)\s*$` so it matches exactly like Python's Unicode
-    /// `re.fullmatch(..., re.IGNORECASE)`.
-    static func authoredBrightness(_ line: String) -> Int? {
-        let scalars = Array(line.unicodeScalars)
-        var index = 0
-        func skipWhitespace() -> Int {
-            let start = index
-            while index < scalars.count, isPythonWhitespace(scalars[index]) { index += 1 }
-            return index - start
-        }
-        _ = skipWhitespace()
-        for expected in "brightness".unicodeScalars {
-            guard index < scalars.count, matchesIgnoringCase(scalars[index], expected) else { return nil }
-            index += 1
-        }
-        guard skipWhitespace() > 0 else { return nil }
-        var value = 0
-        var digits = 0
-        while index < scalars.count, let digit = decimalDigitValue(scalars[index]) {
-            // Anything above 255 clamps anyway, so cap early to avoid overflow.
-            value = min(value * 10 + digit, 1000)
-            digits += 1
-            index += 1
-        }
-        guard digits > 0 else { return nil }
-        _ = skipWhitespace()
-        guard index == scalars.count else { return nil }
-        return clampBrightness(value)
-    }
-
-    /// Python `\s` / `str.isspace()` for one code point.
-    private static func isPythonWhitespace(_ scalar: Unicode.Scalar) -> Bool {
-        scalar.properties.isWhitespace || (0x1C...0x1F).contains(scalar.value)
-    }
-
-    /// Python `\d` for one code point.
-    private static func decimalDigitValue(_ scalar: Unicode.Scalar) -> Int? {
-        guard scalar.properties.generalCategory == .decimalNumber,
-              let value = scalar.properties.numericValue else { return nil }
-        return Int(value)
-    }
-
-    /// Python's `re.IGNORECASE` also folds U+0130/U+0131 to `i` and U+017F to `s`.
-    private static func matchesIgnoringCase(_ scalar: Unicode.Scalar, _ expected: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case expected.value, expected.value - 0x20: return true
-        case 0x130, 0x131: return expected == "i"
-        case 0x17F: return expected == "s"
-        default: return false
-        }
     }
 }
 

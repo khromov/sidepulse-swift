@@ -265,55 +265,23 @@ final class LEDProgramTests: XCTestCase {
         }
     }
 
-    func testApplyBrightnessMatchesPython() {
+    func testApplyBrightnessPrependsALine() {
         let vectors: [(String, Int, String)] = [
-            ("brightness 128\n#FF0000", 128, "brightness 64\n#FF0000"),
-            ("brightness 200\n#FF0000\nbrightness 100\n#00FF00", 64, "brightness 50\n#FF0000\nbrightness 25\n#00FF00"),
             ("#00FF66 320ms cosine", 128, "brightness 128\n#00FF66 320ms cosine"),
             ("off\n#FF0000 pulse\nrepeat", 64, "brightness 64\noff\n#FF0000 pulse\nrepeat"),
             ("#FF0000", 0, "brightness 0\n#FF0000"),
-            ("off\r\n#FF0000\r\n", 255, "off\n#FF0000"),
-            ("off\n", 200, "brightness 200\noff"),
-            ("  BRIGHTNESS  300  \n#fff", 128, "brightness 128\n#fff"),
-            ("brightness 50; #FF0000", 100, "brightness 100\nbrightness 50; #FF0000"),
-            ("brightness\n#fff", 100, "brightness 100\nbrightness\n#fff"),
-            ("brightness -5\n#fff", 100, "brightness 100\nbrightness -5\n#fff"),
-            ("brightness5\n#fff", 100, "brightness 100\nbrightness5\n#fff"),
-            ("\tbrightness\t40\t\n#fff", 200, "brightness 31\n#fff"),
-            ("brightness 40\n#fff", 255, "brightness 40\n#fff"),
-            ("#fff", 999, "#fff"),
             ("#fff", -4, "brightness 0\n#fff"),
-            ("brightness 99999999999999999999\n#fff", 77, "brightness 77\n#fff"),
-            ("brightness 007\n#fff", 255, "brightness 7\n#fff"),
-            ("", 64, "brightness 64\n"),
-            ("a\r\rb", 10, "brightness 10\na\n\nb"),
-            ("Brightness 255", 1, "brightness 1"),
-            ("brightness 255\nbrightness 0", 128, "brightness 128\nbrightness 0"),
+            ("#fff", 255, "#fff"),
+            ("#fff", 999, "#fff"),
         ]
         for (program, brightness, expected) in vectors {
-            XCTAssertEqual(LedProgram.applyBrightness(program, brightness), expected,
-                           "\(program.debugDescription) @ \(brightness)")
+            XCTAssertEqual(LedProgram.applyBrightness(program, brightness), expected, "\(program.debugDescription) @ \(brightness)")
         }
     }
 
-    /// Expected values come from the Python implementation.
-    func testBrightnessLineMatchesPythonUnicodeRegex() {
-        let vectors: [(String, Int, String)] = [
-            ("\u{1F}brightness\u{1F}40\u{1F}\n#fff", 200, "brightness 31\n#fff"),
-            ("brightness \u{663}\u{660}\n#fff", 255, "brightness 30\n#fff"),
-            ("brightness 1\u{663}", 255, "brightness 13"),
-            ("brightness \u{FF11}\u{FF12}", 255, "brightness 12"),
-            ("brightness \u{1D7D9}", 255, "brightness 1"),
-            ("BR\u{130}GHTNESS 100", 128, "brightness 50"),
-            ("br\u{131}ghtne\u{17F}s 64", 255, "brightness 64"),
-            ("brightness\u{A0}64", 255, "brightness 64"),
-            ("\u{2003}brightness\u{3000}200\u{2003}", 128, "brightness 100"),
-            ("brightness \u{B2}\n#fff", 128, "brightness 128\nbrightness \u{B2}\n#fff"),
-            ("brightne\u{DF} 5", 100, "brightness 100\nbrightne\u{DF} 5"),
-        ]
-        for (program, brightness, expected) in vectors {
-            XCTAssertEqual(LedProgram.applyBrightness(program, brightness), expected,
-                           "\(program.debugDescription) @ \(brightness)")
+    func testNoBuiltInProgramSetsItsOwnBrightness() {
+        for (name, program) in BuiltInPrograms.files.merging(ExtraPrograms.files, uniquingKeysWith: { first, _ in first }) {
+            XCTAssertFalse(program.lowercased().contains("brightness"), name)
         }
     }
 

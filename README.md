@@ -454,8 +454,8 @@ variants.
   Devices tab shows the same text. A write that was waiting is skipped if the
   device became Manual in the meantime.
 - **Brightness.** Each device has its own brightness, 0 to 255 (shown as a
-  percentage). It scales any `brightness N` lines in the animation, or adds a
-  `brightness` line when the program has none.
+  percentage). Below full brightness it adds a `brightness N` line in front of
+  the animation; the built-in animations never set their own.
 - **Keep awake.** The app holds a macOS power assertion
   (PreventUserIdleSystemSleep, listed by `pmset -g assertions` as "SidePulse
   keep awake"). The Mac does not idle-sleep, but the display may still sleep.
