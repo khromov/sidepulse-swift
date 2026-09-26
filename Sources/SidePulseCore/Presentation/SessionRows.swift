@@ -15,11 +15,20 @@ public struct SessionRow: Sendable, Equatable, Identifiable {
     /// Unique per row only because rows are coalesced per session.
     public var id: String { status.agentID }
 
+    /// A shortened row shows its full title on hover.
+    public var tooltip: String {
+        let full = SessionRows.menuTitle(title: title, project: project)
+        return full == menuTitle ? detail : "\(full)\n\(detail)"
+    }
+
     public var displayState: DisplayState { status.mode.displayState }
 }
 
 public enum SessionRows {
     public static let limit = 10
+    /// Prompt-derived titles run to 70+ characters, which would stretch the whole menu.
+    public static let menuTitleLimit = 22
+    public static let menuProjectLimit = 16
 
     /// Injectable so tests need no filesystem.
     public typealias ProjectResolver = (String?) -> String?
@@ -73,20 +82,27 @@ public enum SessionRows {
     public static func rows(for statuses: [AgentStatus], now: Date,
                             projectName: ProjectResolver = projectName(cwd:)) -> [SessionRow] {
         let parts = statuses.map { titleParts($0, project: projectName($0.cwd)) }
+        let shown = parts.map { part in
+            (title: shortened(part.title, limit: menuTitleLimit),
+             project: part.project.map { shortened($0, limit: menuProjectLimit) })
+        }
         var counts: [String: Int] = [:]
-        let keys = zip(statuses, parts).map { status, part in
+        // Collisions are judged on the shortened text, because that is what the rows show.
+        let keys = zip(statuses, shown).map { status, part in
             collisionKey(provider: status.provider, title: part.title, project: part.project)
         }
         for key in keys { counts[key, default: 0] += 1 }
         return statuses.indices.map { index in
             let status = statuses[index]
             var title = parts[index].title
+            var shownTitle = shown[index].title
             if counts[keys[index], default: 0] > 1, let sessionID = status.sessionID, !sessionID.isEmpty {
-                title += " (\(shortID(sessionID)))"
+                let suffix = " (\(shortID(sessionID)))"
+                title += suffix
+                shownTitle += suffix
             }
-            let project = parts[index].project
-            return SessionRow(status: status, title: title, project: project,
-                              menuTitle: menuTitle(title: title, project: project),
+            return SessionRow(status: status, title: title, project: parts[index].project,
+                              menuTitle: menuTitle(title: shownTitle, project: shown[index].project),
                               detail: detail(for: status, now: now))
         }
     }
@@ -132,6 +148,17 @@ public enum SessionRows {
     public static func menuTitle(title: String, project: String?) -> String {
         guard let project, !project.isEmpty else { return title }
         return "\(title)  \(project)"
+    }
+
+    /// Cuts at a word boundary when one falls in the second half, and ends with an ellipsis.
+    public static func shortened(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        var cut = String(text.prefix(max(0, limit - 1)))
+        if let space = cut.lastIndex(of: " "), cut.distance(from: cut.startIndex, to: space) >= limit / 2 {
+            cut = String(cut[..<space])
+        }
+        while let last = cut.last, last.isWhitespace || ",;:.-".contains(last) { cut.removeLast() }
+        return cut + "\u{2026}"
     }
 
     public static func projectName(cwd: String?) -> String? {

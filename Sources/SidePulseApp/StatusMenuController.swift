@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import SidePulseCore
 
 /// Updates the open menu in place instead of rebuilding it so open device submenus, sliders and the Keep Awake
@@ -21,7 +22,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var rowItems: [NSMenuItem] = []
     private var deviceItems: [NSMenuItem] = []
     private var deviceControls: [String: DeviceControls] = [:]
-    private var sleepPolicyControl: NSSegmentedControl?
+    private var sleepPolicyHost: NSHostingView<SleepPolicyButtons>?
     private var keepingAwakeItem: NSMenuItem?
 
     private struct DeviceControls {
@@ -136,7 +137,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(label(MenuText.keepAwake))
-        menu.addItem(makeSleepPolicyItem())
+        menu.addItem(makeSleepPolicyItem(model.sleepPolicy))
         let active = label(MenuText.keepingAwake)
         keepingAwakeItem = active
         menu.addItem(active)
@@ -160,7 +161,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func configureRow(_ item: NSMenuItem, _ row: SessionRow) {
         item.title = row.menuTitle
-        item.toolTip = row.detail
+        item.toolTip = row.tooltip
         item.image = IconRenderer.image(for: row.displayState)
         if let cwd = row.status.cwd, !cwd.isEmpty {
             item.target = self
@@ -254,27 +255,30 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// NSMenu widens a width-sizable item view to the menu's width, so the buttons span the whole row.
-    private func makeSleepPolicyItem() -> NSMenuItem {
-        let control = NSSegmentedControl(labels: SleepPolicy.allCases.map(\.label), trackingMode: .selectOne,
-                                         target: self, action: #selector(setSleepPolicy(_:)))
-        control.setAccessibilityLabel(MenuText.keepAwake)
-        control.segmentDistribution = .fillProportionally
-        control.sizeToFit()
-        control.setFrameOrigin(NSPoint(x: 14, y: 6))
-        control.autoresizingMask = [.width]
-        sleepPolicyControl = control
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: control.frame.maxX + 14, height: control.frame.height + 12))
-        view.autoresizingMask = [.width]
-        view.addSubview(control)
+    private func makeSleepPolicyItem(_ policy: SleepPolicy) -> NSMenuItem {
+        let host = NSHostingView(rootView: sleepPolicyButtons(policy))
+        host.frame.size = host.fittingSize
+        // A fixed frame lets the menu widen the view, and SwiftUI then centers the buttons in it.
+        host.sizingOptions = []
+        host.autoresizingMask = [.width]
+        sleepPolicyHost = host
         let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        item.view = view
+        item.view = host
         return item
     }
 
+    private func sleepPolicyButtons(_ policy: SleepPolicy) -> SleepPolicyButtons {
+        SleepPolicyButtons(selection: policy) { [weak self] policy in self?.selectSleepPolicy(policy) }
+    }
+
     private func applyKeepAwake(_ model: StatusMenuModel) {
-        sleepPolicyControl?.selectedSegment = SleepPolicy.allCases.firstIndex(of: model.sleepPolicy) ?? -1
+        showSleepPolicy(model.sleepPolicy)
         keepingAwakeItem?.isHidden = !model.keepAwakeActive
+    }
+
+    private func showSleepPolicy(_ policy: SleepPolicy) {
+        guard let host = sleepPolicyHost, host.rootView.selection != policy else { return }
+        host.rootView = sleepPolicyButtons(policy)
     }
 
     /// `old` must be a contiguous run of menu items.
@@ -327,9 +331,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         runtime.removeDevice(id: deviceID)
     }
 
-    @objc private func setSleepPolicy(_ sender: NSSegmentedControl) {
-        guard SleepPolicy.allCases.indices.contains(sender.selectedSegment) else { return }
-        let policy = SleepPolicy.allCases[sender.selectedSegment]
+    private func selectSleepPolicy(_ policy: SleepPolicy) {
+        showSleepPolicy(policy)
         runtime.updateSettings { $0.sleepPolicy = policy }
     }
 

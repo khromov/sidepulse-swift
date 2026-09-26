@@ -34,7 +34,8 @@ final class PresentationSessionRowsTests: XCTestCase {
         let row = SessionRows.rows(for: [s], now: now, projectName: basename)[0]
         XCTAssertEqual(row.title, "Refine README agent status modes")
         XCTAssertEqual(row.project, "sidepulse")
-        XCTAssertEqual(row.menuTitle, "Refine README agent status modes  sidepulse")
+        // Deviation from Python: the menu shortens long titles.
+        XCTAssertEqual(row.menuTitle, "Refine README agent\u{2026}  sidepulse")
         XCTAssertEqual(row.detail.components(separatedBy: " · ").first, "Done")
         XCTAssertEqual(row.displayState, .done)
     }
@@ -61,10 +62,41 @@ final class PresentationSessionRowsTests: XCTestCase {
                        "functions: allow me to chose timeframe http://localhost:5001/pkuhar-com/us-central... (b64a0d4b)",
                        .working, event: "PostToolUse", session: "b64a0d4b-d828-4133-abb3-bdb4fafa7719",
                        cwd: cwd.path, origin: "Claude in VS Code")
-        let title = SessionRows.rows(for: [s], now: now)[0].menuTitle
-        XCTAssertEqual(title, "allow me to chose timeframe http://localhost:5001/pkuhar-com/us-central...  peterkuhar.com")
-        XCTAssertFalse(title.contains("Working"))
-        XCTAssertFalse(title.contains("Claude in VS Code"))
+        let row = SessionRows.rows(for: [s], now: now)[0]
+        // Deviation from Python: the menu shortens long titles; the full one stays in the tooltip.
+        XCTAssertEqual(row.menuTitle, "allow me to chose\u{2026}  peterkuhar.com")
+        XCTAssertTrue(row.tooltip.hasPrefix(
+            "allow me to chose timeframe http://localhost:5001/pkuhar-com/us-central...  peterkuhar.com\n"))
+        XCTAssertFalse(row.menuTitle.contains("Working"))
+        XCTAssertFalse(row.menuTitle.contains("Claude in VS Code"))
+    }
+
+    func testShortenedCutsAtAWordBoundary() {
+        XCTAssertEqual(SessionRows.shortened("Refine README agent status modes", limit: 32),
+                       "Refine README agent status modes")
+        XCTAssertEqual(SessionRows.shortened("Great. I think the dropdown menu is way too wide", limit: 32),
+                       "Great. I think the dropdown\u{2026}")
+        XCTAssertEqual(SessionRows.shortened("Fix it, then run the whole suite again", limit: 12), "Fix it\u{2026}")
+        XCTAssertEqual(SessionRows.shortened("/a/very/long/path/without/spaces", limit: 10), "/a/very/l\u{2026}")
+    }
+
+    func testShortTitlesKeepTheDetailTooltip() {
+        let s = status("codex", "codex:session:s1", "repo: Short", .completed, session: "s1", cwd: "/x/repo")
+        let row = SessionRows.rows(for: [s], now: now, projectName: basename)[0]
+        XCTAssertEqual(row.menuTitle, "Short  repo")
+        XCTAssertEqual(row.tooltip, row.detail)
+    }
+
+    /// Titles that only differ past the cut would otherwise show as identical rows.
+    func testRowsThatShortenAlikeAreDisambiguated() {
+        let a = status("claude", "claude:session:aaaaaaaa1", "repo: Let's init a git repo and commit this version",
+                       .completed, age: 1, session: "aaaaaaaa1", cwd: "/x/repo")
+        let b = status("claude", "claude:session:bbbbbbbb1", "repo: Let's init a git repo and commit it later",
+                       .completed, age: 2, session: "bbbbbbbb1", cwd: "/x/repo")
+        let rows = SessionRows.rows(for: [a, b], now: now, projectName: basename)
+        XCTAssertEqual(rows.map(\.menuTitle), ["Let's init a git\u{2026} (aaaaaaaa)  repo",
+                                               "Let's init a git\u{2026} (bbbbbbbb)  repo"])
+        XCTAssertEqual(rows[0].title, "Let's init a git repo and commit this version (aaaaaaaa)")
     }
 
     func testDisplayPrefixBecomesProjectWithoutCwd() {

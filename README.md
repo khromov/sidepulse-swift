@@ -411,9 +411,9 @@ started by the LaunchAgent exits quietly (see `app.log`).
 | Menu item | What it does |
 | --- | --- |
 | `SidePulse — Working (2 active)` | Header: aggregate state and number of active agents |
-| **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. The tooltip shows state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
+| **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. Titles longer than 22 characters (project names over 16) are shortened with "…" so the menu stays narrow. The tooltip shows the full title when shortened, then state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
 | **Devices** | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected |
-| **Keep Awake** | One row of three buttons: **Never** / **When Agents Work** / **Always**. "Keeping Mac awake" appears below while the Mac is held awake |
+| **Keep Awake** | One centered row of three buttons: **Never** / **When Agents Work** / **Always**, with the active one in the accent color. "Keeping Mac awake" appears below while the Mac is held awake |
 | **Settings...** (⌘,) | Opens the settings window |
 | **Quit SidePulse** (⌘Q) | Quits the app |
 
