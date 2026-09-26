@@ -1,10 +1,16 @@
 # sidepulse-swift
 
 A lightweight replacement for the official Python [`sidepulse`](https://github.com/inteliwear/sidepulse) project.
-macOS-native CLI and app with support for Claude Code, Codex and OpenCode for SidePulse LEDs:
+macOS-native CLI and app with support for status notifications for Claude Code, Codex and OpenCode for SidePulse LEDs:
 
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
+
+**[Download the latest version from the releases page](https://github.com/khromov/sidepulse-swift/releases/latest)**
+
+<p>
+  <img src=".github/sidepulse.gif" alt="A SidePulse Dot plugged into a MacBook's USB-C port, its LED lit to show agent status" width="640">
+</p>
 
 Please uninstall the official version using `sidepulse agent-monitor uninstall all` before installing this version.
 
