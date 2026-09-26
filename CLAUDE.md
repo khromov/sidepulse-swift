@@ -21,9 +21,10 @@ SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline   # CLI against a th
 scripts/build-app.sh [--debug]                # build/SidePulse.app (ad-hoc signed unless SIDEPULSE_CODESIGN_IDENTITY)
 scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications, link ~/.local/bin/sidepulse, run setup
 scripts/release.sh [--sign ID] [--notary-profile NAME]   # Developer ID + notarize + staple → dist/SidePulse-VERSION.zip
+scripts/appcast.sh dist/SidePulse-VERSION.zip [NOTES.md]  # EdDSA-signed Sparkle feed → dist/appcast.xml
 ```
 
-There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 26+ and no third-party dependencies.
+There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode and macOS 26+. Its only third-party dependency is Sparkle, which only `SidePulseApp` links.
 
 The following tests only run when you opt in with an environment variable. The README's Development section has the full table.
 
@@ -38,7 +39,7 @@ Targets (`Package.swift`):
 
 - **`SidePulseCore`**: Foundation, Darwin, IOKit and Synchronization only, and it **must never import AppKit or SwiftUI**. Shared state goes behind a `Mutex` rather than an `NSLock`. Every agent hook runs the CLI on every tool call, so the hook path must launch fast.
 - **`SidePulseCLI`**: a library holding all the commands, so tests can call it directly. The `sidepulse` executable is a one-line wrapper around `SidePulseCLI.main`.
-- **`SidePulseApp`**: the AppKit/SwiftUI menu-bar app. `scripts/build-app.sh` bundles it as `Contents/MacOS/SidePulse`. The CLI goes into `Contents/Helpers/sidepulse` because the default case-insensitive APFS would treat `MacOS/sidepulse` and `MacOS/SidePulse` as the same file.
+- **`SidePulseApp`**: the AppKit/SwiftUI menu-bar app. `scripts/build-app.sh` bundles it as `Contents/MacOS/SidePulse`. The CLI goes into `Contents/Helpers/sidepulse` because the default case-insensitive APFS would treat `MacOS/sidepulse` and `MacOS/SidePulse` as the same file. `Sparkle.framework` goes into `Contents/Frameworks`, and `AppUpdater.swift` is the only file that imports it.
 
 Data flow:
 
@@ -70,6 +71,7 @@ Key design points that span several files:
 - **Stable hook command.** Hook commands point at the stable `~/.local/bin/sidepulse` link. Codex trust hashes bind to the exact command string, so changing the command format invalidates trust.
 - **Built-in animations.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` holds the animations and profiles copied from the Python project and is now the source of truth; Swift-only ones (such as Signal) go in `ExtraPrograms.swift`.
 - **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed.
+- **Updates.** Only `build-app.sh --distribution` keeps `SUFeedURL`, so builds from source never update themselves into a release. Installed apps trust only the `SUPublicEDKey` in `Resources/Info.plist` (its private half is in the release Mac's keychain) and read the feed from `releases/latest/download/appcast.xml`. Changing either strands every installed copy. The Updates section of `docs/ARCHITECTURE.md` has the details.
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.
 - **Signing and permissions.** An ad-hoc signed rebuild changes the code hash. macOS then asks for removable-volume access again, and LED writes block until someone answers the prompt. Signing with `--sign`/`SIDEPULSE_CODESIGN_IDENTITY` avoids this.

@@ -16,7 +16,8 @@ Please uninstall the official version using `sidepulse agent-monitor uninstall a
 
 ## Features
 
-- 4.4MB app size (1.4MB zipped download)
+- 5.6MB app size (1.8MB zipped download), including the updater
+- Updates itself from GitHub releases (see [Updates](#updates))
 - Under 100MB in memory usage vs >1GB for the official implementation.
 
 <p>
@@ -37,7 +38,8 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
   marked trusted automatically. OpenCode, which the Python version does not
   hook, gets a SidePulse plugin (see [How hooks work](#how-hooks-work)).
 - **No Python.** It ships as one app bundle containing the menu-bar app and the
-  CLI, and uses no third-party dependencies. The agent hook runs the native CLI
+  CLI. Its only third-party dependency is [Sparkle](https://sparkle-project.org),
+  which the menu-bar app uses for updates. The agent hook runs the native CLI
   directly, so no Python interpreter starts on every tool call.
 - **New data paths.** Everything lives under
   `~/Library/Application Support/SidePulse`. XDG variables are never read for
@@ -55,8 +57,8 @@ service and Linux support, battery LED mode, the closed-lid
 sleep helper and lid animations, status history and charts, audit and
 decision-log export, the virtual SidePulse Notch device, WASM previews, the
 custom animation editor and profile import/export, transcript fallback
-monitoring, terminal resume/focus from session rows, `sidepulse update`, and
-Cursor, Grok and Junie support.
+monitoring, terminal resume/focus from session rows, `sidepulse update` (the
+release app updates itself instead), and Cursor, Grok and Junie support.
 
 ## Requirements
 
@@ -129,6 +131,8 @@ opened straight from `~/Downloads` from a temporary read-only location (App
 Translocation) that is gone after a restart. SidePulse then refuses to write
 that location into hooks or the login item, and says "SidePulse is running from
 a temporary location; move SidePulse.app to Applications and reopen it."
+A release app keeps itself up to date (see [Updates](#updates)); an app built
+with `scripts/install.sh` does not, so upgrade it by running the script again.
 
 ### What `sidepulse setup` does
 
@@ -424,14 +428,16 @@ started by the LaunchAgent exits quietly (see `app.log`).
 | **Agents**                       | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. Titles longer than 22 characters (project names over 16) are shortened with "…" so the menu stays narrow. The tooltip shows the full title when shortened, then state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
 | **Devices**                      | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected                                                                                                                                                                                                                    |
 | **Keep Awake**                   | One centered row of three buttons: **Never** / **When Agents Work** / **Always**, with the active one in the accent color. "Keeping Mac awake" appears below while the Mac is held awake                                                                                                                                                                                                                                                           |
+| **Update Available: X.Y.Z...**   | Below the header when a daily check found an update while SidePulse was in the background. Opens the update window (see [Updates](#updates))                                                                                                                                                                                                                                                                                                      |
 | **Settings...** (⌘,)             | Opens the settings window                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Check for Updates...**         | Checks for a new release now, or brings up the update in progress. Release builds only                                                                                                                                                                                                                                                                                                                                                             |
 | **Quit SidePulse** (⌘Q)          | Quits the app                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 The Settings window has four tabs:
 
 | Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder)                                                                                                                                                    |
+| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                   |
 | Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                        |
 | Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
@@ -515,6 +521,42 @@ locked`. The Settings window's Devices tab shows the same text. A write that
   [Install](#install)).
   `sidepulse app uninstall` removes the plist.
 
+### Updates
+
+Release builds update themselves with [Sparkle](https://sparkle-project.org)
+from this repository's GitHub releases. Once a day, and at launch when the last
+check is older than that, the app reads `appcast.xml` from the latest release
+(`https://github.com/khromov/sidepulse-swift/releases/latest/download/appcast.xml`).
+It does not ask for permission first. The feed lists the new version for Apple silicon and
+macOS 26 or later, so an older Mac is never offered an update it cannot run.
+
+- **When there is a new version**, Sparkle's window shows its release notes with
+  **Install Update**, **Skip This Version** and **Remind Me Later**. If the check
+  runs at launch, the window opens right away. Otherwise SidePulse does not pop
+  a window in the background: the menu shows **Update Available: X.Y.Z...**
+  below the header until you open it or the update is dismissed.
+- **Installing** downloads the release zip, checks its EdDSA signature against
+  the public key in the running app's `Info.plist` and checks the new app's code
+  signature. Then it quits SidePulse, replaces `SidePulse.app` in place and
+  opens the new version. An app in `/Applications` that your user cannot write
+  asks for an administrator password. Everything that points into the bundle
+  keeps working: the `~/.local/bin/sidepulse` link, the hooks and the
+  LaunchAgent. The removable-volume permission also survives, because it
+  belongs to the Developer ID signature. The new version is opened like a
+  manual launch, so launchd restarts it after a crash again only from the next
+  login.
+- **Download and install updates automatically** (off by default; the update
+  window has the same checkbox) downloads new versions in the background and
+  installs them the next time SidePulse quits. After a week without a quit, the
+  update window comes up.
+- **Builds from source** (`scripts/install.sh`, `scripts/build-app.sh`) have no
+  feed URL, so they never check and never replace themselves with a release
+  build. The menu has no **Check for Updates...** item, and Settings shows only
+  the version.
+
+Sparkle logs to Console.app. SidePulse writes `app: installing update X.Y.Z`
+and failed checks (`app: update failed: …`) to `app.log`.
+
 ## Files & paths
 
 | Path                                                                       | Contents                                                                                                                                                                                                                                                                                                                                                                     |
@@ -525,6 +567,8 @@ locked`. The Settings window's Devices tab shows the same text. A write that
 | `…/SidePulse/events.sock`, `events.sock.lock`                              | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700                                                                                                                  |
 | `…/SidePulse/app.log`, `app.out.log`, `app.err.log`                        | App diagnostics, and the LaunchAgent's stdout and stderr                                                                                                                                                                                                                                                                                                                     |
 | `~/Library/LaunchAgents/io.sidepulse.swift.plist`                          | Launch at login                                                                                                                                                                                                                                                                                                                                                              |
+| `~/Library/Preferences/io.sidepulse.swift.plist`                           | Sparkle's update settings and state: automatic checks and downloads, last check time, a skipped version (`defaults read io.sidepulse.swift`)                                                                                                                                                                                                                              |
+| `~/Library/Caches/io.sidepulse.swift/`                                     | Update downloads, kept only until the update is installed                                                                                                                                                                                                                                                                                                                  |
 | `~/Applications/SidePulse.app`                                             | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications`                                                                                                                                                                                                                                                                                     |
 | `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                                                                                                       |
 | `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
@@ -777,6 +821,7 @@ swift run sidepulse --help
 scripts/build-app.sh [--debug]                # build/SidePulse.app
 SIDEPULSE_CODESIGN_IDENTITY="…" scripts/build-app.sh   # sign with a certificate
 scripts/release.sh                            # notarized dist/SidePulse-VERSION.zip (see Releasing)
+scripts/appcast.sh dist/SidePulse-VERSION.zip NOTES.md   # signed update feed dist/appcast.xml
 SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline
 ```
 
@@ -807,6 +852,7 @@ Opt-in and environment-dependent tests:
 ```sh
 scripts/release.sh                              # dist/SidePulse-VERSION.zip, notarized
 scripts/release.sh --sign "Developer ID Application: …" --notary-profile NAME
+scripts/appcast.sh dist/SidePulse-VERSION.zip NOTES.md   # dist/appcast.xml, the update feed
 ```
 
 `scripts/release.sh` builds a notarized app for a GitHub release. It needs a
@@ -826,8 +872,9 @@ The script runs these steps:
    from `--notary-profile` / `$SIDEPULSE_NOTARY_PROFILE` (default `notary`).
    If the working tree has uncommitted changes, it prints a warning.
 2. **Builds** `build/SidePulse.app` with `scripts/build-app.sh --distribution`.
-   It builds arm64 binaries only and signs them with the
-   hardened runtime and a secure timestamp.
+   It builds arm64 binaries only, thins Sparkle to arm64 and signs everything
+   with the hardened runtime and a secure timestamp. This is the only build
+   that keeps the update feed URL.
 3. **Notarizes** the app with `notarytool` and waits for Apple's verdict. When
    the status is not Accepted, it prints Apple's log and exits 1. When it gets
    no final status (for example `notarytool info` fails, or the submission is
@@ -840,10 +887,35 @@ The script runs these steps:
    prints the SHA-256. The zip holds no extended attributes (`._` files), so
    the signature stays valid when it is extracted with `unzip` too. An existing zip for the same version is replaced.
 
-It uploads nothing, creates no tag and pushes nothing. You attach the zip to a
-GitHub release yourself, for example with
-`gh release create vVERSION dist/SidePulse-VERSION.zip`. Tell users to move
-`SidePulse.app` to Applications before opening it (see [Install](#install)).
+It uploads nothing, creates no tag and pushes nothing. It deletes an older
+`dist/appcast.xml`, because that feed would point installed apps at the
+previous release.
+
+`scripts/appcast.sh dist/SidePulse-VERSION.zip [NOTES.md]` then writes
+`dist/appcast.xml` with Sparkle's `generate_appcast` (from
+`.build/artifacts/sparkle/Sparkle/bin`; it runs `swift package resolve` when the
+tools are missing). The feed's one item downloads
+`releases/download/vVERSION/SidePulse-VERSION.zip`, shows `NOTES.md` as Markdown
+release notes, and takes the minimum macOS version and the arm64 requirement
+from the app. The script refuses a zip whose name does not match its version, an
+app without a feed URL (not a `--distribution` build) and an app whose
+`SUPublicEDKey` is not the keychain key's public half. Afterwards it checks the
+signature with `sign_update --verify`. The first run may ask you to let
+`generate_appcast` use the key in your keychain.
+
+Publish the zip and the feed together in one release marked latest, because
+installed apps read the latest release's feed:
+`gh release create vVERSION dist/SidePulse-VERSION.zip dist/appcast.xml --latest`.
+Tell users to move `SidePulse.app` to Applications before opening it (see
+[Install](#install)).
+
+The feed is signed with an EdDSA key. Its private half lives in the login
+keychain (Sparkle's default account), and its public half is `SUPublicEDKey`
+in `Resources/Info.plist`. Keep a backup:
+`.build/artifacts/sparkle/Sparkle/bin/generate_keys -x FILE` exports the key, and
+`generate_keys -f FILE` imports it on another Mac. If the key is lost, a
+release signed with the same Developer ID certificate can switch to a new key
+(Sparkle's [key rotation](https://sparkle-project.org/documentation/#rotating-signing-keys)).
 
 ## Uninstall
 
@@ -866,7 +938,9 @@ scripts/uninstall.sh --app-dir DIR   # remove the app from DIR (overrides the li
    removes `~/.local/bin/sidepulse` only if the link points into a
    `SidePulse.app`. A CLI that was moved aside during install stays at
    `sidepulse.previous`.
-3. Keeps settings and logs unless you pass `--purge`. If SidePulse is still
+3. Keeps settings and logs unless you pass `--purge`, which also deletes
+   Sparkle's update settings (`defaults delete io.sidepulse.swift`) and
+   `~/Library/Caches/io.sidepulse.swift`. If SidePulse is still
    running after the wait, `--purge` keeps them too, because the app writes
    `latest.json` and `app.log` as it quits. The script then warns and exits 1:
    quit SidePulse from the menu bar and run `scripts/uninstall.sh --purge`

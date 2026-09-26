@@ -32,7 +32,8 @@ In scope:
   - status icon;
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
-  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder).
+  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder, updates).
+- Updates of release builds with Sparkle 2, from a feed published with each GitHub release.
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
 
 Out of scope (dropped on purpose):
@@ -50,7 +51,7 @@ Out of scope (dropped on purpose):
 - reading state from message text: the Python question heuristic, notification
   phrases and `<!-- sidepulse:… -->` markers (state comes only from hook events)
 - terminal resume/focus
-- `update`
+- a `sidepulse update` command (release apps update themselves with Sparkle)
 - Cursor, Grok and Junie
 
 ## Processes
@@ -205,6 +206,50 @@ an ad-hoc grant does not survive a rebuild. `release.sh` uses
 timestamp) with a Developer ID identity. It then notarizes and staples the app
 and zips it to `dist/SidePulse-VERSION.zip`.
 
+`build-app.sh` also copies `Sparkle.framework` from the SwiftPM build into
+`Contents/Frameworks` (the app links it through the
+`@executable_path/../Frameworks` rpath in `Package.swift`). It deletes the
+framework's XPC services, which only sandboxed apps use, and its headers. A
+`--distribution` build thins Sparkle's three binaries to arm64. Sparkle's
+`Autoupdate` and `Updater.app` are signed one by one, then the framework and
+then the app, without `--deep`, as Sparkle's docs require.
+
+## Updates
+
+Only a `--distribution` build keeps `SUFeedURL` in its `Info.plist`.
+`build-app.sh` deletes it from every other build, and
+`AppUpdater.startIfConfigured()` creates no updater without it. So a build from
+source (which might be for Intel) never replaces itself with a release, and its
+menu and Settings show no update controls.
+
+- **Feed.** `SUFeedURL` is `https://github.com/khromov/sidepulse-swift/releases/latest/download/appcast.xml`.
+  GitHub redirects it to the `appcast.xml` asset of the release marked latest.
+  `scripts/appcast.sh` writes a feed with one item for the new zip (`generate_appcast`,
+  no deltas) whose Markdown release notes are embedded. The zip's
+  `LSMinimumSystemVersion` and slices give it `sparkle:minimumSystemVersion` and
+  `sparkle:hardwareRequirements` `arm64`.
+- **Trust.** `SUPublicEDKey` in `Resources/Info.plist` is the public half of the
+  EdDSA key in the release machine's login keychain. `appcast.sh` refuses to
+  sign when the zip's key and the keychain's key differ. Sparkle also checks the
+  new app's code signature.
+- **Behavior.** `SUEnableAutomaticChecks` skips Sparkle's permission prompt.
+  Checks run every 24 hours, and downloading automatically is off by default.
+  Sparkle's own defaults (`io.sidepulse.swift` domain) hold those preferences,
+  and the Settings toggles set them through `SPUUpdater`.
+- **Gentle reminders.** A menu-bar app's scheduled alert would open behind other
+  windows. So `AppUpdater` lets Sparkle show a scheduled update only when Sparkle
+  offers immediate focus (right after launch). Otherwise it keeps
+  `pendingVersion`, and the menu shows **Update Available: X.Y.Z...** until the
+  update session ends. That item, **Check for Updates...** and **Check Now** all
+  call `checkForUpdates`, which also brings back a pending alert.
+- **Install.** Sparkle terminates the app normally (exit 0, so the LaunchAgent's
+  `KeepAlive` does not restart it), replaces the bundle at the same path and
+  relaunches it through LaunchServices. The relaunched copy runs outside
+  launchd until the next login, like an app opened by hand. The
+  `~/.local/bin/sidepulse` link, hook commands and LaunchAgent path point into
+  the bundle, so they stay valid. The removable-volume grant is tied to the
+  Developer ID designated requirement, so it survives too.
+
 ## Module map (`Sources/`)
 
 | Area | Files | Notes |
@@ -219,14 +264,15 @@ and zips it to `dist/SidePulse-VERSION.zip`.
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
-| App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings and `SDEjectGuard` (DiskArbitration) |
+| App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings, `SDEjectGuard` (DiskArbitration) and `AppUpdater`, the only file that imports Sparkle |
 
 `SidePulseCore` must not import AppKit or SwiftUI, so the hook process starts
 fast.
 
 ## Conventions
 
-- Swift 5 language mode, macOS 26+, no third-party dependencies.
+- Swift 5 language mode, macOS 26+. Sparkle is the only third-party dependency,
+  and only `SidePulseApp` links it; the CLI and `SidePulseCore` have none.
 - Tests use XCTest (`swift test`).
 - Tests never modify the real `~/.claude`, `~/.codex`, `~/.config/opencode`,
   `~/Library/LaunchAgents` or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read

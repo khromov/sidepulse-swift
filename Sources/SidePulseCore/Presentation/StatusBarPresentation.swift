@@ -13,6 +13,7 @@ public enum MenuText {
     public static let keepingAwake = "Keeping Mac awake"
     public static let openLogsFolder = "Open Logs Folder"
     public static let settings = "Settings..."
+    public static let checkForUpdates = "Check for Updates..."
     public static let launchAtLogin = "Launch at Login"
     public static let ejectPrevention = "SidePulse Pro Eject Prevention"
     public static let ejectPreventionHelp =
@@ -21,6 +22,10 @@ public enum MenuText {
     public static let quit = "Quit SidePulse"
     public static let alreadyRunning = "SidePulse is already running"
     public static let settingsWindowTitle = "SidePulse Settings"
+
+    public static func updateAvailable(version: String) -> String {
+        "Update Available: \(version)..."
+    }
 }
 
 public enum StatusBarPresentation {

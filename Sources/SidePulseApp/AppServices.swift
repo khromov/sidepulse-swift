@@ -25,9 +25,11 @@ struct HookOutcome {
 @MainActor
 final class AppServices {
     let runtime: SidePulseRuntime
+    let updater: AppUpdater?
 
-    init(runtime: SidePulseRuntime) {
+    init(runtime: SidePulseRuntime, updater: AppUpdater?) {
         self.runtime = runtime
+        self.updater = updater
     }
 
     var paths: SidePulsePaths { runtime.paths }

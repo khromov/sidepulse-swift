@@ -41,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DiagnosticsLog.shared.log("app: started version=\(SidePulseConstants.version) pid=\(getpid())")
         ejectGuard.setEnabled(runtime.settings.sdEjectGuard)
 
-        let services = AppServices(runtime: runtime)
+        let services = AppServices(runtime: runtime, updater: AppUpdater.startIfConfigured())
         self.services = services
         settingsController = SettingsWindowController(model: SettingsModel(services: services))
         let statusController = StatusItemController(

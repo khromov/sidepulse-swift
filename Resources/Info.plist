@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template for SidePulse.app/Contents/Info.plist. scripts/build-app.sh replaces
-     __VERSION__ with SidePulseConstants.version. -->
+     __VERSION__ with SidePulseConstants.version and drops SUFeedURL unless it
+     builds for distribution, which turns the updater off in builds from source. -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
@@ -31,6 +32,12 @@
 	<key>NSRemovableVolumesUsageDescription</key>
 	<string>SidePulse writes LED programs to your SidePulse device.</string>
 	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/khromov/sidepulse-swift/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>8JyrJp2H/JThbQUlhG1kpb523fKzvZ0xffAF88WGn1w=</string>
+	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>SidePulse agent status monitor</string>

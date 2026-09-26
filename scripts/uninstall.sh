@@ -136,6 +136,9 @@ if [ "$PURGE" -eq 1 ] && [ -n "$SURVIVORS" ]; then
 elif [ "$PURGE" -eq 1 ]; then
     rm -rf "$DATA_DIR"
     echo "Removed $DATA_DIR"
+    # Sparkle keeps its update settings in the app's defaults and its downloads in Caches.
+    defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+    rm -rf "$HOME/Library/Caches/$BUNDLE_ID"
 else
     echo "Kept settings and logs in $DATA_DIR (use --purge to remove them)"
 fi

@@ -8,6 +8,9 @@ let package = Package(
         .executable(name: "sidepulse", targets: ["sidepulse"]),
         .executable(name: "SidePulseApp", targets: ["SidePulseApp"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0"),
+    ],
     targets: [
         // Foundation/Darwin/IOKit/Synchronization only: every hook runs the CLI, so it must launch fast.
         .target(
@@ -19,10 +22,15 @@ let package = Package(
         .executableTarget(name: "sidepulse", dependencies: ["SidePulseCLI"]),
         .executableTarget(
             name: "SidePulseApp",
-            dependencies: ["SidePulseCore"],
+            dependencies: [
+                "SidePulseCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
+                // build-app.sh copies Sparkle.framework into SidePulse.app/Contents/Frameworks.
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
         .testTarget(name: "SidePulseCoreTests", dependencies: ["SidePulseCore"]),

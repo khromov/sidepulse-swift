@@ -71,7 +71,9 @@ if ! codesign -dvv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:';
     exit 1
 fi
 # Every build config shares one SwiftPM output directory, so a concurrent build can swap in other binaries.
-for bin in "$APP/Contents/MacOS/SidePulse" "$APP/Contents/Helpers/sidepulse"; do
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+for bin in "$APP/Contents/MacOS/SidePulse" "$APP/Contents/Helpers/sidepulse" \
+    "$SPARKLE/Sparkle" "$SPARKLE/Autoupdate" "$SPARKLE/Updater.app/Contents/MacOS/Updater"; do
     ARCHS=$(lipo -archs "$bin")
     if [ "$ARCHS" != arm64 ]; then
         echo "error: $bin is built for '$ARCHS', not arm64 only; was another swift build running in this checkout?" >&2
@@ -138,12 +140,14 @@ xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose=2 "$APP"
 
 mkdir -p "$ROOT/dist"
-rm -f "$ZIP"
+# An older feed would point installed apps at the previous release.
+rm -f "$ZIP" "$ROOT/dist/appcast.xml"
 ditto -c -k --norsrc --keepParent "$APP" "$ZIP"
 SHA256=$(shasum -a 256 "$ZIP" | cut -d ' ' -f 1)
 
 echo
 echo "Release ready: $ZIP"
 echo "SHA-256: $SHA256"
-echo "Nothing was uploaded. To publish it, for example:"
-echo "  gh release create v$VERSION \"$ZIP\""
+echo "Nothing was uploaded. Write the update feed, then publish both, for example:"
+echo "  scripts/appcast.sh \"$ZIP\" NOTES.md"
+echo "  gh release create v$VERSION \"$ZIP\" \"$ROOT/dist/appcast.xml\""

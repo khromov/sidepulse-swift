@@ -83,6 +83,25 @@ private struct GeneralTab: View {
                     Button(MenuText.openLogsFolder) { model.services.openLogsFolder() }
                 }
             }
+            Section("Updates") {
+                if let updates = model.updates {
+                    Toggle("Check for updates automatically", isOn: Binding(
+                        get: { updates.automaticallyChecks },
+                        set: { model.setAutomaticallyChecksForUpdates($0) }))
+                    Toggle("Download and install updates automatically", isOn: Binding(
+                        get: { updates.automaticallyDownloads },
+                        set: { model.setAutomaticallyDownloadsUpdates($0) }))
+                        .disabled(!updates.automaticallyChecks)
+                    LabeledContent("Version \(SidePulseConstants.version)") {
+                        Button("Check Now") { model.checkForUpdates() }
+                    }
+                } else {
+                    LabeledContent("Version", value: SidePulseConstants.version)
+                    Text("Builds made from source don't update themselves. Reinstall with scripts/install.sh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
     }

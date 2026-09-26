@@ -11,6 +11,8 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var busyProviders: Set<HookProvider> = []
     @Published private(set) var hookNotes: [HookProvider: [String]] = [:]
+    /// Nil in builds made from source, which have no updater.
+    @Published private(set) var updates: UpdatePreferences?
     @Published var message: String?
 
     let services: AppServices
@@ -30,6 +32,7 @@ final class SettingsModel: ObservableObject {
         assignIfChanged(\.devices, runtime.deviceInfos())
         assignIfChanged(\.keepAwakeActive, runtime.keepAwakeActive)
         assignIfChanged(\.launchAtLogin, services.launchAtLoginEnabled)
+        assignIfChanged(\.updates, services.updater?.preferences)
         if includeHooks { assignIfChanged(\.hooks, services.hookStates()) }
     }
 
@@ -114,6 +117,22 @@ final class SettingsModel: ObservableObject {
 
     func refreshHooks() {
         hooks = services.hookStates()
+    }
+
+    // MARK: Updates
+
+    func setAutomaticallyChecksForUpdates(_ enabled: Bool) {
+        services.updater?.setAutomaticallyChecks(enabled)
+        updates = services.updater?.preferences
+    }
+
+    func setAutomaticallyDownloadsUpdates(_ enabled: Bool) {
+        services.updater?.setAutomaticallyDownloads(enabled)
+        updates = services.updater?.preferences
+    }
+
+    func checkForUpdates() {
+        services.updater?.checkForUpdates()
     }
 
     // MARK: Launch at login

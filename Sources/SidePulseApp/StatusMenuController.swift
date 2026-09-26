@@ -125,6 +125,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let header = label(model.header)
         headerItem = header
         menu.addItem(header)
+        if let version = services.updater?.pendingVersion {
+            menu.addItem(action(MenuText.updateAvailable(version: version), #selector(checkForUpdates(_:))))
+        }
         menu.addItem(.separator())
 
         menu.addItem(label(MenuText.agents))
@@ -145,6 +148,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(action(MenuText.settings, #selector(showSettings(_:)), key: ","))
+        if services.updater != nil {
+            menu.addItem(action(MenuText.checkForUpdates, #selector(checkForUpdates(_:))))
+        }
         menu.addItem(.separator())
         menu.addItem(action(MenuText.quit, #selector(quitApp(_:)), key: "q"))
 
@@ -341,7 +347,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         openSettings()
     }
 
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        services.updater?.checkForUpdates()
+    }
+
     @objc private func quitApp(_ sender: NSMenuItem) {
         quit()
+    }
+}
+
+extension StatusMenuController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action != #selector(checkForUpdates(_:)) || services.updater?.canCheckForUpdates == true
     }
 }
