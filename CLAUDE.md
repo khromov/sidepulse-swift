@@ -23,7 +23,7 @@ scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications
 scripts/release.sh [--sign ID] [--notary-profile NAME]   # Developer ID + notarize + staple → dist/SidePulse-VERSION.zip
 ```
 
-There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 14+ and no third-party dependencies.
+There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 26+ and no third-party dependencies.
 
 The following tests only run when you opt in with an environment variable. The README's Development section has the full table.
 

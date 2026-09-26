@@ -42,7 +42,7 @@ Cursor, Grok and Junie support.
 
 ## Requirements
 
-- macOS 14 or later.
+- macOS 26 or later.
 - A Swift 6 toolchain: Xcode 16 or later. The package uses swift-tools-version
   6.0 and compiles in Swift 5 language mode.
 - The scripts use the standard macOS tools `codesign`, `plutil`, `ditto` and

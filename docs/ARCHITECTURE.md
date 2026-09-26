@@ -185,7 +185,7 @@ fast.
 
 ## Conventions
 
-- Swift 5 language mode, macOS 14+, no third-party dependencies.
+- Swift 5 language mode, macOS 26+, no third-party dependencies.
 - Tests use XCTest (`swift test`).
 - Tests never modify the real `~/.claude`, `~/.codex`, `~/.config/opencode`,
   `~/Library/LaunchAgents` or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read

@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SidePulse",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("26.0")],
     products: [
         .executable(name: "sidepulse", targets: ["sidepulse"]),
         .executable(name: "SidePulseApp", targets: ["SidePulseApp"]),
