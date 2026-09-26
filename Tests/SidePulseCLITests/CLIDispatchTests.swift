@@ -7,7 +7,7 @@ final class CLIDispatchTests: XCTestCase {
         let harness = CLIHarness()
         XCTAssertEqual(harness.run([]), 0)
         XCTAssertTrue(harness.stdout.text.hasPrefix("usage: sidepulse <command> [options]"))
-        for name in ["setup", "status", "live", "write", "leds", "run", "install", "uninstall", "doctor", "app",
+        for name in ["setup", "status", "write", "leds", "run", "install", "uninstall", "doctor", "app",
                      "settings", "version"] {
             XCTAssertTrue(harness.stdout.text.contains("\n  \(name) "), "help should list \(name)")
         }
@@ -35,7 +35,7 @@ final class CLIDispatchTests: XCTestCase {
     }
 
     func testPerCommandHelp() {
-        for name in ["setup", "status", "live", "watch", "write", "leds", "run", "install", "uninstall", "doctor",
+        for name in ["setup", "status", "write", "leds", "run", "install", "uninstall", "doctor",
                      "app", "status-bar", "settings", "version"] {
             let harness = CLIHarness()
             XCTAssertEqual(harness.run([name, "--help"]), 0, name)
@@ -55,7 +55,7 @@ final class CLIDispatchTests: XCTestCase {
         let harness = CLIHarness()
         XCTAssertEqual(harness.run(["status", "--bogus"]), 2)
         XCTAssertEqual(harness.stderr.text,
-                       "usage: sidepulse status [--json] [--all] [--offline]\n"
+                       "usage: sidepulse status [--json] [--all] [--offline] [--watch]\n"
                            + "sidepulse status: error: unrecognized arguments: --bogus\n")
     }
 
@@ -73,7 +73,7 @@ final class CLIDispatchTests: XCTestCase {
 
     func testAliases() {
         XCTAssertTrue(SidePulseCLI.command(named: "status-bar") == AppCommand.self)
-        XCTAssertTrue(SidePulseCLI.command(named: "watch") == LiveCommand.self)
+        XCTAssertNil(SidePulseCLI.command(named: "live"))
         XCTAssertTrue(SidePulseCLI.command(named: "run") == RunCommand.self)
         XCTAssertNil(SidePulseCLI.command(named: "push"))
         // `run` is leds without --once.
@@ -100,9 +100,9 @@ final class CLIDispatchTests: XCTestCase {
         XCTAssertEqual(leds.run(["leds", "--device", "/Volumes/PulseDot"]), 2)
         XCTAssertTrue(leds.stderr.text.hasPrefix("usage: sidepulse leds"))
         XCTAssertTrue(leds.stderr.text.contains("--device requires --once"))
-        let live = CLIHarness()
-        XCTAssertEqual(live.run(["live", "--interval", "0"]), 2)
-        XCTAssertTrue(live.stderr.text.contains("argument --interval: must be greater than 0"))
+        let interval = CLIHarness()
+        XCTAssertEqual(interval.run(["leds", "--interval", "0"]), 2)
+        XCTAssertTrue(interval.stderr.text.contains("argument --interval: must be greater than 0"))
         let app = CLIHarness()
         XCTAssertEqual(app.run(["app", "stop", "--foreground"]), 2)
         XCTAssertTrue(app.stderr.text.contains("--foreground can only be combined with start"))

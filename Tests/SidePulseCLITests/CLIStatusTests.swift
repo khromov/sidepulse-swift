@@ -86,6 +86,18 @@ final class CLIStatusTests: XCTestCase {
         XCTAssertTrue(h.stdout.text.hasPrefix("Source: hook logs (offline)\nAggregate: Idle / Ready (0 active, 0 stale)"))
     }
 
+    func testWatchClearsTheScreenAndRedrawsEveryTwoSeconds() {
+        let calls = CallLog()
+        let h = harness(app: CLIFixtures.snapshot, logs: CLIFixtures.empty, calls: calls)
+        let started = h.clock
+        StatusCommand.watch(ParsedArguments(flags: ["watch"]), h.env, frames: 3)
+        XCTAssertEqual(calls.app, 3)
+        let frame = "\u{1B}[H\u{1B}[2J" + "Source: SidePulse app (live)\n"
+            + StatusText.render(CLIFixtures.snapshot, includeStale: false) + "\n"
+        XCTAssertEqual(h.stdout.text, String(repeating: frame, count: 3))
+        XCTAssertEqual(h.clock.timeIntervalSince(started), 4, "two waits between three frames")
+    }
+
     // MARK: leds --once text
 
     func testLedsResultLines() {

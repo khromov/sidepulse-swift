@@ -108,7 +108,6 @@ final class CLIHarness {
             stdin: .terminal,
             executablePath: "/usr/local/bin/sidepulse",
             now: { [unowned self] in clock },
-            timeZone: TimeZone(identifier: "UTC")!,
             sleep: { [unowned self] seconds in clock = clock.addingTimeInterval(seconds) },
             app: app.connection,
             snapshots: SnapshotLoader(fromApp: { _ in nil }, fromLogs: { _ in MonitorSnapshot.empty(now: now) }),

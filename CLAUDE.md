@@ -48,7 +48,7 @@ Data flow:
 4. **`SidePulseRuntime`** (`Runtime/Runtime.swift`) is the only owner of monitor state and LED writes. It runs `EventSocketServer` → `StatusEngine` → debounced `latest.json`, `LedSyncService`, keep-awake, device polling and settings reloads.
 5. The menu-bar app runs `SidePulseRuntime` together with its UI. `sidepulse run`/`leds` runs the same runtime headless.
 6. The runtime binds the socket first and refuses to start if another process owns it.
-7. `sidepulse status`/`live` query the runtime over the socket with `{"command":"status"}`. When it isn't running, they rebuild status from `logs/*.jsonl` with the same state machine.
+7. `sidepulse status` queries the runtime over the socket with `{"command":"status"}`. When it isn't running, it rebuilds status from `logs/*.jsonl` with the same state machine.
 
 Key design points that span several files:
 

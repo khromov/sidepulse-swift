@@ -106,7 +106,7 @@ public struct ParsedArguments: Equatable, Sendable {
             throw UsageError("argument --\(name): invalid float value: '\(raw)'")
         }
         if let minimum, exclusive ? value <= minimum : value < minimum {
-            let bound = LiveDashboard.formatG(minimum)
+            let bound = String(format: "%g", minimum)
             throw UsageError("argument --\(name): must be \(exclusive ? "greater than" : "at least") \(bound)")
         }
         return value

@@ -1,11 +1,10 @@
 import Foundation
 
 /// Replaces the default SIGINT/SIGTERM actions until `cancel()`, so Ctrl-C becomes an event the CLI
-/// can wait for.
+/// can react to.
 final class SignalTrap: @unchecked Sendable {
     private let signals: [Int32]
     private var sources: [DispatchSourceSignal] = []
-    private let semaphore = DispatchSemaphore(value: 0)
     private let lock = NSLock()
     private var receivedSignal: Int32?
     private var handler: ((Int32) -> Void)?
@@ -32,21 +31,10 @@ final class SignalTrap: @unchecked Sendable {
 
     private func receive(_ number: Int32) {
         lock.lock()
-        let first = receivedSignal == nil
-        if first { receivedSignal = number }
+        if receivedSignal == nil { receivedSignal = number }
         let handler = self.handler
         lock.unlock()
         handler?(number)
-        if first { semaphore.signal() }
-    }
-
-    func wait(timeout: TimeInterval) -> Bool {
-        if received != nil { return true }
-        if semaphore.wait(timeout: .now() + max(0, timeout)) == .success {
-            semaphore.signal() // keep later waits returning immediately
-            return true
-        }
-        return received != nil
     }
 
     /// Must be called on the main thread.

@@ -12,7 +12,7 @@ protocol CLICommand {
 public enum SidePulseCLI {
     /// Commands in the order `sidepulse --help` lists them.
     static let commands: [any CLICommand.Type] = [
-        SetupCommand.self, StatusCommand.self, LiveCommand.self, WriteCommand.self, LedsCommand.self,
+        SetupCommand.self, StatusCommand.self, WriteCommand.self, LedsCommand.self,
         InstallCommand.self, UninstallCommand.self, DoctorCommand.self, AppCommand.self,
         SettingsCommand.self, VersionCommand.self, HelpCommand.self,
     ]
@@ -20,7 +20,6 @@ public enum SidePulseCLI {
     /// Hidden from the help listing, except `run`.
     static let aliases: [String: any CLICommand.Type] = [
         "status-bar": AppCommand.self,
-        "watch": LiveCommand.self,
         "run": RunCommand.self,
     ]
 

@@ -4,26 +4,17 @@ import XCTest
 
 /// Uses SIGUSR1/SIGUSR2 so a mistake cannot kill the test run with SIGINT.
 final class CLISignalTrapTests: XCTestCase {
-    func testWaitTimesOutWithoutASignal() {
-        let trap = SignalTrap(signals: [SIGUSR1])
-        defer { trap.cancel() }
-        XCTAssertFalse(trap.wait(timeout: 0.05))
-        XCTAssertNil(trap.received)
-    }
-
-    func testSignalEndsTheWaitRunsTheHandlerAndStaysLatched() {
+    func testSignalRunsTheHandlerAndIsRecorded() {
         let handled = expectation(description: "handler ran")
         let trap = SignalTrap(signals: [SIGUSR1]) { number in
             XCTAssertEqual(number, SIGUSR1)
             handled.fulfill()
         }
         defer { trap.cancel() }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { kill(getpid(), SIGUSR1) }
-        XCTAssertTrue(trap.wait(timeout: 5))
-        XCTAssertEqual(trap.received, SIGUSR1)
+        XCTAssertNil(trap.received)
+        kill(getpid(), SIGUSR1)
         wait(for: [handled], timeout: 5)
-        // Later waits (the next redraw) return at once.
-        XCTAssertTrue(trap.wait(timeout: 5))
+        XCTAssertEqual(trap.received, SIGUSR1)
     }
 
     func testMainLoopServicesTheMainQueueUntilASignal() {

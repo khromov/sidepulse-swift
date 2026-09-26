@@ -50,11 +50,8 @@ public struct CLIEnvironment {
     public var stdout: TextOutput
     public var stderr: TextOutput
     public var stdin: StandardInput
-    public var stdoutIsTTY: Bool
-    public var terminalColumns: () -> Int?
     public var executablePath: String
     public var now: () -> Date
-    public var timeZone: TimeZone
     public var sleep: (TimeInterval) -> Void
     public var app: AppConnection
     public var snapshots: SnapshotLoader
@@ -68,11 +65,8 @@ public struct CLIEnvironment {
                 stdout: TextOutput = .standardOutput,
                 stderr: TextOutput = .standardError,
                 stdin: StandardInput = .terminal,
-                stdoutIsTTY: Bool = false,
-                terminalColumns: @escaping () -> Int? = { nil },
                 executablePath: String = SidePulsePaths.currentExecutablePath,
                 now: @escaping () -> Date = Date.init,
-                timeZone: TimeZone = .current,
                 sleep: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
                 app: AppConnection? = nil,
                 snapshots: SnapshotLoader = .standard,
@@ -85,11 +79,8 @@ public struct CLIEnvironment {
         self.stdout = stdout
         self.stderr = stderr
         self.stdin = stdin
-        self.stdoutIsTTY = stdoutIsTTY
-        self.terminalColumns = terminalColumns
         self.executablePath = executablePath
         self.now = now
-        self.timeZone = timeZone
         self.sleep = sleep
         self.app = app ?? .socket(path: paths.socketPath)
         self.snapshots = snapshots
@@ -103,9 +94,7 @@ public struct CLIEnvironment {
         return CLIEnvironment(
             variables: variables,
             paths: .current,
-            stdin: .process,
-            stdoutIsTTY: isatty(STDOUT_FILENO) == 1,
-            terminalColumns: { Terminal.columns(environment: variables, ttyColumns: Terminal.stdoutColumns) }
+            stdin: .process
         )
     }
 
@@ -116,22 +105,6 @@ public struct CLIEnvironment {
     public var appLocator: AppLocator {
         AppLocator(executablePath: executablePath, home: paths.home, environment: variables,
                    systemApplicationsDir: systemApplicationsDir)
-    }
-}
-
-enum Terminal {
-    /// `$COLUMNS` wins over the real terminal width, like Python's `shutil.get_terminal_size`.
-    static func columns(environment: [String: String], ttyColumns: () -> Int?) -> Int? {
-        if let raw = environment["COLUMNS"], let value = Int(raw.trimmingCharacters(in: .whitespaces)), value > 0 {
-            return value
-        }
-        return ttyColumns()
-    }
-
-    static func stdoutColumns() -> Int? {
-        var size = winsize()
-        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else { return nil }
-        return Int(size.ws_col)
     }
 }
 

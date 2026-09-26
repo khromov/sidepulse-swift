@@ -31,7 +31,7 @@ In scope:
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
   - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, launch at login, logs folder).
-- CLI: `write`, `status`, `live`, `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
+- CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
 
 Out of scope (dropped on purpose):
 - iPhone link/push

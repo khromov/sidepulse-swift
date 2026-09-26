@@ -141,7 +141,7 @@ printf 'off\n#00FF66 pulse\nrepeat' | sidepulse write    # program from stdin
 sidepulse write '#FF00FF' --device /Volumes/SidePulseDot --manual
 
 sidepulse status        # one-shot aggregate and per-agent status
-sidepulse live          # full-screen dashboard, Ctrl-C to quit
+sidepulse status --watch  # redraw every 2 s, Ctrl-C to quit
 sidepulse doctor        # hooks, app, socket and CLI path check
 ```
 
@@ -163,13 +163,12 @@ writes anyway.
 Exit codes: `0` ok, `1` error, `2` usage error, invalid LED program, or no
 device / ambiguous device. `sidepulse -V` (or `--version`) prints the version,
 and `sidepulse <command> --help` shows a command's options. Aliases:
-`status-bar` = `app`, `watch` = `live`, and `run` = `leds` without `--once`.
+`status-bar` = `app`, and `run` = `leds` without `--once`.
 
 | Command | Purpose |
 | --- | --- |
 | `setup` | Install agent hooks and start the menu-bar app |
 | `status` | Show the current agent status |
-| `live` | Live full-screen dashboard of agent status |
 | `write` | Write an LED program to a SidePulse device |
 | `leds` | Mirror agent status to the LEDs (headless) |
 | `run` | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
@@ -187,28 +186,13 @@ and `sidepulse <command> --help` shows a command's options. Aliases:
 - `--no-migrate`: leave the Python SidePulse LaunchAgents alone.
 - `--no-trust`: do not mark the Codex hooks trusted.
 
-**`sidepulse status [--json] [--all] [--offline]`**
+**`sidepulse status [--json] [--all] [--offline] [--watch]`**
 Asks the running app. If the app is not running, or with `--offline`, the
 status is rebuilt from the hook logs with the same state machine.
 - `--json`: print the snapshot as JSON.
 - `--all`: also list stale agents.
 - `--offline`: read the hook logs instead of asking the app.
-
-**`sidepulse live [--interval 1] [--recent-seconds 3600] [--all] [--no-color] [--offline]`**
-- `--interval SECONDS`: refresh interval (default 1).
-- `--recent-seconds SECONDS`: hide agents idle longer than this (default 3600;
-  0 shows all).
-- `--all`: show every known agent, including stale ones.
-- `--no-color`: disable ANSI colors. Colors are also off when `NO_COLOR` is set
-  or stdout is not a terminal.
-- `--offline`: read the hook logs instead of asking the app.
-
-The table fits the terminal. Below 154 columns it drops Origin, Event and Tool
-as needed, in that order, then narrows the other columns (the smallest table is
-62 columns). The reason and source lines are cut to the width, and on narrow
-terminals the header leaves out `updated=` and `quit=Ctrl-C` and cuts the
-refresh/source line. From 154 columns up the layout is Python's, with Cwd
-taking any extra room.
+- `--watch`: clear the screen and redraw every 2 seconds until Ctrl-C.
 
 **`sidepulse write [PROGRAM|-] [--device PATH] [--file-name NAME] [--dry-run] [--manual]`**
 `-` reads the program from stdin. Piped stdin is also read when no program
@@ -325,7 +309,7 @@ How the global display state is chosen:
   that, not every agent separately. With no fresh agent, the display is Idle.
 - **Staleness.** A row goes stale once it is older than the **Idle timeout**
   (default 1 hour, set in Settings > General). Stale rows drop out of the
-  aggregate. `status --all` and `live --all` still list them. Tool Running has
+  aggregate. `status --all` still lists them. Tool Running has
   no separate time limit.
 - **Done window.** A Completed row stays visible for 20 minutes, then drops
   out, and the LEDs return to the dim idle pattern. Completed and Idle rows are
@@ -656,7 +640,7 @@ The socket answers `ping`, `status`, `open-settings` and `reload-settings`, all
 used by the CLI. `reload-settings` replies
 `{"ok":false,"error":"LED write in progress"}` if a write that started with the
 old settings is still running after 2 s. When the app is not running,
-`sidepulse status` and `sidepulse live` rebuild the status from the logs.
+`sidepulse status` rebuilds the status from the logs.
 
 ## Known limitations
 
