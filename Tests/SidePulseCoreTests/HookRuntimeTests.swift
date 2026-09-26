@@ -3,9 +3,9 @@ import XCTest
 @testable import SidePulseCore
 
 private let fixedNow = Date(timeIntervalSince1970: 1_790_382_709.125)
-private let fixedOrigin = AgentOrigin(label: "Claude Code CLI", kind: "claude_cli", source: "process:claude", confidence: "inferred")
+private let fixedOrigin = "Claude Code CLI"
 
-private func hookRecord(_ provider: HookProvider = .claude, _ json: String, origin: AgentOrigin? = nil) -> JSONObject {
+private func hookRecord(_ provider: HookProvider = .claude, _ json: String, origin: String? = nil) -> JSONObject {
     HookRuntime.makeRecord(provider: provider, payload: Data(json.utf8), now: fixedNow, origin: origin)
 }
 
@@ -27,10 +27,9 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(result.keys, [
             "logged_at", "hook_event_name", "session_id", "agent_id", "cwd", "tool_name",
             "tool_input", "tool_response", "tool_response_failed", "prompt", "last_assistant_message", "message",
-            "notification_type", "error_details", "sidepulse_status", "sidepulse_mode",
-            "agent_origin", "agent_origin_kind", "agent_origin_source", "agent_origin_confidence",
+            "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin",
         ])
-        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","agent_id":"a1","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error_details":"details","sidepulse_status":"ask","sidepulse_mode":"working","agent_origin":"Claude Code CLI","agent_origin_kind":"claude_cli","agent_origin_source":"process:claude","agent_origin_confidence":"inferred"}"#)
+        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","agent_id":"a1","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error_details":"details","sidepulse_status":"ask","sidepulse_mode":"working","agent_origin":"Claude Code CLI"}"#)
     }
 
     func testAbsentValuesAreOmitted() {
@@ -223,7 +222,7 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testCodexWrappedPayloadIsUnwrapped() {
         let wrapped = #"{"logged_at":"2026-09-17T17:41:23Z","event":{"session_id":"c1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}}"#
         XCTAssertEqual(jsonString(hookRecord(.codex, wrapped, origin: fixedOrigin)),
-                       #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"UserPromptSubmit","session_id":"c1","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}"#)
+                       #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"UserPromptSubmit","session_id":"c1","prompt":"hi","agent_origin":"Codex CLI"}"#)
         XCTAssertEqual(hookRecord(.codex, #"{"hook_event_name":"Stop","session_id":"c2"}"#)["session_id"], .string("c2"))
         // Only Codex payloads are unwrapped.
         XCTAssertNil(hookRecord(.claude, #"{"event":{"hook_event_name":"Stop"}}"#)["hook_event_name"])
@@ -250,19 +249,14 @@ final class HookRuntimeRecordTests: XCTestCase {
 
     func testEmptyPayloadCountsAsEmptyObject() {
         XCTAssertEqual(jsonString(hookRecord(.claude, "", origin: fixedOrigin)),
-                       #"{"logged_at":"2026-09-26T00:31:49.125Z","agent_origin":"Claude Code CLI","agent_origin_kind":"claude_cli","agent_origin_source":"process:claude","agent_origin_confidence":"inferred"}"#)
+                       #"{"logged_at":"2026-09-26T00:31:49.125Z","agent_origin":"Claude Code CLI"}"#)
     }
 
-    func testPayloadOriginWinsAndSkipsDetection() {
+    func testPayloadOriginWinsOverTheDetectedOne() {
         let payload = #"{"hook_event_name":"Stop","agent_origin":"Claude in VS Code","agent_origin_kind":"claude_vscode"}"#
-        let result = HookRuntime.makeRecord(provider: .claude, payload: Data(payload.utf8), now: fixedNow) {
-            XCTFail("origin detection must be skipped when the payload has one")
-            return fixedOrigin
-        }
-        XCTAssertEqual(result["agent_origin"], .string("Claude in VS Code"))
-        XCTAssertEqual(result["agent_origin_kind"], .string("claude_vscode"))
-        XCTAssertNil(result["agent_origin_source"])
-        XCTAssertEqual(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#, origin: fixedOrigin)["agent_origin_source"], .string("process:claude"))
+        XCTAssertEqual(jsonString(hookRecord(.claude, payload, origin: fixedOrigin)),
+                       #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"Stop","agent_origin":"Claude in VS Code"}"#)
+        XCTAssertEqual(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#, origin: fixedOrigin)["agent_origin"], .string(fixedOrigin))
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["agent_origin"])
     }
 
@@ -316,9 +310,9 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testWorstCaseRecordFitsInOneSocketMessage() {
         let nasty = String(repeating: "\u{1}", count: 40_000)
         var payload = JSONObject()
-        for key in ["hook_event_name", "session_id", "agent_id", "cwd", "tool_name", "prompt",
-                    "last_assistant_message", "message", "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin", "agent_origin_kind", "agent_origin_source",
-                    "agent_origin_confidence", "tool_response"] {
+        for key in ["hook_event_name", "session_id", "agent_id", "cwd", "tool_name", "prompt", "last_assistant_message",
+                    "message", "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin",
+                    "tool_response"] {
             payload[key] = .string(nasty)
         }
         payload["tool_input"] = .object(["command": .string(nasty)])
@@ -431,9 +425,6 @@ final class HookRuntimeRunTests: XCTestCase {
         XCTAssertEqual(first["session_id"], .string("s1"))
         XCTAssertEqual(first["logged_at"], .string("2026-09-26T00:31:49.125Z"))
         XCTAssertEqual(first["agent_origin"], .string("Test Rig"))
-        XCTAssertEqual(first["agent_origin_kind"], .string("test_rig"))
-        XCTAssertEqual(first["agent_origin_source"], .string("env:SIDEPULSE_AGENT_ORIGIN"))
-        XCTAssertEqual(first["agent_origin_confidence"], .string("explicit"))
 
         for index in 0..<4 { runHook(#"{"hook_event_name":"PreToolUse","session_id":"s\#(index)"}"#) }
         lines = logLines()
@@ -464,8 +455,7 @@ final class HookRuntimeRunTests: XCTestCase {
         let lines = logLines(paths.logFile(for: "opencode"))
         XCTAssertEqual(lines, [#"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"ses_1","#
             + #""cwd":"/tmp/p","tool_name":"shell","tool_input":{"command":"false"},"tool_response":{"exit_code":1},"#
-            + #""tool_response_failed":true,"agent_origin":"OpenCode","agent_origin_kind":"opencode","#
-            + #""agent_origin_source":"plugin","agent_origin_confidence":"explicit"}"#])
+            + #""tool_response_failed":true,"agent_origin":"OpenCode"}"#])
         XCTAssertTrue(logLines().isEmpty)
     }
 
@@ -474,7 +464,6 @@ final class HookRuntimeRunTests: XCTestCase {
                 environment: ["TERM_PROGRAM": "vscode"])
         let line = try JSONValue.parse(try XCTUnwrap(logLines().first))
         XCTAssertEqual(line["agent_origin"], .string("Claude in VS Code"))
-        XCTAssertEqual(line["agent_origin_kind"], .string("claude_vscode"))
     }
 
     func testEventReachesSocketWithTheLoggedLine() throws {
@@ -669,13 +658,12 @@ final class HookRuntimeRunTests: XCTestCase {
     }
 
     func testLatencyFiftyKilobytePayload() throws {
-        // Worst case for origin: no env hints, so the process tree is walked.
-        let noServer = measure("no server, ancestry walk", environment: [:])
+        let noServer = measure("no server", environment: [:])
         XCTAssertLessThan(noServer.median, 20, "hook must stay fast")
 
         let inbox = IPCTestSupport.Inbox<IPCMessage>()
         try startServer(inbox)
-        let withServer = measure("live server, ancestry walk", environment: [:])
+        let withServer = measure("live server", environment: [:])
         XCTAssertLessThan(withServer.median, 20, "hook must stay fast")
         XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == 41 })
     }
@@ -753,145 +741,47 @@ final class HookRuntimeLogStoreTests: XCTestCase {
 }
 
 final class HookRuntimeOriginTests: XCTestCase {
-    private func detect(_ provider: HookProvider, _ environment: [String: String] = [:],
-                        _ processes: [ProcessSnapshot] = []) -> AgentOrigin {
-        OriginDetector.detect(provider: provider, environment: environment, ancestry: { processes })
-    }
-
-    private func process(_ command: String, comm: String? = nil, path: String? = nil) -> ProcessSnapshot {
-        let arguments = command.split(separator: " ").map(String.init)
-        return ProcessSnapshot(pid: 100, parentPID: 1, comm: comm ?? (arguments.first.map { ($0 as NSString).lastPathComponent } ?? ""),
-                               executablePath: path ?? (arguments.first ?? ""), arguments: arguments)
+    private func detect(_ provider: HookProvider, _ environment: [String: String] = [:]) -> String {
+        OriginDetector.detect(provider: provider, environment: environment)
     }
 
     func testExplicitOverride() {
-        XCTAssertEqual(detect(.claude, ["SIDEPULSE_AGENT_ORIGIN": "  My   Rig ", "TERM_PROGRAM": "vscode"]),
-                       AgentOrigin(label: "My Rig", kind: "my_rig", source: "env:SIDEPULSE_AGENT_ORIGIN", confidence: "explicit"))
-        XCTAssertEqual(detect(.codex, ["SIDEPULSE_AGENT_ORIGIN": "Remote", "SIDEPULSE_AGENT_ORIGIN_KIND": " remote  box "]).kind, "remote box")
-        XCTAssertEqual(detect(.codex, ["SIDEPULSE_AGENT_ORIGIN": "!!!"]).kind, "custom")
-        XCTAssertEqual(detect(.codex, ["SIDEPULSE_AGENT_ORIGIN": "   "]).confidence, "unknown")
-        XCTAssertEqual(OriginDetector.normalizeKind("Claude in VS Code"), "claude_in_vs_code")
-        XCTAssertEqual(OriginDetector.normalizeKind("__Héllo--World__"), "h_llo_world")
-        // Python `re.sub('[^a-z0-9]+', '_', label.lower())` on Unicode input.
-        XCTAssertEqual(OriginDetector.normalizeKind("\u{212A}elvin"), "kelvin") // KELVIN SIGN lowercases to "k"
-        XCTAssertEqual(OriginDetector.normalizeKind("\u{DF}-stra\u{DF}e"), "stra_e")
-        XCTAssertEqual(OriginDetector.normalizeKind("\u{130}x"), "i_x")
+        XCTAssertEqual(detect(.claude, ["SIDEPULSE_AGENT_ORIGIN": "  My   Rig ", "TERM_PROGRAM": "vscode"]), "My Rig")
+        XCTAssertEqual(detect(.codex, ["SIDEPULSE_AGENT_ORIGIN": "   "]), "Codex")
     }
 
     func testVSCodeEnvironment() {
-        XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "vscode"]),
-                       AgentOrigin(label: "Claude in VS Code", kind: "claude_vscode", source: "env:VSCODE", confidence: "inferred"))
-        XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": " VSCode "]).label, "Codex in VS Code")
-        XCTAssertEqual(detect(.claude, ["VSCODE_PID": "1"]).label, "Claude in VS Code")
-        XCTAssertEqual(detect(.claude, ["VSCODE_GIT_IPC_HANDLE": "x", "TERM_PROGRAM": "iTerm.app"]).source, "env:VSCODE")
+        XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "vscode"]), "Claude in VS Code")
+        XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": " VSCode "]), "Codex in VS Code")
+        XCTAssertEqual(detect(.claude, ["VSCODE_PID": "1"]), "Claude in VS Code")
+        XCTAssertEqual(detect(.claude, ["VSCODE_GIT_IPC_HANDLE": "x", "TERM_PROGRAM": "iTerm.app"]), "Claude in VS Code")
     }
 
     func testBundleIdentifier() {
-        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.chat"]),
-                       AgentOrigin(label: "Codex UI", kind: "codex_app", source: "env:__CFBundleIdentifier", confidence: "inferred"))
-        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.codex"]).label, "Codex UI")
-        XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.anthropic.claudefordesktop"]).label, "Claude App")
+        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.chat"]), "Codex UI")
+        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.codex", "TERM": "xterm-256color"]), "Codex UI")
+        XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.anthropic.claudefordesktop"]), "Claude App")
         // A bundle that is not the agent's own falls through to the next rules.
-        XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.openai.chat", "TERM_PROGRAM": "ghostty"]).label, "Claude Code CLI")
-        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.apple.Terminal"]).label, "Codex")
+        XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.openai.chat", "TERM_PROGRAM": "ghostty"]), "Claude Code CLI")
+        XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.apple.Terminal"]), "Codex")
     }
 
-    func testProcessAncestryEditors() {
-        // Python test vectors.
-        XCTAssertEqual(detect(.claude, [:], [process("/Applications/Visual Studio Code.app/Contents/MacOS/Electron")]).label,
-                       "Claude in VS Code")
-        XCTAssertEqual(detect(.claude, [:], [process("claude", comm: "claude", path: "/opt/homebrew/bin/claude")]).label,
-                       "Claude Code CLI")
-        let chatGPT = process("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
-        XCTAssertEqual(detect(.codex, [:], [chatGPT]),
-                       AgentOrigin(label: "Codex UI", kind: "codex_app", source: "process:Codex.app", confidence: "inferred"))
-        XCTAssertEqual(detect(.codex, [:], [process("/Applications/Codex.app/Contents/MacOS/Codex")]).label, "Codex UI")
-        XCTAssertEqual(detect(.claude, [:], [chatGPT]).label, "Claude", "ChatGPT.app only identifies Codex")
-        XCTAssertEqual(detect(.claude, [:], [process("/Applications/Claude.app/Contents/MacOS/Claude")]).label, "Claude App")
-
-        let cursor = process("/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/Contents/MacOS/Cursor Helper (Plugin)")
-        XCTAssertEqual(detect(.claude, [:], [cursor]).source, "process:Cursor")
-        XCTAssertEqual(detect(.codex, [:], [cursor]).label, "Codex in Cursor")
-        let windsurf = process("/Applications/Windsurf.app/Contents/MacOS/Electron")
-        XCTAssertEqual(detect(.claude, [:], [windsurf]).label, "Claude in Windsurf")
-        XCTAssertEqual(detect(.codex, [:], [process("/x/Code Helper (Plugin)")]).label, "Codex in VS Code")
-        XCTAssertEqual(detect(.claude, [:], [process("node /Users/k/.vscode/extensions/anthropic.claude-code/cli.js")]).label,
-                       "Claude in VS Code")
-    }
-
-    func testEditorAnywhereInAncestryBeatsCLIBasename() {
-        let chain = [process("/bin/sh -c hook"), process("claude", comm: "2.1.283", path: "/Users/k/.local/share/claude/versions/2.1.283"),
-                     process("/bin/zsh -il"), process("/Applications/Visual Studio Code.app/Contents/MacOS/Code")]
-        XCTAssertEqual(detect(.claude, [:], chain).label, "Claude in VS Code")
-        XCTAssertEqual(detect(.claude, [:], Array(chain.prefix(3))).label, "Claude Code CLI")
-    }
-
-    func testCLIBasenames() {
-        // argv[0] wins over the versioned executable name of the native installer.
-        XCTAssertEqual(process("claude", comm: "2.1.283", path: "/Users/k/.local/share/claude/versions/2.1.283").basename, "claude")
-        XCTAssertEqual(detect(.claude, [:], [process("/usr/local/bin/claude-code --resume")]).source, "process:claude")
-        XCTAssertEqual(detect(.codex, [:], [process("/bin/zsh -c x"), process("/opt/homebrew/lib/node_modules/@openai/codex/vendor/codex/codex")]),
-                       AgentOrigin(label: "Codex CLI", kind: "codex_cli", source: "process:codex", confidence: "inferred"))
-        // Shells, python and env are skipped when picking a basename.
-        XCTAssertEqual(process("/bin/sh -c x").basename, "")
-        XCTAssertEqual(process("/usr/bin/env node x", comm: "env", path: "/usr/bin/env").basename, "")
-        XCTAssertEqual(process("python3 claude", comm: "python3", path: "/usr/bin/python3").basename, "")
-        // A node-hosted CLI is not recognised by basename (same as Python).
-        XCTAssertEqual(detect(.claude, [:], [process("node /opt/homebrew/bin/claude")]).label, "Claude")
-        XCTAssertEqual(detect(.codex, [:], [process("claude")]).label, "Codex")
-    }
-
-    func testTerminalFallbackAndUnknown() {
-        XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "Apple_Terminal"]),
-                       AgentOrigin(label: "Claude Code CLI", kind: "claude_cli", source: "env:TERM_PROGRAM", confidence: "inferred"))
-        XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": "iTerm.app"]).label, "Codex CLI")
-        XCTAssertEqual(detect(.claude), AgentOrigin(label: "Claude", kind: "claude_unknown", source: "fallback:provider", confidence: "unknown"))
-        XCTAssertEqual(detect(.codex), AgentOrigin(label: "Codex", kind: "codex_unknown", source: "fallback:provider", confidence: "unknown"))
-        // Process rules run before the terminal fallback.
-        XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "Apple_Terminal"], [process("/Applications/Claude.app/Contents/MacOS/Claude")]).label,
-                       "Claude App")
-    }
-
-    func testAncestryIsOnlyReadWhenNeeded() {
-        var walked = 0
-        _ = OriginDetector.detect(provider: .claude, environment: ["TERM_PROGRAM": "vscode"], ancestry: { walked += 1; return [] })
-        XCTAssertEqual(walked, 0)
-        _ = OriginDetector.detect(provider: .claude, environment: ["TERM_PROGRAM": "Apple_Terminal"], ancestry: { walked += 1; return [] })
-        XCTAssertEqual(walked, 1)
+    func testTerminalAndUnknown() {
+        XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "Apple_Terminal"]), "Claude Code CLI")
+        XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": "iTerm.app"]), "Codex CLI")
+        XCTAssertEqual(detect(.claude, ["TERM": "xterm-256color"]), "Claude Code CLI", "tmux and ssh set only TERM")
+        XCTAssertEqual(detect(.claude), "Claude", "no terminal, such as a launchd job")
+        XCTAssertEqual(detect(.codex, ["TERM": " "]), "Codex")
+        XCTAssertEqual(detect(.opencode, ["TERM_PROGRAM": "ghostty"]), "OpenCode")
     }
 
     func testAllLabels() {
         let expected: [HookProvider: [String]] = [
-            .claude: ["Claude App", "Claude Code CLI", "Claude in VS Code", "Claude in Cursor", "Claude in Windsurf"],
-            .codex: ["Codex UI", "Codex CLI", "Codex in VS Code", "Codex in Cursor", "Codex in Windsurf"],
+            .claude: ["Claude App", "Claude Code CLI", "Claude in VS Code"],
+            .codex: ["Codex UI", "Codex CLI", "Codex in VS Code"],
         ]
         for (provider, labels) in expected {
             XCTAssertEqual(OriginDetector.Surface.allCases.map { OriginDetector.label(provider: provider, surface: $0) }, labels)
         }
-    }
-
-    func testReadsRealProcessTree() throws {
-        let me = try XCTUnwrap(ProcessSnapshot.read(pid: getpid()))
-        XCTAssertEqual(me.pid, getpid())
-        XCTAssertEqual(me.parentPID, getppid())
-        XCTAssertFalse(me.comm.isEmpty)
-        XCTAssertTrue(me.executablePath.hasPrefix("/"), me.executablePath)
-        XCTAssertFalse(me.arguments.isEmpty)
-        XCTAssertEqual(me.arguments.first.map { ($0 as NSString).lastPathComponent }, CommandLine.arguments.first.map { ($0 as NSString).lastPathComponent })
-
-        let chain = ProcessSnapshot.ancestry(from: getpid())
-        XCTAssertGreaterThanOrEqual(chain.count, 2)
-        XCTAssertLessThanOrEqual(chain.count, OriginDetector.maxAncestors)
-        XCTAssertEqual(chain.first?.pid, getpid())
-        for (child, parent) in zip(chain, chain.dropFirst()) { XCTAssertEqual(child.parentPID, parent.pid) }
-        XCTAssertNil(ProcessSnapshot.read(pid: 999_999))
-        XCTAssertEqual(ProcessSnapshot.ancestry(from: 1), [])
-        XCTAssertEqual(ProcessSnapshot.ancestry(from: getpid(), limit: 1).count, 1)
-
-        let started = DispatchTime.now().uptimeNanoseconds
-        let origin = OriginDetector.detect(provider: .claude, environment: [:])
-        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
-        print(String(format: "HookRuntime origin walk: %@ via %@ in %.3f ms (%d ancestors)", origin.label, origin.source, elapsedMs, chain.count))
-        XCTAssertLessThan(elapsedMs, 20)
     }
 }

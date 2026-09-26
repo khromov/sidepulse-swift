@@ -502,7 +502,7 @@ Environment overrides:
 | `SIDEPULSE_CLI_PATH` | CLI path to write into hook commands, taken as is (doctor only checks that it exists) |
 | `SIDEPULSE_APP_PATH` | App bundle or binary used by `app`, `setup`, `settings` and `doctor` |
 | `SIDEPULSE_DISABLE_EVENT_SOCKET=1` | The hook only logs and does not notify the app |
-| `SIDEPULSE_AGENT_ORIGIN`, `SIDEPULSE_AGENT_ORIGIN_KIND` | Override the detected origin label, for example "Claude in VS Code" |
+| `SIDEPULSE_AGENT_ORIGIN` | Override the detected origin label, for example "Claude in VS Code" |
 | `CODEX_HOME`, `CODEX_CLI_PATH` | Codex config directory, and the `codex` binary used for hook trust |
 | `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses) |
 | `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |

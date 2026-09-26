@@ -7,9 +7,8 @@ public enum HookRuntime {
     public static func run(arguments: [String], stdin: Data, environment: [String: String],
                            paths: SidePulsePaths, now: Date = Date()) -> Int32 {
         guard let provider = providerArgument(arguments) else { return 0 }
-        let record = makeRecord(provider: provider, payload: stdin, now: now) {
-            OriginDetector.detect(provider: provider, environment: environment)
-        }
+        let record = makeRecord(provider: provider, payload: stdin, now: now,
+                                origin: OriginDetector.detect(provider: provider, environment: environment))
         // A payload without an event name, such as a hand-run command with no input, carries no status.
         guard record["hook_event_name"] != nil else { return 0 }
         let line = JSONValue.object(record).serialized()
@@ -84,16 +83,11 @@ public enum HookRuntime {
         return ["1", "true", "yes"].contains(value)
     }
 
-    /// Every field is length-capped so a hostile payload can never produce an oversized record.
-    public static func makeRecord(provider: HookProvider, payload: Data, now: Date, origin: AgentOrigin?) -> JSONObject {
-        makeRecord(provider: provider, payload: payload, now: now) { origin }
-    }
-
     public static let defaultFieldLimit = 1024
 
-    /// Origin detection walks the process tree, so it only runs when the payload does not carry its own origin.
-    static func makeRecord(provider: HookProvider, payload: Data, now: Date,
-                           detectOrigin: () -> AgentOrigin?) -> JSONObject {
+    /// Every field is length-capped so a hostile payload can never produce an oversized record; an origin in the
+    /// payload, such as the OpenCode plugin's, wins over the detected one.
+    public static func makeRecord(provider: HookProvider, payload: Data, now: Date, origin: String?) -> JSONObject {
         var record = JSONObject()
         record["logged_at"] = .string(TimeFormat.iso8601Millis(now))
 
@@ -164,17 +158,7 @@ public enum HookRuntime {
         record["sidepulse_status"] = scalar("sidepulse_status")
         record["sidepulse_mode"] = scalar("sidepulse_mode")
 
-        if let own = scalar("agent_origin") {
-            record["agent_origin"] = own
-            record["agent_origin_kind"] = scalar("agent_origin_kind")
-            record["agent_origin_source"] = scalar("agent_origin_source")
-            record["agent_origin_confidence"] = scalar("agent_origin_confidence")
-        } else if let origin = detectOrigin() {
-            record["agent_origin"] = .string(origin.label)
-            record["agent_origin_kind"] = .string(origin.kind)
-            record["agent_origin_source"] = .string(origin.source)
-            record["agent_origin_confidence"] = .string(origin.confidence)
-        }
+        record["agent_origin"] = scalar("agent_origin") ?? origin.map(JSONValue.string)
         return record
     }
 
