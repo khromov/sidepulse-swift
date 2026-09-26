@@ -264,12 +264,12 @@ final class PresentationMenuTests: XCTestCase {
     // MARK: Hooks
 
     private func hook(_ provider: HookProvider = .claude, exists: Bool = true, detected: Bool = true,
-                      enabled: Bool = true, installed: Int, missing: Int, legacy: Int = 0, error: String? = nil,
+                      enabled: Bool = true, installed: Int, missing: Int, error: String? = nil,
                       cliProblems: [String] = [], untrusted: [String] = []) -> HookState {
         HookState(provider: provider, configPath: URL(fileURLWithPath: "/tmp/home/.claude/settings.json"),
                   configExists: exists, agentDetected: detected, hooksEnabled: enabled,
                   installedEvents: Array(provider.events.prefix(installed)),
-                  missingEvents: Array(provider.events.suffix(missing)), legacyHooks: legacy,
+                  missingEvents: Array(provider.events.suffix(missing)),
                   logPath: URL(fileURLWithPath: "/tmp/root/logs/claude.jsonl"), logExists: false, error: error,
                   hookCLIPaths: installed > 0 ? ["/x/sidepulse"] : [], hookCLIProblems: cliProblems,
                   untrustedEvents: untrusted)
@@ -320,10 +320,9 @@ final class PresentationMenuTests: XCTestCase {
     }
 
     func testHookStateIsTheDoctorInfo() {
-        var info = hook(.codex, enabled: false, installed: 4, missing: 7, legacy: 2)
+        var info = hook(.codex, enabled: false, installed: 4, missing: 7)
         XCTAssertFalse(info.fullyInstalled)
         XCTAssertEqual(info.statusText, "Installed, but Codex hooks are disabled")
-        XCTAssertEqual(info.legacyText, "2 legacy Python hooks (removed on install)")
         info.hooksEnabled = true
         info.installedEvents = HookProvider.codex.events
         info.missingEvents = []
@@ -333,10 +332,7 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertFalse(info.fullyInstalled)
     }
 
-    func testHookLegacyAndMessages() {
-        XCTAssertNil(hook(installed: 0, missing: 12).legacyText)
-        XCTAssertEqual(hook(installed: 0, missing: 12, legacy: 1).legacyText, "1 legacy Python hook (removed on install)")
-        XCTAssertEqual(hook(installed: 0, missing: 12, legacy: 12).legacyText, "12 legacy Python hooks (removed on install)")
+    func testHookMessages() {
         XCTAssertEqual(hook(.codex, installed: 0, missing: 11).expectedCount, 11)
 
         XCTAssertEqual(HookPresentation.resultMessage(provider: .codex, action: .install, changed: true), "Codex hooks installed.")

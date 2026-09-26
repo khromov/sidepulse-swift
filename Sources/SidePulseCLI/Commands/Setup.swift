@@ -6,16 +6,14 @@ import SidePulseCore
 enum SetupCommand: CLICommand {
     static let spec = CommandSpec(
         name: "setup",
-        synopsis: "[claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]",
+        synopsis: "[claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]",
         summary: "Install agent hooks and start the menu-bar app",
-        details: "Removes the Python SidePulse background agents, installs hooks for the detected\n"
-            + "agents (or the named ones) and installs the SidePulse app LaunchAgent\n"
-            + "(starts at login).",
+        details: "Installs hooks for the detected agents (or the named ones) and installs the\n"
+            + "SidePulse app LaunchAgent (starts at login).",
         positionals: ProviderSelection.positionals,
         options: [
             OptionSpec("no-app", help: "only install hooks; do not install/start the menu-bar app"),
             OptionSpec("dry-run", help: "show what would change without changing anything"),
-            OptionSpec("no-migrate", help: "leave the Python SidePulse LaunchAgents alone"),
             OptionSpec("no-trust", help: "do not mark the Codex hooks trusted"),
         ]
     )
@@ -25,15 +23,6 @@ enum SetupCommand: CLICommand {
     static func run(_ arguments: ParsedArguments, _ env: CLIEnvironment) throws -> Int32 {
         let dryRun = arguments.has("dry-run")
         var succeeded = true
-
-        if !arguments.has("no-migrate") {
-            let messages = env.launchAgent.migrateLegacy(dryRun)
-            if messages.isEmpty {
-                env.stdout.line("legacy: no Python SidePulse background agents found")
-            } else {
-                messages.forEach { env.stdout.line("legacy: \($0)") }
-            }
-        }
 
         let providers = ProviderSelection.resolve(arguments.positionals, paths: env.paths, defaultToDetected: true)
         if providers.isEmpty {

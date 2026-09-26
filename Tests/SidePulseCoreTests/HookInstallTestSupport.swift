@@ -62,6 +62,19 @@ enum HookInstallTestData {
     static var claudeCommand: String { HookCommand.command(cliPath: cli, provider: .claude) }
     static var codexCommand: String { HookCommand.command(cliPath: cli, provider: .codex) }
 
+    /// A SidePulse command in any shape but the one written today, i.e. a Python-era hook.
+    static func isPythonEra(_ command: String) -> Bool {
+        HookCommand.isSidePulseCommand(command) && !HookCommand.isCurrentStyleCommand(command)
+    }
+
+    static func pythonEraClaudeHandlers(_ text: String) -> Int {
+        ClaudeHookInstaller.handlerCommands(in: text).filter { isPythonEra($0.command) }.count
+    }
+
+    static func pythonEraCodexGroups(_ text: String) -> Int {
+        CodexHookInstaller.hookGroups(in: TOMLLines(text)).filter { $0.commands.contains(where: isPythonEra) }.count
+    }
+
     static func claudeCommands(_ text: String) throws -> [String: [String]] {
         guard case .object(let hooks)? = try JSONValue.parse(text)["hooks"] else { return [:] }
         var out: [String: [String]] = [:]

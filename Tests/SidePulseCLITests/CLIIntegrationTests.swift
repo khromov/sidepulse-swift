@@ -2,7 +2,7 @@ import XCTest
 @testable import SidePulseCLI
 import SidePulseCore
 
-/// The LaunchAgent operations stay faked and `setup` runs with `--no-app --no-migrate`, so launchd
+/// The LaunchAgent operations stay faked and `setup` runs with `--no-app`, so launchd
 /// is never touched.
 final class CLIIntegrationTests: XCTestCase {
     /// Harnesses share temp directories within a test, so they all stay alive until it ends.
@@ -493,7 +493,7 @@ final class CLIIntegrationTests: XCTestCase {
     func testSetupHooksOnly() throws {
         let h = makeHarness()
         try FileManager.default.createDirectory(at: h.paths.claudeDir, withIntermediateDirectories: true)
-        XCTAssertEqual(h.run(["setup", "--no-app", "--no-migrate"]), 0, h.stderr.text)
+        XCTAssertEqual(h.run(["setup", "--no-app"]), 0, h.stderr.text)
         XCTAssertTrue((read(h.paths.claudeSettingsFile) ?? "").contains("hook-log --provider claude"))
         XCTAssertTrue(h.stdout.text.contains("sidepulse doctor"))
         XCTAssertTrue(h.launchAgent.installs.isEmpty)

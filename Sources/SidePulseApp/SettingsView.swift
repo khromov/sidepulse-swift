@@ -300,9 +300,6 @@ private struct HookSettingsRow: View {
                     .textSelection(.enabled)
             }
         }
-        if let legacy = hook.legacyText {
-            Text(legacy).font(.caption).foregroundStyle(.secondary)
-        }
         ForEach(model.hookNotes[hook.provider] ?? [], id: \.self) { note in
             Text(note).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
         }
@@ -312,7 +309,7 @@ private struct HookSettingsRow: View {
             Button(HookAction.install.label) { model.perform(.install, provider: hook.provider) }
                 .disabled(busy)
             Button(HookAction.uninstall.label) { model.perform(.uninstall, provider: hook.provider) }
-                .disabled(busy || (hook.installedEvents.isEmpty && hook.legacyHooks == 0))
+                .disabled(busy || hook.installedEvents.isEmpty)
         }
     }
 }

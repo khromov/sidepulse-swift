@@ -9,11 +9,11 @@ final class HookInstallLegacyTests: XCTestCase {
 
     func testPythonClaudeHooksAreReplacedAndUserHooksKept() throws {
         let python = HookInstallFixtures.pythonClaudeSettings
-        XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: python), 14)
+        XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers(python), 14)
         XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: python), [])
 
         let installed = try ClaudeHookInstaller.installing(into: python, command: T.claudeCommand)
-        XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: installed), 0)
+        XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers(installed), 0)
         XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: installed), HookProvider.claude.events)
         let commands = try T.claudeCommands(installed)
         XCTAssertEqual(commands["Stop"], ["say done >> /tmp/user-notify.log", T.claudeCommand])
@@ -45,11 +45,10 @@ final class HookInstallLegacyTests: XCTestCase {
         try box.write(HookInstallFixtures.pythonClaudeSettings, to: box.paths.claudeSettingsFile)
         let result = try ClaudeHookInstaller.install(paths: box.paths, cliPath: try box.makeBundledCLI(), dryRun: false)
         XCTAssertTrue(result.changed)
-        XCTAssertEqual(result.notes, ["removed 14 legacy Python hooks"])
+        XCTAssertEqual(T.pythonEraClaudeHandlers(try box.read(box.paths.claudeSettingsFile)), 0)
         XCTAssertEqual(try box.read(result.backupPath!), HookInstallFixtures.pythonClaudeSettings)
         let doctor = HookDoctor.inspect(paths: box.paths, provider: .claude)
         XCTAssertTrue(doctor.fullyInstalled)
-        XCTAssertEqual(doctor.legacyHooks, 0)
     }
 
     // MARK: Real configs (read-only copies)
@@ -96,7 +95,7 @@ final class HookInstallLegacyTests: XCTestCase {
             guard case .object? = try? JSONValue.parse(text) else { continue }
             checked += 1
             let installed = try ClaudeHookInstaller.installing(into: text, command: T.claudeCommand)
-            XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: installed), 0, name)
+            XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers(installed), 0, name)
             XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: installed), HookProvider.claude.events, name)
             let removed = try ClaudeHookInstaller.uninstalling(from: installed)
             let userBefore = try T.claudeCommands(text).mapValues { $0.filter { !HookCommand.isSidePulseCommand($0) } }.filter { !$0.value.isEmpty }
@@ -136,7 +135,7 @@ final class HookInstallLegacyTests: XCTestCase {
     private func checkCodexMigration(_ original: String, configPath: String, label: String) throws {
         let installed = CodexHookInstaller.installing(into: original, command: T.codexCommand, configPath: configPath)
         XCTAssertEqual(CodexHookInstaller.installedEvents(in: installed), HookProvider.codex.events, label)
-        XCTAssertEqual(CodexHookInstaller.legacyBlockCount(in: installed), 0, label)
+        XCTAssertEqual(HookInstallTestData.pythonEraCodexGroups(installed), 0, label)
         XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: installed), label)
         XCTAssertEqual(T.count(CodexHookInstaller.managedStart, in: installed), 1, label)
         XCTAssertFalse(installed.contains("Provider-neutral status collection"), label)

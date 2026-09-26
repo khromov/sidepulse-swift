@@ -95,10 +95,6 @@ public enum CodexHookInstaller {
         return out
     }
 
-    public static func legacyBlockCount(in text: String) -> Int {
-        hookGroups(in: TOMLLines(text)).filter { $0.commands.contains(where: HookCommand.isLegacyCommand) }.count
-    }
-
     /// Codex enables hooks by default, and the deprecated `codex_hooks` only counts when `hooks` is absent.
     public static func hooksFeatureEnabled(in text: String) -> Bool {
         let doc = TOMLLines(text)
@@ -117,10 +113,6 @@ public enum CodexHookInstaller {
         let updated = installing(into: original ?? "", command: command, configPath: config.path)
         var changed = updated != original
         var notes: [String] = []
-        let legacy = legacyBlockCount(in: original ?? "")
-        if legacy > 0 {
-            notes.append("\(dryRun ? "would remove" : "removed") \(HookConfigFile.plural(legacy, "legacy Python hook block"))")
-        }
         var backup: URL?
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
@@ -163,16 +155,11 @@ public enum CodexHookInstaller {
         }
         let updated = uninstalling(from: original, configPath: config.path)
         let changed = updated != original
-        var notes: [String] = []
-        let legacy = legacyBlockCount(in: original)
-        if legacy > 0 {
-            notes.append("\(dryRun ? "would remove" : "removed") \(HookConfigFile.plural(legacy, "legacy Python hook block"))")
-        }
         var backup: URL?
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
         }
-        return InstallResult(provider: .codex, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun, notes: notes)
+        return InstallResult(provider: .codex, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun)
     }
 
     // MARK: - Hook groups

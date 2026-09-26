@@ -172,7 +172,7 @@ final class HookInstallClaudeTests: XCTestCase {
         XCTAssertEqual(try T.claudeCommands(output)["Custom"], ["say custom"])
         XCTAssertEqual(hooks["Odd"], .object(["keep": .bool(true)]))
         XCTAssertEqual(hooks["Empty"], .array([]))
-        XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: output), 0)
+        XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers(output), 0)
         XCTAssertEqual(try ClaudeHookInstaller.installing(into: output, command: cmd), output)
     }
 
@@ -188,12 +188,12 @@ final class HookInstallClaudeTests: XCTestCase {
         XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: try ClaudeHookInstaller.installing(into: nil, command: cmd)),
                        HookProvider.claude.events)
         XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: "{"), [])
-        XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: "{"), 0)
+        XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers("{"), 0)
         let mixed = #"{"hooks":{"Stop":[{"hooks":[{"command":"/x/sidepulse hook-log --provider claude ; true"}]}],"#
             + #""PreToolUse":[{"hooks":[{"command":"python /x/hook_entry.py --provider claude --log /l ; true"},{"command":"say"}]}],"#
             + #""Grok":[{"hooks":[{"command":"/x/sidepulse hook-log --provider claude ; true"}]}]}}"#
         XCTAssertEqual(ClaudeHookInstaller.installedEvents(in: mixed), ["Stop", "Grok"])
-        XCTAssertEqual(ClaudeHookInstaller.legacyHandlerCount(in: mixed), 1)
+        XCTAssertEqual(HookInstallTestData.pythonEraClaudeHandlers(mixed), 1)
     }
 
     // MARK: Files
@@ -226,7 +226,7 @@ final class HookInstallClaudeTests: XCTestCase {
         XCTAssertTrue(result.changed)
         XCTAssertEqual(result.backupPath?.lastPathComponent, "settings.json.bak.\(TimeFormat.backupStamp(now))")
         XCTAssertEqual(try box.read(result.backupPath!), original)
-        XCTAssertEqual(result.notes, ["removed 1 legacy Python hook"])
+        XCTAssertEqual(result.notes, [])
         XCTAssertEqual(try T.claudeCommands(try box.read(file))["Stop"], [T.claudeCommand])
     }
 
@@ -242,7 +242,6 @@ final class HookInstallClaudeTests: XCTestCase {
         let before = try box.read(file)
         let result = try ClaudeHookInstaller.install(paths: box.paths, cliPath: T.cli, dryRun: true)
         XCTAssertTrue(result.changed)
-        XCTAssertEqual(result.notes, ["would remove 1 legacy Python hook"])
         XCTAssertEqual(try box.read(file), before)
         let removal = try ClaudeHookInstaller.uninstall(paths: box.paths, dryRun: true)
         XCTAssertTrue(removal.changed)

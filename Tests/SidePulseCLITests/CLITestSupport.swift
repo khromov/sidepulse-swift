@@ -12,12 +12,10 @@ final class CLIFakeLaunchAgent {
     var state = LaunchAgentStatus(installed: false, loaded: false)
     var installChanged = true
     var installError: Error?
-    var legacyMessages: [String] = []
     private(set) var installs: [(arguments: [String], start: Bool)] = []
     private(set) var starts: [Bool] = []
     private(set) var stops = 0
     private(set) var uninstalls = 0
-    private(set) var migrations: [Bool] = []
     private(set) var opened: [String] = []
 
     func operations(plistPath: URL) -> LaunchAgentOperations {
@@ -39,11 +37,7 @@ final class CLIFakeLaunchAgent {
                 guard let text = try? String(contentsOf: plistPath, encoding: .utf8), text.hasPrefix("PLIST ") else { return nil }
                 return text.dropFirst("PLIST ".count).split(separator: " ").map(String.init)
             },
-            openApp: { [unowned self] binary in opened.append(binary) },
-            migrateLegacy: { [unowned self] dryRun in
-                migrations.append(dryRun)
-                return legacyMessages
-            }
+            openApp: { [unowned self] binary in opened.append(binary) }
         )
     }
 

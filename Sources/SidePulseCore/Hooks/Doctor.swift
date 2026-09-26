@@ -9,7 +9,6 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var hooksEnabled: Bool
     public var installedEvents: [String]
     public var missingEvents: [String]
-    public var legacyHooks: Int
     public var logPath: URL
     public var logExists: Bool
     public var error: String?
@@ -24,12 +23,12 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     }
 
     public init(provider: HookProvider, configPath: URL, configExists: Bool, agentDetected: Bool, hooksEnabled: Bool,
-                installedEvents: [String], missingEvents: [String], legacyHooks: Int, logPath: URL, logExists: Bool,
+                installedEvents: [String], missingEvents: [String], logPath: URL, logExists: Bool,
                 error: String? = nil, hookCLIPaths: [String] = [], hookCLIProblems: [String] = [],
                 untrustedEvents: [String] = []) {
         self.provider = provider; self.configPath = configPath; self.configExists = configExists
         self.agentDetected = agentDetected; self.hooksEnabled = hooksEnabled; self.installedEvents = installedEvents
-        self.missingEvents = missingEvents; self.legacyHooks = legacyHooks; self.logPath = logPath
+        self.missingEvents = missingEvents; self.logPath = logPath
         self.logExists = logExists; self.error = error; self.hookCLIPaths = hookCLIPaths
         self.hookCLIProblems = hookCLIProblems; self.untrustedEvents = untrustedEvents
     }
@@ -47,7 +46,7 @@ public enum HookDoctor {
         var info = ProviderDoctorInfo(
             provider: provider, configPath: config, configExists: fm.fileExists(atPath: config.path),
             agentDetected: provider.isDetected(paths), hooksEnabled: provider != .codex, installedEvents: [],
-            missingEvents: provider.events, legacyHooks: 0, logPath: log, logExists: fm.fileExists(atPath: log.path))
+            missingEvents: provider.events, logPath: log, logExists: fm.fileExists(atPath: log.path))
         guard info.configExists else { return info }
         guard let text = FileUtil.readText(config) else {
             info.error = "could not read \(config.path)"
@@ -70,12 +69,10 @@ public enum HookDoctor {
                 }
             }
             info.installedEvents = ClaudeHookInstaller.installedEvents(in: text)
-            info.legacyHooks = ClaudeHookInstaller.legacyHandlerCount(in: text)
             info.hookCLIPaths = ClaudeHookInstaller.hookCLIPaths(in: text)
         case .codex:
             info.hooksEnabled = CodexHookInstaller.hooksFeatureEnabled(in: text)
             info.installedEvents = CodexHookInstaller.installedEvents(in: text)
-            info.legacyHooks = CodexHookInstaller.legacyBlockCount(in: text)
             info.hookCLIPaths = CodexHookInstaller.hookCLIPaths(in: text)
             info.untrustedEvents = CodexHookInstaller.untrustedEvents(in: text, configPath: config.path)
         case .opencode:
@@ -143,7 +140,6 @@ public enum HookDoctor {
             if info.provider == .codex && info.configExists && info.error == nil && !info.hooksEnabled {
                 lines.append("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)")
             }
-            if info.provider != .opencode { lines.append("  legacy python hooks: \(info.legacyHooks)") }
             lines.append("  log: \(info.logPath.path) (\(info.logExists ? "found" : "missing"))")
         }
         return lines.joined(separator: "\n")
@@ -159,7 +155,6 @@ public enum HookDoctor {
                 "hooks_enabled": .bool(info.hooksEnabled),
                 "installed_events": .array(info.installedEvents.map(JSONValue.string)),
                 "missing_events": .array(info.missingEvents.map(JSONValue.string)),
-                "legacy_hooks": JSONValue(info.legacyHooks),
                 "log_path": .string(info.logPath.path),
                 "log_exists": .bool(info.logExists),
                 "error": JSONValue(info.error),

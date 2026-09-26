@@ -103,7 +103,6 @@ public struct LaunchAgentOperations {
     public var status: () -> LaunchAgentStatus
     public var installedProgram: () -> [String]?
     public var openApp: (_ appBinary: String) throws -> Void
-    public var migrateLegacy: (_ dryRun: Bool) -> [String]
 
     public init(plistPath: URL,
                 install: @escaping ([String], Bool) throws -> Bool,
@@ -112,11 +111,9 @@ public struct LaunchAgentOperations {
                 stop: @escaping () throws -> Void,
                 status: @escaping () -> LaunchAgentStatus,
                 installedProgram: @escaping () -> [String]?,
-                openApp: @escaping (String) throws -> Void,
-                migrateLegacy: @escaping (Bool) -> [String]) {
+                openApp: @escaping (String) throws -> Void) {
         self.plistPath = plistPath; self.install = install; self.uninstall = uninstall; self.start = start
         self.stop = stop; self.status = status; self.installedProgram = installedProgram; self.openApp = openApp
-        self.migrateLegacy = migrateLegacy
     }
 
     public static func launchd(paths: SidePulsePaths) -> LaunchAgentOperations {
@@ -129,8 +126,7 @@ public struct LaunchAgentOperations {
             stop: { try manager.stop() },
             status: { manager.status() },
             installedProgram: { manager.installedProgramArguments() },
-            openApp: { try openApp(binary: $0) },
-            migrateLegacy: { LegacyPythonMigration.run(paths: paths, dryRun: $0) }
+            openApp: { try openApp(binary: $0) }
         )
     }
 

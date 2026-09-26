@@ -19,14 +19,11 @@ final class CLISetupCommandTests: XCTestCase {
     func testFullSetup() throws {
         let (harness, installed) = harnessWithHooks()
         try FileManager.default.createDirectory(at: harness.paths.claudeDir, withIntermediateDirectories: true)
-        harness.launchAgent.legacyMessages = ["removed io.sidepulse.service"]
         let binary = harness.installFakeApp()
         XCTAssertEqual(harness.run(["setup"]), 0)
-        XCTAssertEqual(harness.launchAgent.migrations, [false])
         XCTAssertEqual(installed(), [.claude])
         XCTAssertEqual(harness.launchAgent.installs.map(\.arguments), [[binary]])
         XCTAssertEqual(harness.stdout.text, """
-            legacy: removed io.sidepulse.service
             claude: updated
               config: \(harness.paths.claudeSettingsFile.path)
               log: \(harness.paths.logFile(for: "claude").path)
@@ -43,10 +40,8 @@ final class CLISetupCommandTests: XCTestCase {
         let (harness, installed) = harnessWithHooks()
         harness.installFakeApp()
         XCTAssertEqual(harness.run(["setup", "codex", "--dry-run"]), 0)
-        XCTAssertEqual(harness.launchAgent.migrations, [true])
         XCTAssertEqual(installed(), [.codex])
         XCTAssertTrue(harness.launchAgent.installs.isEmpty)
-        XCTAssertTrue(harness.stdout.text.contains("legacy: no Python SidePulse background agents found\n"))
         XCTAssertTrue(harness.stdout.text.contains("codex: would update\n"))
         XCTAssertTrue(harness.stdout.text.contains("app: would install and start\n"))
         XCTAssertTrue(harness.stdout.text.hasSuffix("\nDry run: nothing was changed.\n"))
@@ -54,10 +49,9 @@ final class CLISetupCommandTests: XCTestCase {
 
     /// Regression: with nothing installed, setup still closed with "SidePulse is
     /// set up" and exit 0.
-    func testNoAppNoMigrateAndNoAgents() {
+    func testNoAppAndNoAgents() {
         let (harness, installed) = harnessWithHooks()
-        XCTAssertEqual(harness.run(["setup", "--no-app", "--no-migrate"]), 1)
-        XCTAssertTrue(harness.launchAgent.migrations.isEmpty)
+        XCTAssertEqual(harness.run(["setup", "--no-app"]), 1)
         XCTAssertTrue(installed().isEmpty)
         XCTAssertTrue(harness.launchAgent.installs.isEmpty)
         XCTAssertTrue(harness.stdout.text.hasPrefix("hooks: skipped. No Claude Code"))
@@ -70,14 +64,14 @@ final class CLISetupCommandTests: XCTestCase {
     func testNoAgentsButTheAppIsStillNotSetUp() {
         let (harness, _) = harnessWithHooks()
         harness.installFakeApp()
-        XCTAssertEqual(harness.run(["setup", "--no-migrate"]), 0)
+        XCTAssertEqual(harness.run(["setup"]), 0)
         XCTAssertTrue(harness.stdout.text.contains("app: installed and started\n"))
         XCTAssertTrue(harness.stdout.text.contains("SidePulse is not set up yet: no agent hooks were installed."))
     }
 
     func testMissingAppIsSkippedWithGuidance() {
         let (harness, _) = harnessWithHooks()
-        XCTAssertEqual(harness.run(["setup", "claude", "--no-migrate"]), 0)
+        XCTAssertEqual(harness.run(["setup", "claude"]), 0)
         XCTAssertTrue(harness.stdout.text.contains("app: not found; skipped\n  SidePulse.app was not found"))
         XCTAssertTrue(harness.stdout.text.hasSuffix("\nHooks are installed, but the SidePulse app was not found, so nothing "
             + "shows their status yet. Install it with scripts/install.sh.\n"))
@@ -88,7 +82,7 @@ final class CLISetupCommandTests: XCTestCase {
         let (harness, _) = harnessWithHooks()
         harness.installFakeApp()
         harness.app.replies["ping"] = Data(#"{"ok":true,"pid":9}"#.utf8)
-        XCTAssertEqual(harness.run(["setup", "claude", "--no-migrate"]), 0)
+        XCTAssertEqual(harness.run(["setup", "claude"]), 0)
         XCTAssertEqual(harness.launchAgent.installs.map(\.start), [false])
         XCTAssertTrue(harness.stdout.text.contains("app: installed, not started: SidePulse already runs outside launchd (pid 9)"))
     }
@@ -97,7 +91,7 @@ final class CLISetupCommandTests: XCTestCase {
         let (harness, _) = harnessWithHooks()
         harness.installFakeApp()
         harness.launchAgent.installError = CommandFailure(message: "Bootstrap failed: 5: Input/output error")
-        XCTAssertEqual(harness.run(["setup", "claude", "--no-migrate"]), 1)
+        XCTAssertEqual(harness.run(["setup", "claude"]), 1)
         XCTAssertTrue(harness.stderr.text.contains("app: launch agent failed\n"))
         XCTAssertTrue(harness.stderr.text.contains("  error: Bootstrap failed: 5: Input/output error\n"))
         XCTAssertTrue(harness.stdout.text.contains("Setup finished with errors"))
@@ -110,7 +104,7 @@ final class CLISetupCommandTests: XCTestCase {
             uninstall: { _, _, _ in throw CommandFailure(message: "unexpected") }
         )
         harness.installFakeApp()
-        XCTAssertEqual(harness.run(["setup", "claude", "--no-migrate"]), 1)
+        XCTAssertEqual(harness.run(["setup", "claude"]), 1)
         XCTAssertEqual(harness.launchAgent.installs.count, 1)
         XCTAssertTrue(harness.stderr.text.contains("claude: install failed"))
     }

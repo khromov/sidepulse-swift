@@ -262,7 +262,7 @@ final class HookInstallCodexTests: XCTestCase {
 
     func testCleansPythonReinstalledConfig() {
         let python = HookInstallFixtures.pythonCodexConfigReinstalled
-        XCTAssertEqual(CodexHookInstaller.legacyBlockCount(in: python), 11)
+        XCTAssertEqual(HookInstallTestData.pythonEraCodexGroups(python), 11)
         XCTAssertEqual(CodexHookInstaller.installedEvents(in: python), [])
         let text = CodexHookInstaller.installing(into: python, command: cmd, configPath: cfg)
         XCTAssertEqual(text, """
@@ -277,7 +277,7 @@ final class HookInstallCodexTests: XCTestCase {
         url = "https://mcp.svelte.dev/mcp"
 
         """ + "\n" + block)
-        XCTAssertEqual(CodexHookInstaller.legacyBlockCount(in: text), 0)
+        XCTAssertEqual(HookInstallTestData.pythonEraCodexGroups(text), 0)
         XCTAssertEqual(CodexHookInstaller.uninstalling(from: python, configPath: cfg), """
         # Codex settings
         model = "gpt-6"
@@ -446,7 +446,7 @@ final class HookInstallCodexTests: XCTestCase {
     func testInstalledEventsAndLegacyBlocks() {
         let partial = "[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ncommand = \"\(cmd)\"\n[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ncommand = '''python3 /x/hook_entry.py --provider codex --log /l ; true'''\n[[hooks.Custom]]\n[[hooks.Custom.hooks]]\ncommand = '''\(cmd)'''\n"
         XCTAssertEqual(CodexHookInstaller.installedEvents(in: partial), ["Stop", "Custom"])
-        XCTAssertEqual(CodexHookInstaller.legacyBlockCount(in: partial), 1)
+        XCTAssertEqual(HookInstallTestData.pythonEraCodexGroups(partial), 1)
         XCTAssertEqual(CodexHookInstaller.installedEvents(in: ""), [])
     }
 

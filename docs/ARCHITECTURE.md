@@ -175,7 +175,7 @@ and zips it to `dist/SidePulse-VERSION.zip`.
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
-| System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, legacy Python cleanup |
+| System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |

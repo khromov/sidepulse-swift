@@ -374,17 +374,17 @@ final class HookInstallCodexTrustTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 
-    func testLegacyNotesAndUninstallOfMissingFile() throws {
+    func testPythonBlocksAreReplacedAndMissingFileUninstalls() throws {
         let box = try HookInstallSandbox()
         XCTAssertFalse(try CodexHookInstaller.uninstall(paths: box.paths, dryRun: false).changed)
         try box.write(HookInstallFixtures.pythonCodexConfigReinstalled, to: box.paths.codexConfigFile)
         let dry = try CodexHookInstaller.uninstall(paths: box.paths, dryRun: true)
         XCTAssertTrue(dry.changed)
-        XCTAssertEqual(dry.notes, ["would remove 11 legacy Python hook blocks"])
+        XCTAssertEqual(dry.notes, [])
         XCTAssertEqual(try box.read(box.paths.codexConfigFile), HookInstallFixtures.pythonCodexConfigReinstalled)
         let result = try CodexHookInstaller.install(paths: box.paths, cliPath: T.cli, dryRun: false, trust: false)
-        XCTAssertEqual(result.notes, ["removed 11 legacy Python hook blocks",
-                                      "hooks not marked trusted; approve them with /hooks in Codex"])
+        XCTAssertEqual(result.notes, ["hooks not marked trusted; approve them with /hooks in Codex"])
+        XCTAssertEqual(T.pythonEraCodexGroups(try box.read(box.paths.codexConfigFile)), 0)
         XCTAssertNotNil(result.backupPath)
     }
 }

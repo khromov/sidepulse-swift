@@ -24,14 +24,14 @@ final class CLIInstallTests: XCTestCase {
     func testInstallBlock() {
         let result = InstallResult(provider: .claude, configPath: config, changed: true,
                                    backupPath: URL(fileURLWithPath: "/Users/x/.claude/settings.json.bak.20260926T100000Z"),
-                                   dryRun: false, notes: ["removed 12 legacy Python hooks"])
+                                   dryRun: false, notes: ["trusted 11 Codex hooks"])
         XCTAssertEqual(InstallText.render(result, action: .install, logPath: URL(fileURLWithPath: "/state/logs/claude.jsonl")),
                        """
                        claude: updated
                          config: /Users/x/.claude/settings.json
                          log: /state/logs/claude.jsonl
                          backup: /Users/x/.claude/settings.json.bak.20260926T100000Z
-                         note: removed 12 legacy Python hooks
+                         note: trusted 11 Codex hooks
                        """)
     }
 

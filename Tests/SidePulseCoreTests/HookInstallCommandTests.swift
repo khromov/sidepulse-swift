@@ -60,7 +60,6 @@ final class HookInstallCommandTests: XCTestCase {
             "'/Applications/SidePulse.app/Contents/MacOS/SidePulse' agent-monitor hook-log --provider codex --log '/tmp/codex events.jsonl' ; true",
             "/usr/bin/python3 -m agent_monitor hook-log --provider claude --log /tmp/am.jsonl ; true",
             "/usr/bin/python3 -m sidepulse hook-log --provider claude --log /tmp/x.jsonl ; true",
-            "python3 -m sidepulse.cursor_hook --event stop --log /tmp/cursor.jsonl",
         ]
         let foreign = [
             "say done >> /tmp/user-notify.log",
@@ -68,17 +67,19 @@ final class HookInstallCommandTests: XCTestCase {
             "echo keep >> /tmp/other.log",
             "terminal-notifier -message \"Claude Code Finished\" -sound default",
             "bash ~/statusline.sh",
+            // Cursor's own config is never edited, so its Python hook is no longer recognised.
+            "python3 -m sidepulse.cursor_hook --event stop --log /tmp/cursor.jsonl",
             "",
         ]
         for c in current {
             XCTAssertTrue(HookCommand.isSidePulseCommand(c), c)
             XCTAssertTrue(HookCommand.isCurrentStyleCommand(c), c)
-            XCTAssertFalse(HookCommand.isLegacyCommand(c), c)
+            XCTAssertFalse(HookInstallTestData.isPythonEra(c), c)
         }
         for c in legacy {
             XCTAssertTrue(HookCommand.isSidePulseCommand(c), c)
             XCTAssertFalse(HookCommand.isCurrentStyleCommand(c), c)
-            XCTAssertTrue(HookCommand.isLegacyCommand(c), c)
+            XCTAssertTrue(HookInstallTestData.isPythonEra(c), c)
         }
         for c in foreign {
             XCTAssertFalse(HookCommand.isSidePulseCommand(c), c)
@@ -101,7 +102,7 @@ final class HookInstallCommandTests: XCTestCase {
             for provider in HookProvider.allCases {
                 let command = HookCommand.command(cliPath: path, provider: provider)
                 XCTAssertTrue(HookCommand.isCurrentStyleCommand(command), command)
-                XCTAssertFalse(HookCommand.isLegacyCommand(command), command)
+                XCTAssertFalse(HookInstallTestData.isPythonEra(command), command)
             }
         }
         let notCurrent = [
@@ -117,7 +118,7 @@ final class HookInstallCommandTests: XCTestCase {
         for command in notCurrent {
             XCTAssertFalse(HookCommand.isCurrentStyleCommand(command), command)
             XCTAssertTrue(HookCommand.isSidePulseCommand(command), command)
-            XCTAssertTrue(HookCommand.isLegacyCommand(command), command)
+            XCTAssertTrue(HookInstallTestData.isPythonEra(command), command)
         }
     }
 }

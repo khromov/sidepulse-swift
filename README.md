@@ -28,9 +28,9 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
 - **Flat CLI.** The command is `sidepulse status`, not
   `sidepulse agent-monitor status`. Only `agent-monitor hook-log`, which
   Python-era hook commands call, is still accepted.
-- **Separate LaunchAgent.** The app runs from `io.sidepulse.swift`.
-  `sidepulse setup` removes the Python install's LaunchAgents and replaces its
-  hooks.
+- **Separate LaunchAgent.** The app runs from `io.sidepulse.swift`. Uninstall
+  the Python version first, because `sidepulse setup` only replaces its hooks
+  and leaves its LaunchAgents running.
 
 **Intentionally dropped:** iPhone link and push, the remote relay, the headless
 service and Linux support, battery LED mode, the SD eject guard, the closed-lid
@@ -105,21 +105,16 @@ Installing with `--sign IDENTITY` avoids the prompt after updates.
 ### What `sidepulse setup` does
 
 ```sh
-sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]
+sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]
 ```
 
-1. **Migrates away from the Python install** (skip with `--no-migrate`). It
-   boots out and deletes these LaunchAgents: `io.sidepulse.agentstatus`,
-   `io.sidepulse.service`, `com.sidepulse.agentstatus` and
-   `com.pixiepulse.agentstatus`. It leaves `io.sidepulse.sdejectguard` alone.
-2. **Installs hooks** for every agent that looks installed (`~/.claude`,
+1. **Installs hooks** for every agent that looks installed (`~/.claude`,
    `~/.codex`, and for OpenCode its config directory or an `opencode` binary in
    `~/.opencode/bin` or on `PATH`), or only for the providers you name. The
-   same edit removes Python-era SidePulse hooks: those that call `hook_entry.py`,
-   `agent-monitor hook-log` or `sidepulse hook-log`, plus Codex
-   `# >>> agent-monitor hooks >>>` blocks. It also marks the Codex hooks trusted
-   (skip with `--no-trust`).
-3. **Installs and starts the app's LaunchAgent**, so the app also starts at
+   same edit removes Python-era SidePulse hooks: those that call `hook_entry.py`
+   or `hook-log --provider`, plus Codex `# >>> agent-monitor hooks >>>` blocks.
+   It also marks the Codex hooks trusted (skip with `--no-trust`).
+2. **Installs and starts the app's LaunchAgent**, so the app also starts at
    login (skip with `--no-app`). If `SidePulse.app` is not found, this step is
    skipped and setup prints instructions. If SidePulse already runs outside
    launchd, only the plist is written and the LaunchAgent takes over at the
@@ -180,10 +175,9 @@ for `leds` without `--once`.
 | `version` | Print the version |
 | `help` | Show help for sidepulse or one command |
 
-**`sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]`**
+**`sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]`**
 - `--no-app`: only install hooks. Do not install or start the menu-bar app.
 - `--dry-run`: show what would change without changing anything.
-- `--no-migrate`: leave the Python SidePulse LaunchAgents alone.
 - `--no-trust`: do not mark the Codex hooks trusted.
 
 **`sidepulse status [--json] [--all] [--offline] [--watch]`**
@@ -242,8 +236,7 @@ untouched, and a `sidepulse.js` that SidePulse did not write stays with a note.
 For each provider, reports: config path, installed and missing events,
 `hook cli` (the CLI the installed hook commands call, and whether it exists and
 is the SidePulse CLI, for example
-`… (missing); run 'sidepulse install claude' to repair`), leftover Python
-hooks, and the log file. A hook CLI equal to `$SIDEPULSE_CLI_PATH` is only
+`… (missing); run 'sidepulse install claude' to repair`), and the log file. A hook CLI equal to `$SIDEPULSE_CLI_PATH` is only
 checked for existence. For Codex it also reports `trust: n/11 hooks trusted`,
 with advice to approve them with `/hooks` or run `sidepulse install codex` when
 entries are missing and the hooks feature is on. When the feature is off it
@@ -408,7 +401,7 @@ The Settings window has four tabs:
 | General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
 | Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
-| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Disabled; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
+| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Disabled; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
 Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, KITT Scanner,

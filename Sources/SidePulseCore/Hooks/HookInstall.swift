@@ -60,12 +60,8 @@ public enum HookCommand {
     /// Deliberately never a log path or a `>>` redirect, so a user's own `say done >> /tmp/x.log` hook
     /// never looks like ours.
     static let markers = [
-        "hook-log --provider",     // current Swift form (and every Python CLI form)
-        "hook_entry.py",           // Python installer (non-frozen)
-        "sidepulse.cursor_hook",   // Python legacy Cursor entry
-        "agent-monitor hook-log",  // Python frozen-app / agent-monitor CLI
-        "agent_monitor hook-log",  // pre-rename `python -m agent_monitor hook-log`
-        "sidepulse hook-log",      // `sidepulse hook-log` / `python -m sidepulse hook-log`
+        "hook-log --provider",     // every CLI form, Swift and Python
+        "hook_entry.py",           // the non-frozen Python install's `python3 …/hook_entry.py`
     ]
 
     /// The trailing `; true` makes the hook fail open.
@@ -112,10 +108,6 @@ public enum HookCommand {
         guard word.count >= 2, word.hasPrefix("'"), word.hasSuffix("'") else { return nil }
         let inner = String(word.dropFirst().dropLast()).replacingOccurrences(of: "'\"'\"'", with: "'")
         return shellQuote(inner) == word ? inner : nil
-    }
-
-    public static func isLegacyCommand(_ command: String) -> Bool {
-        isSidePulseCommand(command) && !isCurrentStyleCommand(command)
     }
 }
 
@@ -312,10 +304,6 @@ public enum ClaudeHookInstaller {
         uniqued(handlerCommands(in: text).compactMap { HookCommand.cliPath(of: $0.command) })
     }
 
-    public static func legacyHandlerCount(in text: String) -> Int {
-        handlerCommands(in: text).filter { HookCommand.isLegacyCommand($0.command) }.count
-    }
-
     public static func install(paths: SidePulsePaths, cliPath: String, dryRun: Bool, now: Date = Date()) throws -> InstallResult {
         let config = paths.claudeSettingsFile
         let command = HookCommand.command(cliPath: cliPath, provider: .claude)
@@ -327,16 +315,11 @@ public enum ClaudeHookInstaller {
             throw error.at(config.path)
         }
         let changed = updated != original
-        var notes: [String] = []
-        let legacy = original.map(legacyHandlerCount(in:)) ?? 0
-        if legacy > 0 {
-            notes.append("\(dryRun ? "would remove" : "removed") \(HookConfigFile.plural(legacy, "legacy Python hook"))")
-        }
         var backup: URL?
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
         }
-        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun, notes: notes)
+        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun)
     }
 
     public static func uninstall(paths: SidePulsePaths, dryRun: Bool, now: Date = Date()) throws -> InstallResult {
@@ -351,16 +334,11 @@ public enum ClaudeHookInstaller {
             throw error.at(config.path)
         }
         let changed = updated != original
-        var notes: [String] = []
-        let legacy = legacyHandlerCount(in: original)
-        if legacy > 0 {
-            notes.append("\(dryRun ? "would remove" : "removed") \(HookConfigFile.plural(legacy, "legacy Python hook"))")
-        }
         var backup: URL?
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
         }
-        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun, notes: notes)
+        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun)
     }
 
     // MARK: - Helpers

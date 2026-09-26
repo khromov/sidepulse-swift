@@ -155,11 +155,6 @@ extension ProviderDoctorInfo: Identifiable {
         if !agentDetected { return "Not detected \u{2014} config created on install" }
         return configExists ? "Not installed" : "Not installed \u{2014} config created on install"
     }
-
-    public var legacyText: String? {
-        guard legacyHooks > 0 else { return nil }
-        return "\(legacyHooks) legacy Python \(legacyHooks == 1 ? "hook" : "hooks") (removed on install)"
-    }
 }
 
 public enum ErrorText {

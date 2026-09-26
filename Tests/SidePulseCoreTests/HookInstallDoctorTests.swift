@@ -23,12 +23,10 @@ final class HookInstallDoctorTests: XCTestCase {
         claude:
           config: \(box.paths.claudeSettingsFile.path) (missing)
           hooks: not installed
-          legacy python hooks: 0
           log: \(box.paths.logFile(for: "claude").path) (missing)
         codex:
           config: \(box.paths.codexConfigFile.path) (missing)
           hooks: not installed
-          legacy python hooks: 0
           log: \(box.paths.logFile(for: "codex").path) (missing)
         opencode:
           config: \(box.paths.openCodePluginFile.path) (missing)
@@ -56,14 +54,12 @@ final class HookInstallDoctorTests: XCTestCase {
           config: \(box.paths.claudeSettingsFile.path) (found)
           hooks: installed (12/12 events)
           hook cli: \(cli) (ok)
-          legacy python hooks: 0
           log: \(box.paths.logFile(for: "claude").path) (found)
         codex:
           config: \(box.paths.codexConfigFile.path) (found)
           hooks: installed (11/11 events)
           hook cli: \(cli) (ok)
           trust: 11/11 hooks trusted
-          legacy python hooks: 0
           log: \(box.paths.logFile(for: "codex").path) (missing)
         opencode:
           config: \(box.paths.openCodePluginFile.path) (found)
@@ -75,7 +71,7 @@ final class HookInstallDoctorTests: XCTestCase {
         let json = HookDoctor.renderJSON(infos)
         let first = json["providers"]?.arrayValue?.first
         XCTAssertEqual(first?.objectValue?.keys, ["provider", "config_path", "config_exists", "agent_detected", "hooks_enabled",
-                                                  "installed_events", "missing_events", "legacy_hooks", "log_path", "log_exists", "error",
+                                                  "installed_events", "missing_events", "log_path", "log_exists", "error",
                                                   "hook_cli_paths", "hook_cli_problems", "untrusted_events"])
         XCTAssertEqual(first?["hook_cli_paths"], .array([.string(cli)]))
         XCTAssertEqual(first?["hook_cli_problems"], .array([]))
@@ -83,13 +79,12 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertEqual(first?["config_path"], .string(box.paths.claudeSettingsFile.path))
         XCTAssertEqual(first?["installed_events"]?.arrayValue?.count, 12)
         XCTAssertEqual(first?["missing_events"], .array([]))
-        XCTAssertEqual(first?["legacy_hooks"], .number("0"))
         XCTAssertEqual(first?["log_exists"], .bool(true))
         XCTAssertEqual(first?["error"], .null)
         XCTAssertEqual(json["providers"]?.arrayValue?.last?["hooks_enabled"], .bool(true))
     }
 
-    func testPartialLegacyAndErrors() throws {
+    func testPartialPythonEraAndErrors() throws {
         let box = try HookInstallSandbox()
         let partial = #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\#(T.claudeCommand)"}]}],"#
             + #""SessionStart":[{"hooks":[{"type":"command","command":"\#(T.claudeCommand)"}]}],"#
@@ -99,14 +94,13 @@ final class HookInstallDoctorTests: XCTestCase {
 
         let claude = HookDoctor.inspect(paths: box.paths, provider: .claude)
         XCTAssertEqual(claude.installedEvents, ["SessionStart", "Stop"])
-        XCTAssertEqual(claude.legacyHooks, 1)
         XCTAssertEqual(claude.missingEvents.count, 10)
         let codex = HookDoctor.inspect(paths: box.paths, provider: .codex)
         XCTAssertFalse(codex.hooksEnabled)
         XCTAssertFalse(codex.fullyInstalled)
         let text = HookDoctor.renderText([claude, codex])
         XCTAssertTrue(text.contains("  hooks: partial (2/12)\n  missing events: UserPromptSubmit, PreToolUse, PostToolUse,"))
-        XCTAssertTrue(text.contains("  legacy python hooks: 1\n"))
+        XCTAssertFalse(text.contains("legacy"))
         XCTAssertTrue(text.contains("  hooks: installed (11/11 events)\n"))
         XCTAssertTrue(text.contains("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)\n"))
 
@@ -201,12 +195,11 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertFalse(text.contains("/hooks in Codex"), text)
     }
 
-    func testLegacyPythonCounts() throws {
+    func testPythonEraHooksDoNotCountAsInstalled() throws {
         let box = try HookInstallSandbox()
         try box.write(HookInstallFixtures.pythonClaudeSettings, to: box.paths.claudeSettingsFile)
         try box.write(HookInstallFixtures.pythonCodexConfigReinstalled, to: box.paths.codexConfigFile)
         let infos = HookDoctor.inspectAll(paths: box.paths)
-        XCTAssertEqual(infos.map(\.legacyHooks), [14, 11, 0])
         XCTAssertEqual(infos.map(\.installedEvents), [[], [], []])
         XCTAssertTrue(infos[1].hooksEnabled)
     }
