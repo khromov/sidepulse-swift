@@ -182,18 +182,6 @@ final class LEDAnimationLibraryTests: XCTestCase {
             XCTAssertEqual(AnimationLibrary.defaultAnimationID(for: mode), expected[mode], mode.rawValue)
         }
     }
-
-    func testEmbeddedProgramsMatchPythonResourceFiles() throws {
-        guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
-        let dir = repo.appendingPathComponent("src/sidepulse/resources/animations")
-        for (name, program) in BuiltInPrograms.files {
-            let data = try Data(contentsOf: dir.appendingPathComponent(name))
-            XCTAssertEqual(data, Data((program + "\n").utf8), name)
-        }
-        let lidFree = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            .filter { $0.hasSuffix(".LED") && !LEDTestSupport.isLidAnimation($0) }
-        XCTAssertEqual(Set(lidFree), Set(BuiltInPrograms.files.keys))
-    }
 }
 
 final class LEDProfileTests: XCTestCase {
@@ -252,24 +240,6 @@ final class LEDProfileTests: XCTestCase {
         var custom = defaults
         custom[.completed] = "cyan-complete"
         XCTAssertNil(AnimationProfiles.matching(custom))
-    }
-
-    func testProfilesMatchPythonProfileDocuments() throws {
-        guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
-        for profile in BuiltInPrograms.profiles {
-            let stem = profile.id.replacingOccurrences(of: "profile:", with: "")
-            let document = try JSONValue.parse(try Data(contentsOf: repo.appendingPathComponent("profiles/\(stem).json")))
-            XCTAssertEqual(document["name"]?.stringValue, profile.name)
-            var expected: [AgentMode: String] = [:]
-            for (key, value) in try XCTUnwrap(document["animations"]?.objectValue) {
-                guard let mode = AgentMode(rawValue: key) else {
-                    XCTAssertTrue(["lid_open", "lid_closed"].contains(key), key)
-                    continue
-                }
-                expected[mode] = value.stringValue
-            }
-            XCTAssertEqual(profile.animations, expected, profile.id)
-        }
     }
 }
 

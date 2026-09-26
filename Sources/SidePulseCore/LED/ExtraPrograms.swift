@@ -1,4 +1,4 @@
-/// Animations and profiles that exist only in the Swift port; BuiltInPrograms.swift stays a pure mirror of the Python data.
+/// Animations and profiles that exist only in the Swift port.
 enum ExtraPrograms {
     static let catalog: [Animation] = [
         Animation(id: "solid-red", name: "Solid Red", countSpecific: false),

@@ -708,9 +708,6 @@ Opt-in and environment-dependent tests:
 | --- | --- | --- |
 | `SIDEPULSE_INTEGRATION=1` | `CLIIntegrationTests` | End-to-end CLI against the real core. `swift build` first for the hook-binary test. Run with `SIDEPULSE_INTEGRATION=1 swift test --filter CLIIntegration` |
 | `SIDEPULSE_LAUNCHCTL_TESTS=1` | `LaunchAgentLaunchctlTests` | Real launchd round trip with a throwaway `/bin/sleep` agent |
-| `SIDEPULSE_PYTHON_REPO=<path>` | LED animation and profile tests | Compares the embedded animations and profiles byte for byte with the Python checkout. The default path is `../sidepulse`, and the tests are skipped if it is absent |
-| `SIDEPULSE_REGENERATE_BUILTINS=1` | `LEDBuiltInProgramsSourceTests` | Regenerates `Sources/SidePulseCore/LED/BuiltInPrograms.swift` from the Python checkout |
-| `SIDEPULSE_STATUS_DIFF_DIR=<dir>` | `StatusDifferentialTests` | Scans copies of the provider logs in `<dir>/logs/` and writes `swift.json` for comparison with the Python collector. `SIDEPULSE_STATUS_DIFF_MAX_LINES` sets the scan depth (default 5000) |
 | `SIDEPULSE_SKIP_CODEX_TESTS=1` | `HookInstallRealCodexTests` | Skips the trust check against a real `codex` binary, which otherwise runs whenever Codex is installed |
 | `bun` or `node` on `PATH` | `HookInstallOpenCodeTests.testPluginTurnsOpenCodeEventsIntoHookRecords` | Runs the generated OpenCode plugin on recorded event shapes with a fake CLI. Skipped when neither is installed |
 

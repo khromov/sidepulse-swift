@@ -29,8 +29,6 @@ The following tests only run when you opt in with an environment variable. The R
 
 - `SIDEPULSE_INTEGRATION=1`: the end-to-end CLI tests (`CLIIntegrationTests`). Run `swift build` first.
 - `SIDEPULSE_LAUNCHCTL_TESTS=1`: a real launchd round trip.
-- `SIDEPULSE_PYTHON_REPO=<path>`: byte-for-byte comparison of the animations and profiles with the Python checkout. Defaults to `../sidepulse`; skipped if that directory is absent.
-- `SIDEPULSE_STATUS_DIFF_DIR`: differential status scan against the Python collector.
 - `SIDEPULSE_SKIP_CODEX_TESTS=1`: skips `HookInstallRealCodexTests`, which otherwise run whenever `codex` is installed.
 - The OpenCode plugin script test (`HookInstallOpenCodeTests.testPluginTurnsOpenCodeEventsIntoHookRecords`) runs when `bun` or `node` is on `PATH` and is skipped otherwise.
 
@@ -70,7 +68,7 @@ Key design points that span several files:
 - **`LEDS.LED` writes.** This file is the exception: it is written in place by `LedWriter`, and only truncated after the caller re-checks that it still wants the write. The re-check matters because `open()` can block on the macOS removable-volume permission prompt.
 - **Finding SidePulse hooks.** Identify our hooks, current and Python-era, only by command markers (`HookCommand.isSidePulseCommand`), never by log paths. The OpenCode plugin is ours only with the exact `OpenCodePluginInstaller.marker` line; never replace or delete any other `sidepulse.js`.
 - **Stable hook command.** Hook commands point at the stable `~/.local/bin/sidepulse` link. Codex trust hashes bind to the exact command string, so changing the command format invalidates trust.
-- **Generated file.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` is generated. Don't edit it by hand; Swift-only animations and profiles (such as Signal) go in `ExtraPrograms.swift`. Regenerate it with `SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests`.
+- **Built-in animations.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` holds the animations and profiles copied from the Python project and is now the source of truth; Swift-only ones (such as Signal) go in `ExtraPrograms.swift`.
 - **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed.
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.

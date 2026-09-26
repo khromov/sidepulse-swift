@@ -1,7 +1,4 @@
-// GENERATED FILE. Do not edit by hand.
-// Regenerate: SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests
-
-/// Embedded so no resource bundle is needed at runtime.
+/// The Python project's animations and profiles, embedded so no resource bundle is needed at runtime.
 enum BuiltInPrograms {
     static let catalog: [Animation] = [
         Animation(id: "off", name: "Slow Off", countSpecific: false),
