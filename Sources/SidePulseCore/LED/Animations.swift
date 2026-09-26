@@ -33,12 +33,14 @@ public enum AnimationLibrary {
         return program
     }
 
+    /// The Signal profile.
     public static func defaultAnimationID(for mode: AgentMode) -> String {
         switch mode {
-        case .working, .toolRunning, .longTaskProgress: return "cyan-roll"
-        case .waitingForInput, .blockedError: return "amber-pulse"
-        case .completed: return "cyan-complete"
-        case .idleReady, .unknown: return "idle-pulse"
+        case .working, .toolRunning, .longTaskProgress: return "ember-tide"
+        case .waitingForInput: return "ember-complete"
+        case .blockedError: return "solid-red"
+        case .completed: return "solid-green"
+        case .idleReady, .unknown: return "solid-blue"
         }
     }
 }
@@ -54,8 +56,9 @@ public struct AnimationProfile: Sendable, Equatable, Identifiable {
 }
 
 public enum AnimationProfiles {
+    /// The default (Signal) comes first so the picker lists it first.
     public static var builtIn: [AnimationProfile] {
-        BuiltInPrograms.profiles + ExtraPrograms.profiles
+        ExtraPrograms.profiles + BuiltInPrograms.profiles
     }
 
     public static func profile(id: String) -> AnimationProfile? {

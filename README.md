@@ -297,15 +297,15 @@ agent hooks call. See [How hooks work](#how-hooks-work).
 Every hook event maps to a mode. The mode decides the menu-bar icon and the LED
 animation.
 
-| Mode | Priority | Menu bar | Default LED (Cyan profile) | Set by |
+| Mode | Priority | Menu bar | Default LED (Signal profile) | Set by |
 | --- | --- | --- | --- | --- |
-| Blocked / Error | 1 | Ask | `amber-pulse` | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response |
-| Waiting for Input | 2 | Ask | `amber-pulse` | `PermissionRequest`, a Notification that needs input, `Stop`/`SubagentStop` whose final message asks a question |
-| Tool Running | 3 | Working | `cyan-roll` | `PreToolUse` |
-| Long Task Progress | 4 | Working | `cyan-roll` | Explicit marker only (`progress`) |
-| Working | 5 | Working | `cyan-roll` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, other Notifications |
-| Completed | 6 | Done | `cyan-complete` | `Stop`/`SubagentStop` without a question, `SessionEnd`, a completion Notification, a subagent whose session ended (`SessionEnd`) or that the parent `Stop` no longer lists as running |
-| Idle / Ready | 7 | Idle | `idle-pulse` | `SessionStart`, Codex `Interrupt` |
+| Blocked / Error | 1 | Ask | `solid-red` | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response |
+| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a Notification that needs input, `Stop`/`SubagentStop` whose final message asks a question |
+| Tool Running | 3 | Working | `ember-tide` | `PreToolUse` |
+| Long Task Progress | 4 | Working | `ember-tide` | Explicit marker only (`progress`) |
+| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, other Notifications |
+| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop` without a question, `SessionEnd`, a completion Notification, a subagent whose session ended (`SessionEnd`) or that the parent `Stop` no longer lists as running |
+| Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, Codex `Interrupt` |
 
 How the global display state is chosen:
 
@@ -414,7 +414,7 @@ The Settings window has four tabs:
 | Tab | Contents |
 | --- | --- |
 | General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** |
-| Animations | Profile picker: **Cyan** (the default), **Ember**, **Purple** or **Signal** (solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done). It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
+| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
 | Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
 | Hooks | For each provider: status, config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 

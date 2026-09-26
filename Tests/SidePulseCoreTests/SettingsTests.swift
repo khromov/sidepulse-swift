@@ -29,7 +29,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.sleepPolicy, .agents)
         XCTAssertEqual(settings.minBatteryPercent, 20)
         XCTAssertTrue(settings.extra.isEmpty)
-        XCTAssertEqual(settings.matchingProfile?.id, "profile:cyan")
+        XCTAssertEqual(settings.matchingProfile?.id, "profile:signal")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
         XCTAssertEqual(LedDisplay.manual.label, "Manual")
         XCTAssertEqual(SleepPolicy.allCases.map(\.label), ["Never", "When Agents Work", "Always"])
@@ -147,16 +147,16 @@ final class SettingsModelTests: XCTestCase {
         // Python parity: the first working-group key wins even when its unknown id
         // has already become the default.
         let unknownFirst = try settings(fromJSON: #"{"agent_animations": {"working": "bogus", "tool_running": "kitt"}}"#)
-        XCTAssertEqual(unknownFirst.animationID(for: .toolRunning), "cyan-roll")
+        XCTAssertEqual(unknownFirst.animationID(for: .toolRunning), "ember-tide")
 
         let mixed = try settings(fromJSON: """
         {"agent_animations": {"completed": "solid-green", "lid_open": "lid-open", "idle_ready": 5,
                               "blocked_error": "default", "waiting_for_input": "lid-open"}}
         """)
-        XCTAssertEqual(mixed.animations, ["completed": "solid-green", "blocked_error": "amber-pulse",
-                                          "waiting_for_input": "amber-pulse"])
+        XCTAssertEqual(mixed.animations, ["completed": "solid-green", "blocked_error": "solid-red",
+                                          "waiting_for_input": "ember-complete"])
         XCTAssertEqual(mixed.animationID(for: .completed), "solid-green")
-        XCTAssertEqual(mixed.animationID(for: .idleReady), "idle-pulse")
+        XCTAssertEqual(mixed.animationID(for: .idleReady), "solid-blue")
     }
 
     func testUnknownKeysArePreservedSorted() throws {
@@ -213,7 +213,7 @@ final class SettingsModelTests: XCTestCase {
         settings.setAnimation("ember-complete", for: .completed)
         XCTAssertEqual(settings.animationID(for: .completed), "ember-complete")
         XCTAssertEqual(settings.animationID(for: .working), "kitt")
-        XCTAssertEqual(settings.animationID(for: .blockedError), "amber-pulse")
+        XCTAssertEqual(settings.animationID(for: .blockedError), "solid-red")
 
         settings.setAnimation("nope", for: .completed)
         settings.setAnimation("lid-open", for: .working)
@@ -228,7 +228,7 @@ final class SettingsModelTests: XCTestCase {
             XCTAssertEqual(settings.animationID(for: mode), AnimationLibrary.defaultAnimationID(for: mode))
         }
         settings.animations = ["completed": "gone", "long_task_progress": "night-rider"]
-        XCTAssertEqual(settings.animationID(for: .completed), "cyan-complete")
+        XCTAssertEqual(settings.animationID(for: .completed), "solid-green")
         XCTAssertEqual(settings.animationID(for: .working), "night-rider", "any stored working-group entry is shared")
     }
 
@@ -247,7 +247,7 @@ final class SettingsModelTests: XCTestCase {
 
         settings.apply(profile: try XCTUnwrap(AnimationProfiles.profile(id: "profile:cyan")))
         XCTAssertEqual(settings.matchingProfile?.id, "profile:cyan")
-        XCTAssertEqual(settings.animationSelection, AnimationProfiles.builtIn[0].animations)
+        XCTAssertEqual(settings.animationSelection, try XCTUnwrap(AnimationProfiles.profile(id: "profile:cyan")).animations)
     }
 
     func testApplyingAnInconsistentProfileNormalizesIt() {
@@ -256,8 +256,8 @@ final class SettingsModelTests: XCTestCase {
             .working: "kitt", .toolRunning: "night-rider", .completed: "nope",
         ]))
         XCTAssertEqual(AgentMode.workingGroup.map { settings.animationID(for: $0) }, ["kitt", "kitt", "kitt"])
-        XCTAssertEqual(settings.animationID(for: .completed), "cyan-complete")
-        XCTAssertEqual(settings.animations["unknown"], "idle-pulse")
+        XCTAssertEqual(settings.animationID(for: .completed), "solid-green")
+        XCTAssertEqual(settings.animations["unknown"], "solid-blue")
     }
 
     func testDeviceLookupsFallBack() {

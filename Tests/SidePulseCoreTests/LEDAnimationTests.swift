@@ -174,9 +174,9 @@ final class LEDAnimationLibraryTests: XCTestCase {
 
     func testDefaultAnimationPerMode() {
         let expected: [AgentMode: String] = [
-            .working: "cyan-roll", .toolRunning: "cyan-roll", .longTaskProgress: "cyan-roll",
-            .waitingForInput: "amber-pulse", .blockedError: "amber-pulse",
-            .completed: "cyan-complete", .idleReady: "idle-pulse", .unknown: "idle-pulse",
+            .working: "ember-tide", .toolRunning: "ember-tide", .longTaskProgress: "ember-tide",
+            .waitingForInput: "ember-complete", .blockedError: "solid-red",
+            .completed: "solid-green", .idleReady: "solid-blue", .unknown: "solid-blue",
         ]
         for mode in AgentMode.allCases {
             XCTAssertEqual(AnimationLibrary.defaultAnimationID(for: mode), expected[mode], mode.rawValue)
@@ -198,18 +198,24 @@ final class LEDAnimationLibraryTests: XCTestCase {
 
 final class LEDProfileTests: XCTestCase {
     func testBuiltInProfiles() throws {
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), ["profile:cyan", "profile:ember", "profile:purple", "profile:signal"])
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.name), ["Cyan", "Ember", "Purple", "Signal"])
+        XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), ["profile:signal", "profile:cyan", "profile:ember", "profile:purple"])
+        XCTAssertEqual(AnimationProfiles.builtIn.map(\.name), ["Signal", "Cyan", "Ember", "Purple"])
         for profile in AnimationProfiles.builtIn {
             XCTAssertEqual(Set(profile.animations.keys), Set(AgentMode.allCases), profile.id)
             for id in profile.animations.values { XCTAssertNotNil(AnimationLibrary.animation(id: id), id) }
             let working = Set(AgentMode.workingGroup.map { profile.animations[$0] })
             XCTAssertEqual(working.count, 1, "working group shares one selection in \(profile.id)")
         }
-        let cyan = try XCTUnwrap(AnimationProfiles.profile(id: "profile:cyan"))
+        let defaultProfile = try XCTUnwrap(AnimationProfiles.profile(id: "profile:signal"))
         for mode in AgentMode.allCases {
-            XCTAssertEqual(cyan.animations[mode], AnimationLibrary.defaultAnimationID(for: mode))
+            XCTAssertEqual(defaultProfile.animations[mode], AnimationLibrary.defaultAnimationID(for: mode))
         }
+        let cyan = try XCTUnwrap(AnimationProfiles.profile(id: "profile:cyan"))
+        XCTAssertEqual(cyan.animations, [
+            .idleReady: "idle-pulse", .working: "cyan-roll", .toolRunning: "cyan-roll",
+            .waitingForInput: "amber-pulse", .longTaskProgress: "cyan-roll",
+            .blockedError: "amber-pulse", .completed: "cyan-complete", .unknown: "idle-pulse",
+        ])
         let ember = try XCTUnwrap(AnimationProfiles.profile(id: "profile:ember"))
         XCTAssertEqual(ember.animations, [
             .idleReady: "ember-idle", .working: "ember-tide", .toolRunning: "ember-tide",
@@ -240,11 +246,11 @@ final class LEDProfileTests: XCTestCase {
 
     func testMatching() throws {
         let defaults = Dictionary(uniqueKeysWithValues: AgentMode.allCases.map { ($0, AnimationLibrary.defaultAnimationID(for: $0)) })
-        XCTAssertEqual(AnimationProfiles.matching(defaults)?.id, "profile:cyan")
+        XCTAssertEqual(AnimationProfiles.matching(defaults)?.id, "profile:signal")
         let purple = try XCTUnwrap(AnimationProfiles.profile(id: "profile:purple"))
         XCTAssertEqual(AnimationProfiles.matching(purple.animations)?.id, "profile:purple")
         var custom = defaults
-        custom[.completed] = "solid-green"
+        custom[.completed] = "cyan-complete"
         XCTAssertNil(AnimationProfiles.matching(custom))
     }
 
