@@ -71,6 +71,9 @@ private struct GeneralTab: View {
                 Toggle(MenuText.launchAtLogin, isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }))
+                LabeledContent("Logs") {
+                    Button(MenuText.openLogsFolder) { model.services.openLogsFolder() }
+                }
             }
         }
         .formStyle(.grouped)

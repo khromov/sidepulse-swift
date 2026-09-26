@@ -11,7 +11,6 @@ public enum MenuText {
     public static let remove = "Remove"
     public static let keepAwake = "Keep Awake"
     public static let keepingAwake = "Keeping Mac awake"
-    public static let hooks = "Hooks"
     public static let openLogsFolder = "Open Logs Folder"
     public static let settings = "Settings..."
     public static let launchAtLogin = "Launch at Login"

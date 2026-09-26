@@ -134,7 +134,7 @@ final class HookInstallOpenCodeTests: XCTestCase {
         XCTAssertEqual(info.hookCLIPaths, [T.cli])
         XCTAssertEqual(info.hookCLIProblems, ["\(T.cli) (missing)"])
         XCTAssertFalse(info.fullyInstalled)
-        XCTAssertEqual(info.shortStatus, "Needs repair")
+        XCTAssertEqual(info.statusText, "Needs repair: the hooks call \(T.cli) (missing)")
         XCTAssertTrue(HookDoctor.renderText([info]).contains(
             "  hooks: installed (14/14 events)\n  hook cli: \(T.cli) (missing); run 'sidepulse install opencode' to repair\n"))
 
@@ -146,7 +146,7 @@ final class HookInstallOpenCodeTests: XCTestCase {
         XCTAssertEqual(info.hookCLIProblems, [])
         XCTAssertEqual(info.missingEvents, ["StopFailure"])
         XCTAssertEqual(info.error, OpenCodePluginInstaller.outdatedProblem)
-        XCTAssertEqual(info.toggleAction, .install)
+        XCTAssertFalse(info.fullyInstalled)
         XCTAssertTrue(HookDoctor.renderText([info]).contains("  hooks: partial (13/14)\n  missing events: StopFailure\n"))
 
         let sameEvents = OpenCodePluginInstaller.source(cliPath: cli)
@@ -155,8 +155,7 @@ final class HookInstallOpenCodeTests: XCTestCase {
         info = HookDoctor.inspect(paths: box.paths, provider: .opencode)
         XCTAssertEqual(info.missingEvents, [])
         XCTAssertEqual(info.error, OpenCodePluginInstaller.outdatedProblem, "a logic change keeps every event name")
-        XCTAssertEqual(info.menuTitle, "OpenCode \u{2014} Error")
-        XCTAssertEqual(info.toggleAction, .install)
+        XCTAssertFalse(info.fullyInstalled)
         XCTAssertTrue(HookDoctor.renderText([info]).contains("  error: written by another SidePulse version; "
             + "run 'sidepulse install opencode' to update it\n  hooks: installed (14/14 events)\n"))
 
@@ -168,8 +167,6 @@ final class HookInstallOpenCodeTests: XCTestCase {
         _ = try OpenCodePluginInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
         info = HookDoctor.inspect(paths: box.paths, provider: .opencode)
         XCTAssertTrue(info.fullyInstalled)
-        XCTAssertEqual(info.menuTitle, "OpenCode \u{2014} Installed")
-        XCTAssertEqual(info.toggleAction, .uninstall)
     }
 
     func testOpenCode1IsReportedByInstallAndDoctor() throws {
@@ -194,13 +191,6 @@ final class HookInstallOpenCodeTests: XCTestCase {
         XCTAssertEqual(OpenCodePluginInstaller.parseVersion("1.18.29"), "1.18.29")
         XCTAssertNil(OpenCodePluginInstaller.parseVersion("error: unknown flag"))
         XCTAssertNil(OpenCodePluginInstaller.parseVersion(""))
-    }
-
-    func testUninstallConfirmationSaysThePluginIsDeleted() {
-        XCTAssertEqual(HookPresentation.uninstallConfirmation(provider: .opencode, configPath: "/p/sidepulse.js"),
-                       "SidePulse will stop receiving OpenCode status updates. SidePulse deletes /p/sidepulse.js.")
-        XCTAssertEqual(HookPresentation.uninstallConfirmation(provider: .claude, configPath: "/c/settings.json"),
-                       "SidePulse will stop receiving Claude Code status updates. A backup of /c/settings.json is kept.")
     }
 
     // MARK: The plugin script

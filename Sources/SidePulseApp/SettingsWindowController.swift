@@ -33,11 +33,6 @@ final class SettingsWindowController {
         model.reload(includeHooks: false)
     }
 
-    func servicesDidChange() {
-        guard isOpen else { return }
-        model.reload(includeHooks: true)
-    }
-
     private func makeWindow() -> NSWindow {
         let hosting = NSHostingController(rootView: SettingsView(model: model))
         let window = NSWindow(contentViewController: hosting)

@@ -42,7 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let services = AppServices(runtime: runtime)
         self.services = services
         settingsController = SettingsWindowController(model: SettingsModel(services: services))
-        services.onStateChange = { [weak self] in self?.settingsController?.servicesDidChange() }
         let statusController = StatusItemController(
             services: services,
             openSettings: { [weak self] in self?.showSettings() },

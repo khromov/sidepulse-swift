@@ -103,7 +103,7 @@ final class PresentationMenuTests: XCTestCase {
         var settings = SidePulseSettings()
         settings.sleepPolicy = .always
         let model = StatusMenuModel(snapshot: .empty(now: now), settings: settings, devices: [],
-                                    keepAwakeActive: true, hooks: [], launchAtLogin: true)
+                                    keepAwakeActive: true)
         XCTAssertEqual(model.header, "SidePulse \u{2014} Idle")
         XCTAssertEqual(model.displayState, .idle)
         XCTAssertEqual(model.tooltip, "SidePulse Agent Monitor: Idle")
@@ -111,7 +111,6 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertTrue(model.devices.isEmpty)
         XCTAssertEqual(model.sleepPolicy, .always)
         XCTAssertTrue(model.keepAwakeActive)
-        XCTAssertTrue(model.launchAtLogin)
     }
 
     func testMenuModelRowsDevicesAndRetention() {
@@ -129,7 +128,7 @@ final class PresentationMenuTests: XCTestCase {
                        device("/Volumes/OldPro", name: "SidePulse Pro", connected: false, display: .manual,
                               error: "  write failed ")]
         let model = StatusMenuModel(snapshot: snap, settings: settings, devices: devices, keepAwakeActive: false,
-                                    hooks: [], launchAtLogin: false, now: now.addingTimeInterval(120),
+                                    now: now.addingTimeInterval(120),
                                     projectName: { cwd in cwd.map { ($0 as NSString).lastPathComponent } })
         XCTAssertEqual(model.header, "SidePulse \u{2014} Working (1 active)")
         XCTAssertEqual(model.rows.map(\.menuTitle), ["Build it  repo"])
@@ -138,7 +137,6 @@ final class PresentationMenuTests: XCTestCase {
 
         settings.sessionRetentionSeconds = 24 * 3600
         let longer = StatusMenuModel(snapshot: snap, settings: settings, devices: devices, keepAwakeActive: false,
-                                     hooks: [], launchAtLogin: false,
                                      projectName: { cwd in cwd.map { ($0 as NSString).lastPathComponent } })
         XCTAssertEqual(longer.rows.map(\.title), ["Build it", "Old"])
 
@@ -154,7 +152,7 @@ final class PresentationMenuTests: XCTestCase {
     func testDeviceShapeDrivesInPlaceUpdates() {
         func model(_ devices: [DeviceInfo]) -> StatusMenuModel {
             StatusMenuModel(snapshot: .empty(now: now), settings: SidePulseSettings(), devices: devices,
-                            keepAwakeActive: false, hooks: [], launchAtLogin: false)
+                            keepAwakeActive: false)
         }
         let base = model([device("/Volumes/A", name: "A", brightness: 10)])
         XCTAssertTrue(base.devicesHaveSameShape(as: model([device("/Volumes/A", name: "A (1)", display: .manual, brightness: 200)])))
@@ -281,9 +279,6 @@ final class PresentationMenuTests: XCTestCase {
         let full = hook(installed: 12, missing: 0)
         XCTAssertTrue(full.fullyInstalled)
         XCTAssertEqual(full.statusText, "Installed (12 events)")
-        XCTAssertEqual(full.shortStatus, "Installed")
-        XCTAssertEqual(full.menuTitle, "Claude Code \u{2014} Installed")
-        XCTAssertEqual(full.toggleAction, .uninstall)
         XCTAssertEqual(full.id, "claude")
 
         XCTAssertEqual(hook(installed: 1, missing: 0).statusText, "Installed (1 event)")
@@ -291,54 +286,37 @@ final class PresentationMenuTests: XCTestCase {
         let partial = hook(installed: 5, missing: 7)
         XCTAssertFalse(partial.fullyInstalled)
         XCTAssertEqual(partial.statusText, "Partial (5/12 events)")
-        XCTAssertEqual(partial.shortStatus, "Partial")
-        XCTAssertEqual(partial.toggleAction, .install)
 
         let disabled = hook(.codex, enabled: false, installed: 11, missing: 0)
         XCTAssertEqual(disabled.statusText, "Installed, but Codex hooks are disabled")
-        XCTAssertEqual(disabled.menuTitle, "Codex \u{2014} Disabled")
-        XCTAssertEqual(disabled.toggleAction, .install)
+        XCTAssertFalse(disabled.fullyInstalled)
 
         let missingConfig = hook(exists: false, installed: 0, missing: 12)
         XCTAssertEqual(missingConfig.statusText, "Not installed \u{2014} config created on install")
-        XCTAssertEqual(missingConfig.shortStatus, "Not installed")
         XCTAssertEqual(hook(installed: 0, missing: 12).statusText, "Not installed")
+        XCTAssertEqual(hook(.codex, exists: false, detected: false, installed: 0, missing: 11).statusText,
+                       "Not detected \u{2014} config created on install")
 
         let broken = hook(installed: 12, missing: 0, error: "invalid JSON")
         XCTAssertFalse(broken.fullyInstalled)
         XCTAssertEqual(broken.statusText, "Error: invalid JSON")
-        XCTAssertEqual(broken.shortStatus, "Error")
-        XCTAssertEqual(broken.toggleAction, .install)
     }
 
     /// Regression: hooks calling a missing CLI (the app was moved, the link dangles)
-    /// read "Installed", and clicking offered to uninstall them.
+    /// read "Installed".
     func testHooksCallingAMissingCLINeedRepair() {
         let state = hook(installed: 12, missing: 0, cliProblems: ["/gone/sidepulse (missing)"])
         XCTAssertFalse(state.fullyInstalled)
         XCTAssertEqual(state.statusText, "Needs repair: the hooks call /gone/sidepulse (missing)")
-        XCTAssertEqual(state.menuTitle, "Claude Code \u{2014} Needs repair")
-        XCTAssertEqual(state.toggleAction, .install)
     }
 
     /// Regression: Codex hooks without trust entries (Codex skips them) read "Installed".
     func testUntrustedCodexHooksAreReported() {
         let state = hook(.codex, installed: 11, missing: 0, untrusted: ["Stop"])
         XCTAssertFalse(state.fullyInstalled)
-        XCTAssertEqual(state.shortStatus, "Installed, not trusted")
+        XCTAssertTrue(state.statusText.hasPrefix("Installed, not trusted"))
         XCTAssertTrue(state.statusText.contains("/hooks in Codex"))
         XCTAssertTrue(state.statusText.contains("sidepulse install codex"))
-        XCTAssertEqual(state.toggleAction, .install)
-    }
-
-    /// Regression: the menu offered a one-click install that created ~/.codex for a
-    /// user without Codex.
-    func testUndetectedAgentIsNotOfferedInTheMenu() {
-        let state = hook(.codex, exists: false, detected: false, installed: 0, missing: 11)
-        XCTAssertEqual(state.menuTitle, "Codex \u{2014} Not detected")
-        XCTAssertFalse(state.menuEnabled)
-        XCTAssertEqual(state.statusText, "Not detected \u{2014} config created on install")
-        XCTAssertTrue(hook(.codex, exists: false, installed: 0, missing: 11).menuEnabled)
     }
 
     func testHookStateIsTheDoctorInfo() {
@@ -350,7 +328,7 @@ final class PresentationMenuTests: XCTestCase {
         info.installedEvents = HookProvider.codex.events
         info.missingEvents = []
         XCTAssertTrue(info.fullyInstalled)
-        XCTAssertEqual(info.menuTitle, "Codex \u{2014} Installed")
+        XCTAssertEqual(info.statusText, "Installed (11 events)")
         info.error = "invalid TOML"
         XCTAssertFalse(info.fullyInstalled)
     }

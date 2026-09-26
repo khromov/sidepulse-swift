@@ -156,23 +156,6 @@ extension ProviderDoctorInfo: Identifiable {
         return configExists ? "Not installed" : "Not installed \u{2014} config created on install"
     }
 
-    public var shortStatus: String {
-        if error != nil { return "Error" }
-        if fullyInstalled { return "Installed" }
-        guard !installedEvents.isEmpty else { return agentDetected ? "Not installed" : "Not detected" }
-        if !hooksEnabled { return "Disabled" }
-        if !hookCLIProblems.isEmpty { return "Needs repair" }
-        return missingEvents.isEmpty ? "Installed, not trusted" : "Partial"
-    }
-
-    public var menuTitle: String { "\(provider.label) \u{2014} \(shortStatus)" }
-
-    /// No one-click menu install for an agent that isn't installed; Settings still offers it.
-    public var menuEnabled: Bool { agentDetected }
-
-    /// Anything short of a full install reinstalls, which also repairs the CLI path and refreshes Codex trust.
-    public var toggleAction: HookAction { fullyInstalled ? .uninstall : .install }
-
     public var legacyText: String? {
         guard legacyHooks > 0 else { return nil }
         return "\(legacyHooks) legacy Python \(legacyHooks == 1 ? "hook" : "hooks") (removed on install)"
@@ -200,11 +183,6 @@ public enum HookPresentation {
 
     public static func failureMessage(provider: HookProvider, error: String) -> String {
         "\(provider.label) hooks failed: \(error)"
-    }
-
-    public static func uninstallConfirmation(provider: HookProvider, configPath: String) -> String {
-        let effect = provider == .opencode ? "SidePulse deletes \(configPath)." : "A backup of \(configPath) is kept."
-        return "SidePulse will stop receiving \(provider.label) status updates. \(effect)"
     }
 
     public static func detailLines(notes: [String], backupPath: String?, configPath: String) -> [String] {

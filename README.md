@@ -413,21 +413,18 @@ started by the LaunchAgent exits quietly (see `app.log`).
 | `SidePulse — Working (2 active)` | Header: aggregate state and number of active agents |
 | **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. The tooltip shows state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
 | **Devices** | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected |
-| **Keep Awake** | **Never** / **When Agents Work** / **Always**. "Keeping Mac awake" appears while the Mac is held awake |
-| **Hooks** | One item per provider, for example `Claude Code — Installed`. Statuses: Installed; Needs repair (the hooks call a missing or non-SidePulse CLI); Installed, not trusted (Codex has no trust entry: approve with `/hooks` in Codex, or click to reinstall); Disabled; Partial; Not installed; Error. An agent that does not look installed shows a disabled item (Not detected). Clicking uninstalls a complete install (after confirmation), and otherwise installs or repairs |
-| **Open Logs Folder** | Reveals `logs/` in Finder |
+| **Keep Awake** | One row of three buttons: **Never** / **When Agents Work** / **Always**. "Keeping Mac awake" appears below while the Mac is held awake |
 | **Settings...** (⌘,) | Opens the settings window |
-| **Launch at Login** | Adds or removes the LaunchAgent plist |
 | **Quit SidePulse** (⌘Q) | Quits the app |
 
 The Settings window has four tabs:
 
 | Tab | Contents |
 | --- | --- |
-| General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** |
+| General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
 | Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
-| Hooks | For each provider: status, config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
+| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Disabled; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
 Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, KITT Scanner,
@@ -476,7 +473,7 @@ variants.
   shell's `PATH` plus `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`)
   so the app finds `codex` and `node`. launchd restarts the app after a crash,
   but it stays quit after **Quit**. Only `sidepulse app install`,
-  `sidepulse setup` and the toggle write the plist. Turning the toggle on
+  `sidepulse setup` and the Settings toggle write the plist. Turning the toggle on
   writes the plist for the running binary without starting a second copy.
   `sidepulse app uninstall` removes the plist.
 
@@ -549,8 +546,8 @@ success. Each handler also gets a 10 s timeout.
   `[hooks.state."<key>"] trusted_hash = "…"` table for each SidePulse hook.
   Trust entries for your own hooks are kept in step when their positions shift.
   If Codex is not found, or you pass `--no-trust`, approve the hooks with
-  `/hooks` in Codex. With `hooks = false`, trust is skipped. Doctor, the menu
-  and Settings report hooks without trust entries.
+  `/hooks` in Codex. With `hooks = false`, trust is skipped. Doctor and
+  Settings report hooks without trust entries.
 - **OpenCode.** OpenCode has no hook settings, so the installer writes a
   plugin that calls the same command. See
   [The OpenCode plugin](#the-opencode-plugin).

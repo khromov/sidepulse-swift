@@ -6,11 +6,6 @@ struct HookOutcome {
     let action: HookAction
     let result: Result<InstallResult, Error>
 
-    var succeeded: Bool {
-        if case .success = result { return true }
-        return false
-    }
-
     var message: String {
         switch result {
         case .success(let install):
@@ -30,8 +25,6 @@ struct HookOutcome {
 @MainActor
 final class AppServices {
     let runtime: SidePulseRuntime
-    /// Lets the menu or settings window re-read state after the other one changed hooks or Launch at Login.
-    var onStateChange: (() -> Void)?
 
     init(runtime: SidePulseRuntime) {
         self.runtime = runtime
@@ -65,16 +58,10 @@ final class AppServices {
                     let outcome = HookOutcome(provider: provider, action: action, result: result)
                     DiagnosticsLog.shared.log("settings: \(outcome.message)")
                     self.runtime.refresh()
-                    self.onStateChange?()
                     completion(outcome)
                 }
             }
         }
-    }
-
-    func showHookOutcome(_ outcome: HookOutcome) {
-        Self.showAlert(title: outcome.message, message: outcome.details.joined(separator: "\n"),
-                       style: outcome.succeeded ? .informational : .warning)
     }
 
     // MARK: Launch at login
@@ -88,7 +75,6 @@ final class AppServices {
     /// When this process was started by the LaunchAgent, disabling only deletes the plist because `bootout`
     /// would kill the app.
     func setLaunchAtLogin(_ enabled: Bool) throws {
-        defer { onStateChange?() }
         let manager = launchAgent
         if enabled {
             try manager.install(programArguments: [SidePulsePaths.currentExecutablePath], start: false)
@@ -117,15 +103,5 @@ final class AppServices {
         alert.informativeText = message
         alert.alertStyle = style
         alert.runModal()
-    }
-
-    static func confirm(title: String, message: String, confirmTitle: String) -> Bool {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: confirmTitle)
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
     }
 }

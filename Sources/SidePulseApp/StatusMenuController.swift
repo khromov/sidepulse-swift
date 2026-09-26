@@ -1,7 +1,8 @@
 import AppKit
 import SidePulseCore
 
-/// Updates the open menu in place instead of rebuilding it so open device submenus and sliders survive live refreshes.
+/// Updates the open menu in place instead of rebuilding it so open device submenus, sliders and the Keep Awake
+/// buttons survive live refreshes.
 @MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
@@ -14,16 +15,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private(set) var isOpen = false
     private var model: StatusMenuModel?
-    private var hooks: [HookState] = []
 
     // Items kept for in-place updates while the menu is open.
     private var headerItem: NSMenuItem?
     private var rowItems: [NSMenuItem] = []
     private var deviceItems: [NSMenuItem] = []
     private var deviceControls: [String: DeviceControls] = [:]
-    private var policyItems: [SleepPolicy: NSMenuItem] = [:]
-    private var keepingAwakeItems: [NSMenuItem] = []
-    private var launchAtLoginItem: NSMenuItem?
+    private var sleepPolicyControl: NSSegmentedControl?
+    private var keepingAwakeItem: NSMenuItem?
 
     private struct DeviceControls {
         let item: NSMenuItem
@@ -54,7 +53,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === self.menu else { return }
-        hooks = services.hookStates()
         rebuild(snapshot: runtime.snapshot())
     }
 
@@ -91,7 +89,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             deviceItems = replace(deviceItems, with: makeDeviceItems(new.devices))
         }
 
-        applyToggles(new)
+        applyKeepAwake(new)
         onAnimationStateChange?()
     }
 
@@ -113,8 +111,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func makeModel(snapshot: MonitorSnapshot) -> StatusMenuModel {
         StatusMenuModel(snapshot: snapshot, settings: runtime.settings, devices: runtime.deviceInfos(),
-                        keepAwakeActive: runtime.keepAwakeActive, hooks: hooks,
-                        launchAtLogin: services.launchAtLoginEnabled, now: Date())
+                        keepAwakeActive: runtime.keepAwakeActive, now: Date())
     }
 
     private func rebuild(snapshot: MonitorSnapshot) {
@@ -122,7 +119,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.model = model
         menu.removeAllItems()
         deviceControls.removeAll()
-        policyItems.removeAll()
 
         let header = label(model.header)
         headerItem = header
@@ -139,19 +135,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         deviceItems.forEach(menu.addItem)
         menu.addItem(.separator())
 
-        menu.addItem(makeKeepAwakeItem())
-        menu.addItem(makeHooksItem(model.hooks))
+        menu.addItem(label(MenuText.keepAwake))
+        menu.addItem(makeSleepPolicyItem())
+        let active = label(MenuText.keepingAwake)
+        keepingAwakeItem = active
+        menu.addItem(active)
         menu.addItem(.separator())
 
-        menu.addItem(action(MenuText.openLogsFolder, #selector(openLogsFolder(_:))))
         menu.addItem(action(MenuText.settings, #selector(showSettings(_:)), key: ","))
-        let launch = action(MenuText.launchAtLogin, #selector(toggleLaunchAtLogin(_:)))
-        launchAtLoginItem = launch
-        menu.addItem(launch)
         menu.addItem(.separator())
         menu.addItem(action(MenuText.quit, #selector(quitApp(_:)), key: "q"))
 
-        applyToggles(model)
+        applyKeepAwake(model)
     }
 
     private func makeRowItems(_ rows: [SessionRow]) -> [NSMenuItem] {
@@ -259,41 +254,27 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func makeKeepAwakeItem() -> NSMenuItem {
-        let item = NSMenuItem(title: MenuText.keepAwake, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        for policy in SleepPolicy.allCases {
-            let choice = action(policy.label, #selector(setSleepPolicy(_:)))
-            choice.representedObject = policy.rawValue
-            policyItems[policy] = choice
-            submenu.addItem(choice)
-        }
-        let separator = NSMenuItem.separator()
-        let active = label(MenuText.keepingAwake)
-        keepingAwakeItems = [separator, active]
-        keepingAwakeItems.forEach(submenu.addItem)
-        item.submenu = submenu
+    /// NSMenu widens a width-sizable item view to the menu's width, so the buttons span the whole row.
+    private func makeSleepPolicyItem() -> NSMenuItem {
+        let control = NSSegmentedControl(labels: SleepPolicy.allCases.map(\.label), trackingMode: .selectOne,
+                                         target: self, action: #selector(setSleepPolicy(_:)))
+        control.setAccessibilityLabel(MenuText.keepAwake)
+        control.segmentDistribution = .fillProportionally
+        control.sizeToFit()
+        control.setFrameOrigin(NSPoint(x: 14, y: 6))
+        control.autoresizingMask = [.width]
+        sleepPolicyControl = control
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: control.frame.maxX + 14, height: control.frame.height + 12))
+        view.autoresizingMask = [.width]
+        view.addSubview(control)
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.view = view
         return item
     }
 
-    private func makeHooksItem(_ hooks: [HookState]) -> NSMenuItem {
-        let item = NSMenuItem(title: MenuText.hooks, action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        for hook in hooks {
-            let entry = hook.menuEnabled ? action(hook.menuTitle, #selector(toggleHook(_:))) : label(hook.menuTitle)
-            entry.state = hook.fullyInstalled ? .on : .off
-            entry.representedObject = hook.provider.rawValue
-            entry.toolTip = ([hook.statusText, hook.legacyText, hook.configPath.path].compactMap { $0 }).joined(separator: "\n")
-            submenu.addItem(entry)
-        }
-        item.submenu = submenu
-        return item
-    }
-
-    private func applyToggles(_ model: StatusMenuModel) {
-        for (policy, item) in policyItems { item.state = policy == model.sleepPolicy ? .on : .off }
-        keepingAwakeItems.forEach { $0.isHidden = !model.keepAwakeActive }
-        launchAtLoginItem?.state = model.launchAtLogin ? .on : .off
+    private func applyKeepAwake(_ model: StatusMenuModel) {
+        sleepPolicyControl?.selectedSegment = SleepPolicy.allCases.firstIndex(of: model.sleepPolicy) ?? -1
+        keepingAwakeItem?.isHidden = !model.keepAwakeActive
     }
 
     /// `old` must be a contiguous run of menu items.
@@ -346,43 +327,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         runtime.removeDevice(id: deviceID)
     }
 
-    @objc private func setSleepPolicy(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let policy = SleepPolicy(rawValue: raw) else { return }
+    @objc private func setSleepPolicy(_ sender: NSSegmentedControl) {
+        guard SleepPolicy.allCases.indices.contains(sender.selectedSegment) else { return }
+        let policy = SleepPolicy.allCases[sender.selectedSegment]
         runtime.updateSettings { $0.sleepPolicy = policy }
-    }
-
-    @objc private func toggleHook(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let provider = HookProvider(rawValue: raw),
-              let hook = hooks.first(where: { $0.provider == provider }) else { return }
-        let action = hook.toggleAction
-        if action == .uninstall {
-            let confirmed = AppServices.confirm(
-                title: "Uninstall \(provider.label) hooks?",
-                message: HookPresentation.uninstallConfirmation(provider: provider, configPath: hook.configPath.path),
-                confirmTitle: HookAction.uninstall.label)
-            guard confirmed else { return }
-        }
-        services.performHook(action, provider: provider) { [services] outcome in
-            services.showHookOutcome(outcome)
-        }
-    }
-
-    @objc private func openLogsFolder(_ sender: NSMenuItem) {
-        services.openLogsFolder()
     }
 
     @objc private func showSettings(_ sender: NSMenuItem) {
         openSettings()
-    }
-
-    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
-        let enable = !services.launchAtLoginEnabled
-        do {
-            try services.setLaunchAtLogin(enable)
-        } catch {
-            AppServices.showAlert(title: "Could not change Launch at Login", message: ErrorText.describe(error),
-                                  style: .warning)
-        }
     }
 
     @objc private func quitApp(_ sender: NSMenuItem) {

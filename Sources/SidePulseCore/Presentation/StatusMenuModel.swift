@@ -36,11 +36,9 @@ public struct StatusMenuModel: Sendable, Equatable {
     public var devices: [DeviceMenuModel]
     public var sleepPolicy: SleepPolicy
     public var keepAwakeActive: Bool
-    public var hooks: [HookState]
-    public var launchAtLogin: Bool
 
     public init(snapshot: MonitorSnapshot, settings: SidePulseSettings, devices: [DeviceInfo],
-                keepAwakeActive: Bool, hooks: [HookState], launchAtLogin: Bool, now: Date? = nil,
+                keepAwakeActive: Bool, now: Date? = nil,
                 projectName: SessionRows.ProjectResolver = SessionRows.projectName(cwd:)) {
         header = StatusBarPresentation.header(for: snapshot)
         displayState = snapshot.aggregate.mode.displayState
@@ -49,8 +47,6 @@ public struct StatusMenuModel: Sendable, Equatable {
         self.devices = devices.map(DeviceMenuModel.init)
         sleepPolicy = settings.sleepPolicy
         self.keepAwakeActive = keepAwakeActive
-        self.hooks = hooks
-        self.launchAtLogin = launchAtLogin
     }
 
     public var tooltip: String { StatusBarPresentation.tooltip(for: displayState) }
