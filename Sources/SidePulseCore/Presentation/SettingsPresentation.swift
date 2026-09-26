@@ -150,6 +150,9 @@ extension ProviderDoctorInfo: Identifiable {
             if !missingEvents.isEmpty {
                 return "Partial (\(max(0, expectedCount - missingEvents.count))/\(expectedCount) events)"
             }
+            if !disabledEvents.isEmpty {
+                return "Installed, but turned off with /hooks in Codex: \(disabledEvents.joined(separator: ", "))"
+            }
             return "Installed, not trusted: approve the hooks with /hooks in Codex, or run 'sidepulse install codex'"
         }
         if !agentDetected { return "Not detected \u{2014} config created on install" }

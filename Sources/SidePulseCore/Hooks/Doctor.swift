@@ -5,7 +5,8 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var configPath: URL
     public var configExists: Bool
     public var agentDetected: Bool
-    /// Codex: false only when `[features]` turns hooks off; Claude: always true when the file parses; OpenCode: always true.
+    /// Codex: false when `[features]` turns hooks off; Claude: false under `"disableAllHooks": true`
+    /// or when the file does not parse; OpenCode: always true.
     public var hooksEnabled: Bool
     public var installedEvents: [String]
     public var missingEvents: [String]
@@ -16,21 +17,26 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var hookCLIProblems: [String]
     /// Codex skips these hooks until they are approved; always empty for the other providers.
     public var untrustedEvents: [String]
+    /// Codex hooks turned off with /hooks; always empty for the other providers.
+    public var disabledEvents: [String]
+    /// Harmless findings worth mentioning, such as Codex's warning about a second hook file.
+    public var notes: [String]
 
     public var fullyInstalled: Bool {
         error == nil && missingEvents.isEmpty && !installedEvents.isEmpty && hooksEnabled
-            && hookCLIProblems.isEmpty && untrustedEvents.isEmpty
+            && hookCLIProblems.isEmpty && untrustedEvents.isEmpty && disabledEvents.isEmpty
     }
 
     public init(provider: HookProvider, configPath: URL, configExists: Bool, agentDetected: Bool, hooksEnabled: Bool,
                 installedEvents: [String], missingEvents: [String], logPath: URL, logExists: Bool,
                 error: String? = nil, hookCLIPaths: [String] = [], hookCLIProblems: [String] = [],
-                untrustedEvents: [String] = []) {
+                untrustedEvents: [String] = [], disabledEvents: [String] = [], notes: [String] = []) {
         self.provider = provider; self.configPath = configPath; self.configExists = configExists
         self.agentDetected = agentDetected; self.hooksEnabled = hooksEnabled; self.installedEvents = installedEvents
         self.missingEvents = missingEvents; self.logPath = logPath
         self.logExists = logExists; self.error = error; self.hookCLIPaths = hookCLIPaths
         self.hookCLIProblems = hookCLIProblems; self.untrustedEvents = untrustedEvents
+        self.disabledEvents = disabledEvents; self.notes = notes
     }
 }
 
@@ -68,6 +74,7 @@ public enum HookDoctor {
                     return info
                 }
             }
+            info.hooksEnabled = !ClaudeHookInstaller.allHooksDisabled(in: text)
             info.installedEvents = ClaudeHookInstaller.installedEvents(in: text)
             info.hookCLIPaths = ClaudeHookInstaller.hookCLIPaths(in: text)
         case .codex:
@@ -75,6 +82,8 @@ public enum HookDoctor {
             info.installedEvents = CodexHookInstaller.installedEvents(in: text)
             info.hookCLIPaths = CodexHookInstaller.hookCLIPaths(in: text)
             info.untrustedEvents = CodexHookInstaller.untrustedEvents(in: text, configPath: config.path)
+            info.disabledEvents = CodexHookInstaller.disabledEvents(in: text, configPath: config.path)
+            if !info.installedEvents.isEmpty, let note = CodexHookInstaller.hooksJSONNote(paths: paths) { info.notes.append(note) }
         case .opencode:
             guard OpenCodePluginInstaller.isSidePulsePlugin(text) else {
                 info.error = "not written by SidePulse; move it away, then run 'sidepulse install opencode'"
@@ -137,9 +146,18 @@ public enum HookDoctor {
                 lines.append(info.untrustedEvents.isEmpty || !info.hooksEnabled ? "  trust: \(count)"
                     : "  trust: \(count); approve them with /hooks in Codex, or run 'sidepulse install codex'")
             }
-            if info.provider == .codex && info.configExists && info.error == nil && !info.hooksEnabled {
-                lines.append("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)")
+            if !info.disabledEvents.isEmpty {
+                lines.append("  disabled in /hooks: \(info.disabledEvents.joined(separator: ", ")); "
+                    + "turn them back on with /hooks in Codex")
             }
+            if info.configExists && info.error == nil && !info.hooksEnabled {
+                switch info.provider {
+                case .claude: lines.append("  hooks feature: disabled (\"disableAllHooks\": true, so Claude Code runs no hooks)")
+                case .codex: lines.append("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)")
+                case .opencode: break
+                }
+            }
+            lines += info.notes.map { "  note: \($0)" }
             lines.append("  log: \(info.logPath.path) (\(info.logExists ? "found" : "missing"))")
         }
         return lines.joined(separator: "\n")
@@ -161,6 +179,8 @@ public enum HookDoctor {
                 "hook_cli_paths": .array(info.hookCLIPaths.map(JSONValue.string)),
                 "hook_cli_problems": .array(info.hookCLIProblems.map(JSONValue.string)),
                 "untrusted_events": .array(info.untrustedEvents.map(JSONValue.string)),
+                "disabled_events": .array(info.disabledEvents.map(JSONValue.string)),
+                "notes": .array(info.notes.map(JSONValue.string)),
             ])
         })])
     }

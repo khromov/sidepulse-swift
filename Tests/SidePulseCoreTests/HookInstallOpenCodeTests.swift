@@ -92,6 +92,37 @@ final class HookInstallOpenCodeTests: XCTestCase {
         XCTAssertFalse(info.fullyInstalled)
     }
 
+    /// Regression: a CRLF copy of our plugin, which OpenCode still runs, counted as foreign, so install refused
+    /// it, uninstall left it and doctor said "not installed".
+    func testCRLFCopyOfOurPluginIsStillOurs() throws {
+        let box = try HookInstallSandbox()
+        let file = box.paths.openCodePluginFile
+        let cli = try box.makeBundledCLI()
+        let crlf = OpenCodePluginInstaller.source(cliPath: cli).replacingOccurrences(of: "\n", with: "\r\n")
+        try box.write(crlf, to: file)
+        XCTAssertTrue(OpenCodePluginInstaller.isSidePulsePlugin(crlf))
+        XCTAssertTrue(OpenCodePluginInstaller.isSidePulsePlugin(crlf.replacingOccurrences(of: "\r\n", with: "\r")))
+        XCTAssertEqual(OpenCodePluginInstaller.cliPath(in: crlf), cli)
+
+        let info = HookDoctor.inspect(paths: box.paths, provider: .opencode)
+        XCTAssertEqual(info.installedEvents, HookProvider.opencode.events)
+        XCTAssertEqual(info.hookCLIPaths, [cli])
+        XCTAssertEqual(info.error, OpenCodePluginInstaller.outdatedProblem)
+
+        let dry = try OpenCodePluginInstaller.uninstall(paths: box.paths, dryRun: true)
+        XCTAssertTrue(dry.changed)
+        XCTAssertEqual(dry.notes, [])
+        let result = try OpenCodePluginInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
+        XCTAssertTrue(result.changed)
+        XCTAssertEqual(try box.read(try XCTUnwrap(result.backupPath)), crlf)
+        XCTAssertEqual(try box.read(file), OpenCodePluginInstaller.source(cliPath: cli))
+        XCTAssertTrue(HookDoctor.inspect(paths: box.paths, provider: .opencode).fullyInstalled)
+
+        try box.write(crlf, to: file)
+        XCTAssertTrue(try OpenCodePluginInstaller.uninstall(paths: box.paths, dryRun: false).changed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testReadOnlyPluginIsRefused() throws {
         let box = try HookInstallSandbox()
         let file = box.paths.openCodePluginFile
@@ -150,7 +181,8 @@ final class HookInstallOpenCodeTests: XCTestCase {
         XCTAssertTrue(HookDoctor.renderText([info]).contains("  hooks: partial (13/14)\n  missing events: StopFailure\n"))
 
         let sameEvents = OpenCodePluginInstaller.source(cliPath: cli)
-            .replacingOccurrences(of: "setTimeout(finish, 2000)", with: "setTimeout(finish, 5000)")
+            .replacingOccurrences(of: "Math.min(delay * 2, 30000)", with: "Math.min(delay * 2, 60000)")
+        XCTAssertNotEqual(sameEvents, OpenCodePluginInstaller.source(cliPath: cli))
         try box.write(sameEvents, to: file)
         info = HookDoctor.inspect(paths: box.paths, provider: .opencode)
         XCTAssertEqual(info.missingEvents, [])
@@ -198,16 +230,78 @@ final class HookInstallOpenCodeTests: XCTestCase {
     /// Runs the generated plugin under Bun (what OpenCode uses) or Node, as two copies fed the same events the
     /// way OpenCode's per-project instances are, with a fake CLI that records what it receives.
     func testPluginTurnsOpenCodeEventsIntoHookRecords() throws {
-        guard let runtime = Self.javaScriptRuntime() else { throw XCTSkip("neither bun nor node is installed") }
         let box = try HookInstallSandbox()
+        let run = try runPlugin(box, events: Self.events)
+        XCTAssertEqual(run.records.count, Self.expectedRecords.count, run.records.joined(separator: "\n"))
+        for (record, expected) in zip(run.records, Self.expectedRecords) where record != expected {
+            XCTFail("got      \(record)\nexpected \(expected)")
+        }
+
+        let seen = run.state["seen"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        XCTAssertFalse(seen.contains { ["evt_00", "evt_04d", "evt_28b"].contains($0) }, "unhandled events are not tracked")
+        XCTAssertTrue(seen.contains("evt_37"))
+        XCTAssertEqual(run.state["tools"], .array([.object(["name": .string("write")])]), "a tool's input is never kept")
+    }
+
+    /// Regression: after OpenCode's event stream failed, the plugin never subscribed again and went silent.
+    func testPluginResubscribesWhenTheEventStreamFails() throws {
+        let box = try HookInstallSandbox()
+        let run = try runPlugin(box, events: Self.events, failAfter: 20)
+        XCTAssertEqual(run.records, Self.expectedRecords, "the replayed events before the failure are not sent twice")
+        XCTAssertGreaterThanOrEqual(run.state["subscriptions"]?.intValue ?? 0, 4)
+    }
+
+    /// Regression: a hung CLI was left running while the next one started, and a full queue dropped its oldest
+    /// records, such as a Stop, which left the row Running.
+    func testPluginKillsAHungCLIAndShedsToolRecordsFirst() throws {
+        let box = try HookInstallSandbox()
+        let sleeper = box.root.appendingPathComponent("sleep.pid")
+        let hang = "if mkdir '\(box.root.appendingPathComponent("hung").path)' 2>/dev/null; then "
+            + "sleep 30 & echo $! > '\(sleeper.path)'; wait; fi\n"
+        var events = [
+            #"{"id":"e1","type":"session.created","data":{"sessionID":"ses_A"}}"#,
+            #"{"id":"e2","type":"session.execution.started","data":{"sessionID":"ses_A"}}"#,
+            #"{"id":"e3","type":"session.execution.succeeded","data":{"sessionID":"ses_A"}}"#,
+            #"{"id":"e4","type":"session.created","data":{"sessionID":"ses_B"}}"#,
+        ]
+        for n in 0..<150 {
+            events.append(#"{"id":"c\#(n)","type":"session.tool.called","data":{"sessionID":"ses_B","id":"t\#(n)","input":{"command":"n\#(n)"}}}"#)
+            events.append(#"{"id":"s\#(n)","type":"session.tool.success","data":{"sessionID":"ses_B","id":"t\#(n)"}}"#)
+        }
+        events.append(#"{"id":"e5","type":"session.execution.succeeded","data":{"sessionID":"ses_B"}}"#)
+
+        let start = Date()
+        let run = try runPlugin(box, events: events, copies: ["a"], extraCLI: hang)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(start), 2, "the first CLI hangs until the 2 s timeout")
+        let pid = pid_t(try box.read(sleeper).trimmingCharacters(in: .whitespacesAndNewlines))!
+        let deadline = Date().addingTimeInterval(3)
+        while kill(pid, 0) == 0 && Date() < deadline { usleep(20_000) }
+        XCTAssertNotEqual(kill(pid, 0), 0, "the hung CLI's whole process group is killed")
+
+        // The first CLI took SessionStart A; the other 304 records queued behind it and 104 tool records were shed.
+        let names = try run.records.map { try XCTUnwrap(JSONValue.parse($0)["hook_event_name"]?.stringValue) }
+        XCTAssertEqual(Array(names.prefix(5)), ["SessionStart", "UserPromptSubmit", "Stop", "SessionStart", "PreToolUse"])
+        XCTAssertEqual(names.count, 201)
+        XCTAssertEqual(names.last, "Stop")
+        let commands = try run.records.compactMap { try JSONValue.parse($0)["tool_input"]?["command"]?.stringValue }
+        XCTAssertEqual(commands, (52..<150).flatMap { ["n\($0)", "n\($0)"] }, "the oldest tool records go first, in order")
+    }
+
+    // MARK: Helpers
+
+    /// Returns the records the fake CLI received, in order, without the origin fields, and the plugin's state.
+    private func runPlugin(_ box: HookInstallSandbox, events: [String], copies: [String] = ["a", "b"],
+                           failAfter: Int? = nil, extraCLI: String = "") throws -> (records: [String], state: JSONValue) {
+        guard let runtime = Self.javaScriptRuntime() else { throw XCTSkip("neither bun nor node is installed") }
         let received = box.root.appendingPathComponent("received.txt")
         let cli = box.root.appendingPathComponent("fake cli")
-        try box.write("#!/bin/sh\n{ printf '%s\\t' \"$*\"; cat; printf '\\n'; } >> '\(received.path)'\n", to: cli)
+        try box.write("#!/bin/sh\n{ printf '%s\\t' \"$*\"; cat; printf '\\n'; } >> '\(received.path)'\n" + extraCLI, to: cli)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
         let source = OpenCodePluginInstaller.source(cliPath: cli.path)
-        try box.write(source, to: box.root.appendingPathComponent("a/sidepulse.js"))
-        try box.write(source, to: box.root.appendingPathComponent("b/sidepulse.js"))
-        try box.write("[" + Self.events.joined(separator: ",\n") + "]", to: box.root.appendingPathComponent("events.json"))
+        for copy in copies { try box.write(source, to: box.root.appendingPathComponent("\(copy)/sidepulse.js")) }
+        let config = #"{"copies":\#(JSONValue.array(copies.map(JSONValue.string)).serialized()),"#
+            + #""failAfter":\#(failAfter.map(String.init) ?? "null"),"events":["# + events.joined(separator: ",\n") + "]}"
+        try box.write(config, to: box.root.appendingPathComponent("driver.json"))
         try box.write(Self.driver, to: box.root.appendingPathComponent("driver.mjs"))
         try box.write(#"{"type":"module"}"#, to: box.root.appendingPathComponent("package.json"))
 
@@ -231,19 +325,9 @@ final class HookInstallOpenCodeTests: XCTestCase {
             + #""agent_origin_confidence":"explicit"}"#
         XCTAssertTrue(lines.allSatisfy { $0.hasSuffix(origin) }, lines.joined(separator: "\n"))
         let records = lines.map { String($0.drop { $0 != "\t" }.dropFirst().dropLast(origin.count)) + "}" }
-        XCTAssertEqual(records.count, Self.expectedRecords.count, records.joined(separator: "\n"))
-        for (record, expected) in zip(records, Self.expectedRecords) where record != expected {
-            XCTFail("got      \(record)\nexpected \(expected)")
-        }
-
         let state = try JSONValue.parse(try box.read(box.root.appendingPathComponent("state.json")))
-        let seen = state["seen"]?.arrayValue?.compactMap(\.stringValue) ?? []
-        XCTAssertFalse(seen.contains { ["evt_00", "evt_04d", "evt_28b"].contains($0) }, "unhandled events are not tracked")
-        XCTAssertTrue(seen.contains("evt_37"))
-        XCTAssertEqual(state["tools"], .array([.object(["name": .string("write")])]), "a tool's input is never kept")
+        return (records, state)
     }
-
-    // MARK: Helpers
 
     private func makeOpenCode(at url: URL, version: String) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -259,23 +343,34 @@ final class HookInstallOpenCodeTests: XCTestCase {
         return nil
     }
 
+    /// Every subscription replays all events, as OpenCode may; with `failAfter` a copy's first stream throws
+    /// partway, as OpenCode's does when a consumer falls behind.
     static let driver = """
     import { readFileSync, writeFileSync } from "node:fs"
-    const events = JSON.parse(readFileSync("events.json", "utf8"))
-    let finished = 0
-    const ctx = () => ({ event: { subscribe: () => (async function* () {
-      for (const event of events) { await new Promise((resolve) => setImmediate(resolve)); yield event }
-      finished++
-    })() } })
-    const plugins = [await import("./a/sidepulse.js"), await import("./b/sidepulse.js")]
+    const { copies, failAfter, events } = JSON.parse(readFileSync("driver.json", "utf8"))
+    let finished = 0, subscriptions = 0
+    const ctx = () => {
+      let calls = 0
+      return { event: { subscribe: () => (async function* () {
+        subscriptions++
+        const first = calls++ === 0
+        for (const [i, event] of events.entries()) {
+          if (first && i === failAfter) throw new Error("stream overflowed")
+          await new Promise((resolve) => setImmediate(resolve))
+          yield event
+        }
+        finished++
+      })() } }
+    }
+    const plugins = await Promise.all(copies.map((copy) => import(`./${copy}/sidepulse.js`)))
     const cleanups = await Promise.all(plugins.map((plugin) => plugin.default.setup(ctx())))
     const deadline = Date.now() + 20000
     const poll = setInterval(() => {
-      const state = globalThis.__sidepulseOpenCode1
-      if ((finished === 2 && state.queue.length === 0 && !state.running) || Date.now() > deadline) {
+      const state = globalThis.__sidepulseOpenCode2
+      if ((finished >= copies.length && state.queue.length === 0 && !state.running) || Date.now() > deadline) {
         clearInterval(poll)
         cleanups.forEach((cleanup) => cleanup())
-        writeFileSync("state.json", JSON.stringify({ seen: [...state.seen], tools: [...state.tools.values()] }))
+        writeFileSync("state.json", JSON.stringify({ seen: [...state.seen], tools: [...state.tools.values()], subscriptions }))
       }
     }, 20)
     """

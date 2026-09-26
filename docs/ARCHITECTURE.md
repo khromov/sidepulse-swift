@@ -72,7 +72,10 @@ sidepulse leds/run   ─▶ runs SidePulseRuntime headless in the foreground
 OpenCode has no hook settings. Its SidePulse plugin (`plugins/sidepulse.js` in
 OpenCode's config directory) reads OpenCode's event stream inside OpenCode's
 background service and runs the same `hook-log --provider opencode` command for
-each event, one CLI at a time so records keep their order.
+each event, one CLI at a time so records keep their order. A CLI still running
+after 2 s is killed with its process group before the next one starts; past 200
+waiting records, tool records are dropped first. The plugin subscribes again,
+with a growing pause, when the event stream ends or fails.
 
 The app is the only thing that owns monitor state and LED writes. The runtime
 binds the socket before it writes anything. It holds an `flock` on
@@ -129,9 +132,11 @@ XDG variables, so the hook, the CLI and the app launched by the LaunchAgent
 always agree. `SIDEPULSE_HOME` overrides the root; tests use it. A relative
 `SIDEPULSE_HOME` resolves against `HOME`, because hooks run in each project's
 working directory. Agent config locations follow the agent's own overrides:
-`CODEX_HOME` for Codex, and `OPENCODE_CONFIG_DIR`, then
-`XDG_CONFIG_HOME/opencode`, then `~/.config/opencode` for OpenCode (plugin:
-`plugins/sidepulse.js`).
+`CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex, and
+`OPENCODE_CONFIG_DIR`, then `XDG_CONFIG_HOME/opencode`, then
+`~/.config/opencode` for OpenCode (plugin: `plugins/sidepulse.js`). An app
+started by launchd does not see a variable exported only in a shell, so it then
+uses the default location.
 
 Files under the root (`~/Library/Application Support/SidePulse/`):
 - `settings.json`
@@ -235,6 +240,12 @@ fast.
   never by log paths. The OpenCode plugin counts as ours only with the marker
   line `OpenCodePluginInstaller.marker`; any other `sidepulse.js` is never
   replaced or deleted.
+- The Codex installer edits `config.toml` as text and throws
+  `HookInstallError.invalidStructure` rather than lose data: for hook tables it
+  cannot extend (`staticHookDefinitionProblem`, install only), and for a key
+  SidePulse did not write in one of its own groups or trust tables
+  (`managedTableProblem`), which is where TOML puts a key appended after the
+  block.
 - Prefer `\u{2028}` style escapes in Swift sources over literal invisible
   characters.
 

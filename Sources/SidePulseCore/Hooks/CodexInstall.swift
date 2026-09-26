@@ -7,6 +7,7 @@ public enum CodexHookInstaller {
     public static let managedStart = "# >>> sidepulse hooks >>>"
     public static let managedEnd = "# <<< sidepulse hooks <<<"
     static let legacyMarkers: Set<String> = ["# >>> agent-monitor hooks >>>", "# <<< agent-monitor hooks <<<"]
+    static let endMarkers: Set<String> = [managedEnd, "# <<< agent-monitor hooks <<<"]
     /// Comment line the Python installer piled up on every reinstall.
     static let legacyCommentPrefix = "# Provider-neutral status collection"
     /// Comment written by pre-release Python installers.
@@ -71,14 +72,29 @@ public enum CodexHookInstaller {
     /// Only checks that a `trusted_hash` exists, since whether it still matches is Codex's call.
     public static func untrustedEvents(in text: String, configPath: String) -> [String] {
         let doc = TOMLLines(text)
-        var trusted = Set<String>()
+        let trusted = stateKeys(in: doc) { doc.keyPath(at: $0) == ["trusted_hash"] }
+        return sidePulseEvents(in: doc, configPath: configPath) { !$0.contains(where: trusted.contains) }
+    }
+
+    /// Codex's /hooks turns a hook off by writing `enabled = false` into its state table.
+    public static func disabledEvents(in text: String, configPath: String) -> [String] {
+        let doc = TOMLLines(text)
+        let disabled = stateKeys(in: doc) { doc.keyPath(at: $0) == ["enabled"] && doc.rawValue(at: $0) == "false" }
+        return sidePulseEvents(in: doc, configPath: configPath) { $0.contains(where: disabled.contains) }
+    }
+
+    static func stateKeys(in doc: TOMLLines, where matches: (Int) -> Bool) -> Set<String> {
+        var out = Set<String>()
         for i in doc.lines.indices {
             guard let header = doc.headerPath(at: i), !header.isArray, header.path.count == 3,
                   header.path[0] == "hooks", header.path[1] == "state" else { continue }
-            if (i + 1..<doc.nextHeader(after: i)).contains(where: { doc.keyPath(at: $0) == ["trusted_hash"] }) {
-                trusted.insert(header.path[2])
-            }
+            if (i + 1..<doc.nextHeader(after: i)).contains(where: matches) { out.insert(header.path[2]) }
         }
+        return out
+    }
+
+    /// `test` gets the state keys a SidePulse hook may have, one per spelling of the config path.
+    static func sidePulseEvents(in doc: TOMLLines, configPath: String, where test: ([String]) -> Bool) -> [String] {
         let prefixes = keyPrefixes(for: configPath)
         var groupIndex: [String: Int] = [:]
         var out: [String] = []
@@ -87,12 +103,18 @@ public enum CodexHookInstaller {
             groupIndex[group.event] = g + 1
             for (h, command) in group.commands.enumerated() where HookCommand.isCurrentStyleCommand(command) {
                 let key = "\(snakeCase(group.event)):\(g):\(h)"
-                if !prefixes.contains(where: { trusted.contains($0 + key) }), !out.contains(group.event) {
-                    out.append(group.event)
-                }
+                if test(prefixes.map { $0 + key }), !out.contains(group.event) { out.append(group.event) }
             }
         }
         return out
+    }
+
+    /// Codex warns that it loads hooks from both files once `hooks.json` holds any hook group.
+    public static func hooksJSONNote(paths: SidePulsePaths) -> String? {
+        let file = paths.codexDir.appendingPathComponent("hooks.json")
+        guard let text = FileUtil.readText(file), case .object(let hooks)? = (try? JSONValue.parse(text))?["hooks"],
+              hooks.contains(where: { !($0.value.arrayValue ?? []).isEmpty }) else { return nil }
+        return "\(file.path) also defines hooks, so Codex warns that it loads hooks from both files; the warning is harmless"
     }
 
     /// Codex enables hooks by default, and the deprecated `codex_hooks` only counts when `hooks` is absent.
@@ -107,8 +129,8 @@ public enum CodexHookInstaller {
         let config = paths.codexConfigFile
         let command = HookCommand.command(cliPath: cliPath, provider: .codex)
         let original = try HookConfigFile.read(config)
-        if let original, let problem = staticHookDefinitionProblem(in: TOMLLines(original)) {
-            throw HookInstallError.invalidStructure(path: config.path, message: problem)
+        if let original {
+            try checkEditable(original, configPath: config.path, forInstall: true)
         }
         let updated = installing(into: original ?? "", command: command, configPath: config.path)
         var changed = updated != original
@@ -135,7 +157,7 @@ public enum CodexHookInstaller {
                     if backup == nil { backup = outcome.backup }
                     if outcome.trusted > 0 {
                         notes.append("trusted \(HookConfigFile.plural(outcome.trusted, "Codex hook"))")
-                    } else {
+                    } else if outcome.listed == 0 {
                         notes.append("Codex did not list the SidePulse hooks; approve them with /hooks in Codex")
                     }
                 } catch {
@@ -145,6 +167,12 @@ public enum CodexHookInstaller {
                 notes.append("Codex not found; approve hooks with /hooks in Codex")
             }
         }
+        let disabled = disabledEvents(in: updated, configPath: config.path)
+        if !disabled.isEmpty {
+            notes.append("disabled in /hooks: \(disabled.joined(separator: ", ")); SidePulse left them off, "
+                + "so turn them back on with /hooks in Codex")
+        }
+        if let note = hooksJSONNote(paths: paths) { notes.append(note) }
         return InstallResult(provider: .codex, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun, notes: notes)
     }
 
@@ -153,6 +181,7 @@ public enum CodexHookInstaller {
         guard let original = try HookConfigFile.read(config) else {
             return InstallResult(provider: .codex, configPath: config, changed: false, dryRun: dryRun)
         }
+        try checkEditable(original, configPath: config.path, forInstall: false)
         let updated = uninstalling(from: original, configPath: config.path)
         let changed = updated != original
         var backup: URL?
@@ -167,7 +196,10 @@ public enum CodexHookInstaller {
     struct HookGroup {
         var event: String
         var range: ClosedRange<Int>
-        var handlerCount: Int
+        /// Every line TOML assigns to the group, including anything after a managed end marker.
+        var tables: Range<Int>
+        /// nil when the group lists its handlers inline (`hooks = [...]`), so any handler index is accepted.
+        var handlerCount: Int?
         var commands: [String]
         /// Trimmed content lines, used to recognise an unchanged group.
         var signature: String
@@ -185,24 +217,93 @@ public enum CodexHookInstaller {
             }
             let event = header.path[1]
             var end = doc.nextHeader(after: i)
+            let inline = (i + 1..<end).contains { doc.keyPath(at: $0) == ["hooks"] }
             var handlers = 0
             while end < doc.lines.count, let next = doc.headerPath(at: end),
                   next.path.count > 2, next.path[0] == "hooks", next.path[1] == event {
                 if next.isArray && next.path.count == 3 && next.path[2] == "hooks" { handlers += 1 }
                 end = doc.nextHeader(after: end)
             }
-            let last = doc.contentEnd(start: i, end: end)
+            let marker = (i..<end).first { doc.kinds[$0] == .comment && isEndMarker(doc.lines[$0]) }
+            let last = doc.contentEnd(start: i, end: marker ?? end)
             var commands: [String] = []
             var signature: [String] = []
             for j in i...last where doc.kinds[j] != .blank && doc.kinds[j] != .comment {
                 signature.append(doc.lines[j].trimmingCharacters(in: .whitespacesAndNewlines))
                 if let command = doc.stringValue(at: j, key: "command") { commands.append(command) }
             }
-            groups.append(HookGroup(event: event, range: i...last, handlerCount: handlers, commands: commands,
-                                    signature: signature.joined(separator: "\n")))
+            groups.append(HookGroup(event: event, range: i...last, tables: i..<end, handlerCount: inline ? nil : handlers,
+                                    commands: commands, signature: signature.joined(separator: "\n")))
             i = end
         }
         return groups
+    }
+
+    static func isEndMarker(_ line: String) -> Bool {
+        endMarkers.contains(line.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    // MARK: Foreign keys in SidePulse's tables
+
+    static let groupKeys: Set<String> = ["matcher"]
+    static let handlerKeys: Set<String> = ["type", "command", "timeout"]
+    static let stateTableKeys: Set<String> = ["trusted_hash", "enabled"]
+
+    static func checkEditable(_ text: String, configPath: String, forInstall: Bool) throws {
+        let doc = TOMLLines(text)
+        let problem = (forInstall ? staticHookDefinitionProblem(in: doc) : nil)
+            ?? managedTableProblem(in: doc, configPath: configPath)
+        if let problem { throw HookInstallError.invalidStructure(path: configPath, message: problem) }
+    }
+
+    /// TOML puts a key written after the block into SidePulse's last table, where Codex ignores it and
+    /// install or uninstall would delete it with that table.
+    static func managedTableProblem(in doc: TOMLLines, configPath: String) -> String? {
+        func problem(_ what: String, in table: String) -> String {
+            "TOML puts \(what) in SidePulse's \(table) table; move it above the SidePulse block"
+        }
+        let groups = hookGroups(in: doc)
+        for group in groups where group.isSidePulse {
+            var table = (path: ["hooks", group.event], isArray: true)
+            for j in group.tables {
+                if let header = doc.headerPath(at: j) {
+                    if j > group.range.upperBound { return problem(tableName(header), in: tableName(table)) }
+                    table = header
+                    continue
+                }
+                guard let key = doc.keyPath(at: j) else { continue }
+                let allowed = table.path.count == 2 ? groupKeys
+                    : table.isArray && table.path.count == 3 && table.path[2] == "hooks" ? handlerKeys : []
+                if j > group.range.upperBound || key.count != 1 || !allowed.contains(key[0]) {
+                    return problem(key.map(TOMLString.key).joined(separator: "."), in: tableName(table))
+                }
+            }
+        }
+        let byEvent = Dictionary(grouping: groups, by: \.event)
+        var bySnake: [String: String] = [:]
+        for event in byEvent.keys { bySnake[snakeCase(event)] = event }
+        let prefixes = keyPrefixes(for: configPath)
+        for i in doc.lines.indices {
+            guard let header = doc.headerPath(at: i), !header.isArray, header.path.count == 3,
+                  header.path[0] == "hooks", header.path[1] == "state",
+                  let prefix = prefixes.first(where: { header.path[2].hasPrefix($0) }) else { continue }
+            // Only a user's hook keeps its state table; reconciling drops or rewrites every other one.
+            let parts = header.path[2].dropFirst(prefix.count).split(separator: ":", omittingEmptySubsequences: false)
+            if parts.count == 3, let g = Int(parts[1]), let h = Int(parts[2]), let event = bySnake[String(parts[0])],
+               let list = byEvent[event], g >= 0, g < list.count, !list[g].isSidePulse,
+               h >= 0, h < (list[g].handlerCount ?? Int.max) { continue }
+            for j in i + 1..<doc.nextHeader(after: i) {
+                guard let key = doc.keyPath(at: j), key.count != 1 || !stateTableKeys.contains(key[0]) else { continue }
+                return problem(key.map(TOMLString.key).joined(separator: "."),
+                               in: "[hooks.state.\(TOMLString.basic("\u{2026}:" + parts.joined(separator: ":")))]")
+            }
+        }
+        return nil
+    }
+
+    static func tableName(_ header: (path: [String], isArray: Bool)) -> String {
+        let name = header.path.map(TOMLString.key).joined(separator: ".")
+        return header.isArray ? "[[\(name)]]" : "[\(name)]"
     }
 
     // MARK: - Removal
@@ -365,18 +466,15 @@ public enum CodexHookInstaller {
     /// Hooks defined in a form `hookGroups` does not see make its group indices unreliable.
     static func hasUnrecognizedHookDefinitions(_ doc: TOMLLines) -> Bool {
         var table: [String] = []
-        var inGroup = false
         for i in doc.lines.indices {
             if let header = doc.headerPath(at: i) {
                 table = header.path
-                inGroup = header.isArray && header.path.count == 2 && header.path[0] == "hooks"
                 if header.path == ["hooks"] { return true }
                 if !header.isArray && header.path.count == 2 && header.path[0] == "hooks" && header.path[1] != "state" { return true }
                 continue
             }
             guard let key = doc.keyPath(at: i) else { continue }
             if table.isEmpty && key.first == "hooks" { return true }
-            if inGroup && key == ["hooks"] { return true }
         }
         return false
     }
@@ -391,6 +489,7 @@ public enum CodexHookInstaller {
         for event in oldGroups.keys { bySnake[snakeCase(event)] = event }
 
         var mapping: [String: [Int: Int]] = [:]
+        var rewritten: [String: [Int: Int]] = [:]
         for (event, olds) in oldGroups {
             let news = newGroups[event] ?? []
             let oldUser = olds.indices.filter { !olds[$0].isSidePulse }
@@ -400,7 +499,9 @@ public enum CodexHookInstaller {
             for (o, n) in zip(oldUser, newUser) { map[o] = n }
             let oldOurs = olds.indices.filter { olds[$0].isSidePulse }
             let newOurs = news.indices.filter { news[$0].isSidePulse }
-            for (o, n) in zip(oldOurs, newOurs) where olds[o].signature == news[n].signature { map[o] = n }
+            for (o, n) in zip(oldOurs, newOurs) {
+                if olds[o].signature == news[n].signature { map[o] = n } else { rewritten[event, default: [:]][o] = n }
+            }
             mapping[event] = map
         }
 
@@ -417,8 +518,19 @@ public enum CodexHookInstaller {
             let end = new.contentEnd(start: i, end: new.nextHeader(after: i))
             guard parts.count == 3, let g = Int(parts[1]), let h = Int(parts[2]),
                   let event = bySnake[String(parts[0])], let olds = oldGroups[event],
-                  g >= 0, g < olds.count, h >= 0, h < olds[g].handlerCount,
-                  let target = mapping[event]?[g] else {
+                  g >= 0, g < olds.count, h >= 0, h < (olds[g].handlerCount ?? Int.max) else {
+                drop.formUnion(i...end)
+                continue
+            }
+            let body = (i + 1)..<(end + 1)
+            var target = mapping[event]?[g]
+            // A hook turned off in /hooks stays off when its command changes; only the stale hash goes.
+            if target == nil, let n = rewritten[event]?[g],
+               body.contains(where: { new.keyPath(at: $0) == ["enabled"] && new.rawValue(at: $0) == "false" }) {
+                drop.formUnion(body.filter { new.keyPath(at: $0) == ["trusted_hash"] })
+                target = n
+            }
+            guard let target else {
                 drop.formUnion(i...end)
                 continue
             }

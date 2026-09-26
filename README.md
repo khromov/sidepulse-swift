@@ -250,11 +250,17 @@ For each provider, reports: config path, installed and missing events,
 `hook cli` (the CLI the installed hook commands call, and whether it exists and
 is the SidePulse CLI, for example
 `… (missing); run 'sidepulse install claude' to repair`), and the log file. A hook CLI equal to `$SIDEPULSE_CLI_PATH` is only
-checked for existence. For Codex it also reports `trust: n/11 hooks trusted`,
-with advice to approve them with `/hooks` or run `sidepulse install codex` when
-entries are missing and the hooks feature is on. When the feature is off it
-reports `hooks feature: disabled ([features] turns hooks off, so Codex runs
-no hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
+checked for existence. For Codex it also reports `trust: n/m hooks trusted`,
+where `m` is the number of installed SidePulse hooks, with advice to approve
+them with `/hooks` or run `sidepulse install codex` when entries are missing
+and the hooks feature is on. SidePulse hooks turned off with `/hooks` in Codex
+(`enabled = false`) are listed as `disabled in /hooks: …; turn them back on with
+/hooks in Codex`. When `~/.codex/hooks.json` also defines hooks, a `note:` says
+that Codex warns about loading hooks from both files, which is harmless. When
+the feature is off it reports `hooks feature: disabled ([features] turns hooks
+off, so Codex runs no hooks)`, and for Claude Code under `"disableAllHooks":
+true` it reports `hooks feature: disabled ("disableAllHooks": true, so Claude
+Code runs no hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
 events the installed plugin emits. It reports `error:` for a `sidepulse.js`
 that SidePulse did not write, for a plugin that differs from the one this
 SidePulse writes (`written by another SidePulse version; run 'sidepulse install
@@ -265,7 +271,7 @@ for a headless owner) and the socket path. It ends with
 `cli: <path> (written by install)` (or `not found`), plus a note when
 `~/.local/bin/sidepulse` is not the SidePulse CLI.
 - `--json`: print the report as JSON. Each provider adds `hook_cli_paths`,
-  `hook_cli_problems` and `untrusted_events`. `app` adds `cli_note`, and its
+  `hook_cli_problems`, `untrusted_events`, `disabled_events` and `notes`. `app` adds `cli_note`, and its
   `cli_path` may be null.
 
 **`sidepulse app [start|stop|restart|status|install|uninstall] [--foreground]`**
@@ -416,7 +422,7 @@ The Settings window has four tabs:
 | General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
 | Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
-| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Disabled; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
+| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
 Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, KITT Scanner,
@@ -485,7 +491,7 @@ variants.
 | `~/Library/LaunchAgents/io.sidepulse.swift.plist` | Launch at login |
 | `~/Applications/SidePulse.app` | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications` |
 | `~/.local/bin/sidepulse` | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly |
-| `~/.claude/settings.json`, `~/.codex/config.toml` | Agent configs. `$CODEX_HOME` is honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
+| `~/.claude/settings.json`, `~/.codex/config.toml` | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
 | `~/.config/opencode/plugins/sidepulse.js` | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted |
 | `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive` | Device files (`keepalive` on 8-LED devices only) |
 
@@ -499,6 +505,7 @@ Environment overrides:
 | `SIDEPULSE_APP_PATH` | App bundle or binary used by `app`, `setup`, `settings` and `doctor` |
 | `SIDEPULSE_DISABLE_EVENT_SOCKET=1` | The hook only logs and does not notify the app |
 | `SIDEPULSE_AGENT_ORIGIN` | Override the detected origin label, for example "Claude in VS Code" |
+| `CLAUDE_CONFIG_DIR` | Claude Code config directory, where the hooks go (`settings.json`) |
 | `CODEX_HOME`, `CODEX_CLI_PATH` | Codex config directory, and the `codex` binary used for hook trust |
 | `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses) |
 | `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
@@ -525,7 +532,8 @@ success. Each handler also gets a 10 s timeout.
   `SessionEnd`, the installer adds this entry to `hooks.<Event>`:
   `{"matcher": "*", "hooks": [{"type": "command", "command": "…", "timeout": 10}]}`.
   The rest of the file is preserved, and it is not rewritten when nothing
-  changes.
+  changes. A `"disableAllHooks": true` is left alone; install notes it, and
+  doctor and Settings report the hooks as disabled.
 - **Codex.** The installer writes one managed block between
   `# >>> sidepulse hooks >>>` and `# <<< sidepulse hooks <<<`. The block has
   one `[[hooks.<Event>]]` group each for `SessionStart`, `UserPromptSubmit`,
@@ -535,6 +543,15 @@ success. Each handler also gets a 10 s timeout.
   default. An explicit `hooks = false` (or the deprecated `codex_hooks = false`
   without `hooks`) is left alone; install notes it, doctor reports the hooks
   feature as disabled, and Codex runs no hooks until you turn them back on.
+  TOML puts a key written after a table header into that table, so a key you
+  append below the block lands in SidePulse's last table (a hook or its trust
+  entry), where Codex ignores it. Install and uninstall would remove it with
+  that table, so they refuse to edit the file, with `TOML puts <key> in
+  SidePulse's <table> table; move it above the SidePulse block; fix it by
+  hand, then retry`. They do the same for any other key SidePulse did not write
+  in its own groups or trust tables. When `~/.codex/hooks.json` also defines hooks,
+  install notes that Codex warns about loading hooks from both files, which is
+  harmless.
 - **Codex trust.** After writing the block, the installer finds `codex` in
   `$CODEX_CLI_PATH`, `ChatGPT.app` or `Codex.app`, `PATH`, then
   `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.bun/bin`,
@@ -542,10 +559,14 @@ success. Each handler also gets a 10 s timeout.
   `~/.nvm/versions/node/*/bin`. It asks `codex app-server --stdio` for the
   current hook hashes (`hooks/list`) and writes a
   `[hooks.state."<key>"] trusted_hash = "…"` table for each SidePulse hook.
-  Trust entries for your own hooks are kept in step when their positions shift.
+  Trust entries for your own hooks, including groups that list their handlers
+  inline (`hooks = [...]`), are kept in step when their positions shift.
   If Codex is not found, or you pass `--no-trust`, approve the hooks with
   `/hooks` in Codex. With `hooks = false`, trust is skipped. Doctor and
-  Settings report hooks without trust entries.
+  Settings report hooks without trust entries. A SidePulse hook you turned off
+  with `/hooks` (`enabled = false`) stays off, even when its command changes:
+  install still writes its hash, leaves it out of the `trusted N Codex hooks`
+  count and notes `disabled in /hooks: …`. Doctor and Settings report it too.
 - **OpenCode.** OpenCode has no hook settings, so the installer writes a
   plugin that calls the same command. See
   [The OpenCode plugin](#the-opencode-plugin).
@@ -599,10 +620,16 @@ the file within a few seconds, without a restart. The file starts with a
 path as `const CLI = "…"`.
 
 The plugin has no dependencies. It reads OpenCode's event stream, which is
-buffered, so a slow hook never delays OpenCode, and it never throws or writes
-to stdout. For each event below it runs `<cli> hook-log --provider opencode`
-with a Claude-shaped record on stdin. It runs one CLI at a time, so the records
-keep their order.
+buffered, and queues records rather than waiting for the CLI, so a slow hook
+never delays OpenCode. It never throws or writes to stdout. For each event
+below it runs `<cli> hook-log --provider opencode` with a Claude-shaped record
+on stdin. It runs one CLI at a time, so the records keep their order: a CLI
+still running after 2 s is killed, with its process group, before the next one
+starts. At most 200 records wait. Beyond that the oldest waiting `PreToolUse`
+or `PostToolUse` record is dropped, and only when none is waiting the oldest
+record. When the event stream ends or fails, the plugin subscribes again after
+a pause that starts at 0.5 s and doubles up to 30 s; events sent in that gap
+are lost.
 
 | OpenCode event | Record |
 | --- | --- |
@@ -670,7 +697,8 @@ old settings is still running after 2 s. When the app is not running,
 - Per-device settings are keyed by mount path, so a volume remounted as
   "PulseDot 1" is treated as a new device.
 - A Codex `[[hooks.<Event>]]` group that mixes a user handler with a SidePulse
-  handler is removed as a whole on install and uninstall.
+  handler is removed as a whole on install and uninstall. If the group holds a
+  key SidePulse does not write, such as `statusMessage`, they refuse instead.
 - A failed tool call (any non-zero exit, for example `grep` with no match)
   briefly shows Blocked / Error. This is the same as the Python version.
 - OpenCode: `opencode run --standalone` exits right after its last event, so a

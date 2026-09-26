@@ -62,7 +62,13 @@ public struct SidePulsePaths: Sendable, Equatable {
         return "\(socketFallbackBase)/\(Self.socketFallbackDirectoryName)/events-\(Self.fnv1a64Hex(root.path)).sock"
     }
 
-    public var claudeDir: URL { home.appendingPathComponent(".claude", isDirectory: true) }
+    /// Honors Claude Code's own `CLAUDE_CONFIG_DIR`, with the same LaunchAgent caveat as `CODEX_HOME`.
+    public var claudeDir: URL {
+        if let override = environment["CLAUDE_CONFIG_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
+        }
+        return home.appendingPathComponent(".claude", isDirectory: true)
+    }
     public var claudeSettingsFile: URL { claudeDir.appendingPathComponent("settings.json") }
     /// Honors Codex's own `CODEX_HOME`, which the LaunchAgent-started app usually does
     /// not see when it is only exported from a shell.

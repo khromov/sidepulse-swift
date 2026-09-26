@@ -72,7 +72,8 @@ final class HookInstallDoctorTests: XCTestCase {
         let first = json["providers"]?.arrayValue?.first
         XCTAssertEqual(first?.objectValue?.keys, ["provider", "config_path", "config_exists", "agent_detected", "hooks_enabled",
                                                   "installed_events", "missing_events", "log_path", "log_exists", "error",
-                                                  "hook_cli_paths", "hook_cli_problems", "untrusted_events"])
+                                                  "hook_cli_paths", "hook_cli_problems", "untrusted_events", "disabled_events",
+                                                  "notes"])
         XCTAssertEqual(first?["hook_cli_paths"], .array([.string(cli)]))
         XCTAssertEqual(first?["hook_cli_problems"], .array([]))
         XCTAssertEqual(first?["provider"], .string("claude"))
@@ -193,6 +194,79 @@ final class HookInstallDoctorTests: XCTestCase {
         let text = HookDoctor.renderText([HookDoctor.inspect(paths: box.paths, provider: .codex)])
         XCTAssertTrue(text.contains("  trust: 0/11 hooks trusted\n  hooks feature: disabled"), text)
         XCTAssertFalse(text.contains("/hooks in Codex"), text)
+    }
+
+    /// Regression: Codex hooks turned off with /hooks (`enabled = false`) were reported as installed and trusted.
+    func testCodexHooksTurnedOffInHooksAreReported() throws {
+        let box = try HookInstallSandbox()
+        let cli = try box.makeBundledCLI()
+        _ = try CodexHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false, trust: false)
+        try box.trustCodexHooks()
+        let config = box.paths.codexConfigFile
+        var text = try box.read(config)
+        for key in ["stop:0:0", "pre_tool_use:0:0"] {
+            text = text.replacingOccurrences(of: "[hooks.state.\"\(config.path):\(key)\"]\n",
+                                             with: "[hooks.state.\"\(config.path):\(key)\"]\nenabled = false\n")
+        }
+        try box.write(text, to: config)
+
+        let info = HookDoctor.inspect(paths: box.paths, provider: .codex)
+        XCTAssertEqual(info.disabledEvents, ["PreToolUse", "Stop"])
+        XCTAssertEqual(info.untrustedEvents, [])
+        XCTAssertFalse(info.fullyInstalled)
+        XCTAssertEqual(info.statusText, "Installed, but turned off with /hooks in Codex: PreToolUse, Stop")
+        XCTAssertTrue(HookDoctor.renderText([info]).contains("  trust: 11/11 hooks trusted\n"
+            + "  disabled in /hooks: PreToolUse, Stop; turn them back on with /hooks in Codex\n"))
+        XCTAssertEqual(HookDoctor.renderJSON([info])["providers"]?.arrayValue?.first?["disabled_events"],
+                       .array([.string("PreToolUse"), .string("Stop")]))
+
+        try box.write(text.replacingOccurrences(of: "enabled = false", with: "enabled = true"), to: config)
+        XCTAssertTrue(HookDoctor.inspect(paths: box.paths, provider: .codex).fullyInstalled)
+    }
+
+    /// Regression: `"disableAllHooks": true` turns off every Claude Code hook, yet doctor reported them as fine.
+    func testClaudeDisableAllHooksIsReported() throws {
+        let box = try HookInstallSandbox()
+        let cli = try box.makeBundledCLI()
+        try box.write(#"{"disableAllHooks": true}"#, to: box.paths.claudeSettingsFile)
+        let result = try ClaudeHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
+        XCTAssertEqual(result.notes, ["Claude Code hooks are turned off by \"disableAllHooks\"; SidePulse left that alone, "
+            + "so Claude Code runs no hooks until you turn them back on"])
+        XCTAssertEqual(try JSONValue.parse(try box.read(box.paths.claudeSettingsFile))["disableAllHooks"], .bool(true))
+
+        let info = HookDoctor.inspect(paths: box.paths, provider: .claude)
+        XCTAssertEqual(info.installedEvents.count, 12)
+        XCTAssertFalse(info.hooksEnabled)
+        XCTAssertFalse(info.fullyInstalled)
+        XCTAssertEqual(info.statusText, "Installed, but Claude Code hooks are disabled")
+        XCTAssertTrue(HookDoctor.renderText([info]).contains(
+            "  hook cli: \(cli) (ok)\n  hooks feature: disabled (\"disableAllHooks\": true, so Claude Code runs no hooks)\n"))
+
+        for text in [#"{"disableAllHooks": false}"#, #"{"disableAllHooks": "true"}"#, "{}"] {
+            try box.write(text, to: box.paths.claudeSettingsFile)
+            XCTAssertEqual(try ClaudeHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false).notes, [], text)
+            XCTAssertTrue(HookDoctor.inspect(paths: box.paths, provider: .claude).fullyInstalled, text)
+        }
+    }
+
+    /// Codex warns "loading hooks from both …" when its hooks.json holds hooks next to our config.toml block.
+    func testCodexHooksJSONNextToOurBlockIsNoted() throws {
+        let box = try HookInstallSandbox()
+        let hooksJSON = box.paths.codexDir.appendingPathComponent("hooks.json")
+        let note = "\(hooksJSON.path) also defines hooks, so Codex warns that it loads hooks from both files; "
+            + "the warning is harmless"
+        for empty in [#"{"hooks": {}}"#, #"{"hooks": {"Stop": []}}"#, "not json"] {
+            try box.write(empty, to: hooksJSON)
+            XCTAssertNil(CodexHookInstaller.hooksJSONNote(paths: box.paths), empty)
+        }
+        try box.write(#"{"hooks": {"Stop": [{"hooks": []}]}}"#, to: hooksJSON)
+        XCTAssertEqual(HookDoctor.inspect(paths: box.paths, provider: .codex).notes, [], "nothing installed yet")
+        let result = try CodexHookInstaller.install(paths: box.paths, cliPath: try box.makeBundledCLI(), dryRun: false, trust: false)
+        XCTAssertEqual(result.notes.last, note)
+        let info = HookDoctor.inspect(paths: box.paths, provider: .codex)
+        XCTAssertEqual(info.notes, [note])
+        XCTAssertTrue(HookDoctor.renderText([info]).contains("\n  note: \(note)\n  log: "))
+        XCTAssertEqual(HookDoctor.renderJSON([info])["providers"]?.arrayValue?.first?["notes"], .array([.string(note)]))
     }
 
     func testPythonEraHooksDoNotCountAsInstalled() throws {

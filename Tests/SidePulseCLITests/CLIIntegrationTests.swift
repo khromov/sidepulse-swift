@@ -492,6 +492,21 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(h.stdout.text.contains("codex: updated\n"), "other providers are still installed")
     }
 
+    /// Regression: uninstall deleted a key appended after the Codex block; it now refuses and says how to fix it.
+    func testCodexKeyAfterTheBlockIsReportedAndLeftAlone() throws {
+        let h = makeHarness()
+        let config = h.paths.codexConfigFile
+        try FileManager.default.createDirectory(at: h.paths.codexDir, withIntermediateDirectories: true)
+        XCTAssertEqual(h.run(["install", "codex", "--no-trust"]), 0, h.stderr.text)
+        let text = (read(config) ?? "") + "approval_policy = \"never\"\n"
+        try text.write(to: config, atomically: true, encoding: .utf8)
+        XCTAssertEqual(h.run(["uninstall", "codex"]), 1)
+        XCTAssertEqual(read(config), text)
+        XCTAssertTrue(h.stderr.text.contains("codex: uninstall failed\n  config: \(config.path)\n  error: \(config.path): "
+            + "TOML puts approval_policy in SidePulse's [[hooks.Interrupt.hooks]] table; move it above the SidePulse block; "
+            + "fix it by hand, then retry"), h.stderr.text)
+    }
+
     func testSetupHooksOnly() throws {
         let h = makeHarness()
         try FileManager.default.createDirectory(at: h.paths.claudeDir, withIntermediateDirectories: true)

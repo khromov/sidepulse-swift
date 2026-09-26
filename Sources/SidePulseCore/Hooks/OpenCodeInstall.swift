@@ -9,12 +9,17 @@ public enum OpenCodePluginInstaller {
     static let cliLinePrefix = "const CLI = "
 
     public static func isSidePulsePlugin(_ text: String) -> Bool {
-        text.split(separator: "\n", omittingEmptySubsequences: false).contains { $0 == marker }
+        lines(of: text).contains { $0 == marker }
     }
 
     public static func cliPath(in text: String) -> String? {
-        guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix(cliLinePrefix) }) else { return nil }
+        guard let line = lines(of: text).first(where: { $0.hasPrefix(cliLinePrefix) }) else { return nil }
         return (try? JSONValue.parse(String(line.dropFirst(cliLinePrefix.count))))?.stringValue
+    }
+
+    /// A CRLF copy still runs in OpenCode, and Swift treats `"\r\n"` as one Character, so splitting on `"\n"` misses it.
+    static func lines(of text: String) -> [Substring] {
+        text.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r" || $0 == "\r\n" })
     }
 
     /// Looks for the quoted event names, so a plugin written by an older SidePulse shows as partial.
@@ -118,8 +123,11 @@ public enum OpenCodePluginInstaller {
 
         \#(cliLinePrefix)\#(cli)
         const ORIGIN = { agent_origin: "OpenCode", agent_origin_kind: "opencode", agent_origin_source: "plugin", agent_origin_confidence: "explicit" }
-        // OpenCode loads this module once per project directory and every copy sees every event, so state is per process.
-        const S = (globalThis.__sidepulseOpenCode1 ??= { seen: new Set(), sessions: new Map(), tools: new Map(), queue: [], running: false })
+        // OpenCode loads this module once per project directory and every copy sees every event, so state is per process;
+        // the key changes with the state's shape because a copy of an older version can still be loaded.
+        const S = (globalThis.__sidepulseOpenCode2 ??= { seen: new Set(), sessions: new Map(), tools: new Map(), queue: [], running: false })
+        // A full queue sheds tool records first, since a lost Stop or PermissionRequest would leave a row stuck.
+        const SHEDDABLE = new Set(["PreToolUse", "PostToolUse"])
 
         function bounded(collection, max) {
           for (const key of collection.keys()) { if (collection.size <= max) break; collection.delete(key) }
@@ -132,24 +140,37 @@ public enum OpenCodePluginInstaller {
 
         // One CLI at a time, because two CLIs started back to back can append their records out of order.
         function send(record) {
-          S.queue.push(JSON.stringify({ ...record, ...ORIGIN }))
-          if (S.queue.length > 200) S.queue.shift()
+          S.queue.push({ name: record.hook_event_name, payload: JSON.stringify({ ...record, ...ORIGIN }) })
+          if (S.queue.length > 200) S.queue.splice(Math.max(0, S.queue.findIndex((item) => SHEDDABLE.has(item.name))), 1)
           if (!S.running) next()
         }
 
         function next() {
-          const payload = S.queue.shift()
-          if (!(S.running = payload !== undefined)) return
-          let done = false
+          const item = S.queue.shift()
+          if (!(S.running = item !== undefined)) return
+          let done = false, child
           const finish = () => { if (!done) { done = true; clearTimeout(timer); next() } }
-          const timer = setTimeout(finish, 2000)
+          // A hung CLI dies with its process group before the next one starts, so none pile up or write out of order.
+          const timer = setTimeout(() => {
+            try { process.kill(-child.pid, "SIGKILL") } catch {}
+            finish()
+          }, 2000)
           timer.unref?.()
           try {
-            const child = spawn(CLI, ["hook-log", "--provider", "opencode"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })
+            child = spawn(CLI, ["hook-log", "--provider", "opencode"], { detached: true, stdio: ["pipe", "ignore", "ignore"] })
             child.on("error", finish).on("exit", finish).unref()
             child.stdin.on("error", () => {})
-            child.stdin.end(payload)
+            child.stdin.end(item.payload)
           } catch { finish() }
+        }
+
+        function pause(ms, signal) {
+          return new Promise((resolve) => {
+            const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve() }
+            const timer = setTimeout(done, ms)
+            timer.unref?.()
+            signal.addEventListener("abort", done)
+          })
         }
 
         // Re-inserting keeps the map in least-recently-used order, so the bound drops idle sessions first.
@@ -246,23 +267,38 @@ public enum OpenCodePluginInstaller {
           },
         }
 
+        function handle(ev) {
+          const handler = on[ev?.type], d = ev?.data ?? {}, id = d.sessionID ?? d.form?.sessionID
+          if (!handler || !id || !ev.id || S.seen.has(ev.id)) return
+          S.seen.add(ev.id)
+          bounded(S.seen, 2000)
+          try {
+            const known = S.sessions.has(id), s = session(id)
+            s.dir = d.location?.directory ?? s.dir ?? ev.location?.directory
+            handler(d, id, s, known)
+          } catch {}
+        }
+
+        // OpenCode's event stream fails when a consumer falls behind, so it is reopened after a pause that grows to 30 s.
+        async function listen(ctx, signal) {
+          let delay = 500
+          while (!signal.aborted) {
+            try {
+              for await (const ev of ctx.event.subscribe({ signal })) {
+                delay = 500
+                handle(ev)
+              }
+            } catch {}
+            if (!signal.aborted) await pause(delay, signal)
+            delay = Math.min(delay * 2, 30000)
+          }
+        }
+
         export default {
           id: "sidepulse",
           async setup(ctx) {
             const abort = new AbortController()
-            ;(async () => {
-              for await (const ev of ctx.event.subscribe({ signal: abort.signal })) {
-                const handler = on[ev?.type], d = ev?.data ?? {}, id = d.sessionID ?? d.form?.sessionID
-                if (!handler || !id || !ev.id || S.seen.has(ev.id)) continue
-                S.seen.add(ev.id)
-                bounded(S.seen, 2000)
-                try {
-                  const known = S.sessions.has(id), s = session(id)
-                  s.dir = d.location?.directory ?? s.dir ?? ev.location?.directory
-                  handler(d, id, s, known)
-                } catch {}
-              }
-            })().catch(() => {})
+            listen(ctx, abort.signal).catch(() => {})
             return () => abort.abort()
           },
         }

@@ -67,6 +67,33 @@ final class HookInstallRealCodexTests: XCTestCase {
         XCTAssertEqual(remaining.compactMap { $0["command"]?.stringValue }, ["say done >> /tmp/user-notify.log"])
     }
 
+    /// Regression: after uninstall, a user's inline `hooks = [...]` group kept SidePulse's old key and read "modified".
+    func testInlineUserGroupStaysTrustedAfterUninstall() throws {
+        let codex = try codexBinary()
+        let box = try HookInstallSandbox(extraEnvironment: ["CODEX_CLI_PATH": codex])
+        let paths = box.paths
+        let config = paths.codexConfigFile
+        _ = try CodexHookInstaller.install(paths: paths, cliPath: T.cli, dryRun: false)
+        try box.write(try box.read(config) + """
+
+        [[hooks.Stop]]
+        matcher = "*"
+        hooks = [{ type = "command", command = "say mine" }]
+
+        """, to: config)
+        let mine = try XCTUnwrap(try hooks(box, paths, codex: codex).first { $0["command"]?.stringValue == "say mine" })
+        let key = try XCTUnwrap(mine["key"]?.stringValue)
+        XCTAssertTrue(key.hasSuffix(":stop:1:0"), key)
+        try box.write(CodexTrust.applyTrustedHashes([key: mine["currentHash"]!.stringValue!], to: try box.read(config)), to: config)
+
+        _ = try CodexHookInstaller.uninstall(paths: paths, dryRun: false)
+        XCTAssertEqual(T.count("[hooks.state.", in: try box.read(config)), 1)
+        let after = try hooks(box, paths, codex: codex)
+        XCTAssertEqual(after.count, 1)
+        XCTAssertEqual(after.first?["trustStatus"], .string("trusted"))
+        XCTAssertTrue(after.first?["key"]?.stringValue?.hasSuffix(":stop:0:0") ?? false)
+    }
+
     func testUserTrustSurvivesLegacyCleanup() throws {
         let codex = try codexBinary()
         let box = try HookInstallSandbox(extraEnvironment: ["CODEX_CLI_PATH": codex])

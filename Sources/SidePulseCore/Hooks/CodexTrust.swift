@@ -60,9 +60,14 @@ public enum CodexTrust {
     }
 
     static func hashes(fromHooksList result: JSONValue, configFile: URL) -> [String: String] {
+        listedHooks(fromHooksList: result, configFile: configFile).mapValues { $0.hash }
+    }
+
+    /// Disabled hooks are listed too: their hash is still written, so turning them back on in /hooks needs no new review.
+    static func listedHooks(fromHooksList result: JSONValue, configFile: URL) -> [String: (hash: String, enabled: Bool)] {
         guard case .array(let entries)? = result["data"] else { return [:] }
         let wanted = canonicalPath(configFile.path)
-        var out: [String: String] = [:]
+        var out: [String: (hash: String, enabled: Bool)] = [:]
         for entry in entries {
             for hook in entry["hooks"]?.arrayValue ?? [] {
                 guard let key = hook["key"]?.stringValue,
@@ -71,7 +76,7 @@ public enum CodexTrust {
                       let source = hook["sourcePath"]?.stringValue,
                       HookCommand.isCurrentStyleCommand(command),
                       source == configFile.path || canonicalPath(source) == wanted else { continue }
-                out[key] = hash
+                out[key] = (hash, hook["enabled"] != .bool(false))
             }
         }
         return out
@@ -104,6 +109,8 @@ public enum CodexTrust {
     }
 
     struct RefreshOutcome {
+        var listed: Int
+        /// Hooks turned off in /hooks are not counted, because Codex does not run them.
         var trusted: Int
         var changed: Bool
         var backup: URL?
@@ -112,16 +119,18 @@ public enum CodexTrust {
     /// A nil `backupAt` skips the backup because the caller already made one this run.
     static func refreshConfig(configFile: URL, codexPath: String, timeout: TimeInterval,
                               environment: [String: String]?, backupAt: Date?) throws -> RefreshOutcome {
-        let hashes = try fetchHashes(codexPath: codexPath, configFile: configFile, timeout: timeout, environment: environment)
-        guard !hashes.isEmpty else { return RefreshOutcome(trusted: 0, changed: false, backup: nil) }
+        let result = try listHooks(codexPath: codexPath, configFile: configFile, timeout: timeout, environment: environment)
+        let listed = listedHooks(fromHooksList: result, configFile: configFile)
+        let outcome = RefreshOutcome(listed: listed.count, trusted: listed.values.filter { $0.enabled }.count, changed: false)
+        guard !listed.isEmpty else { return outcome }
         // Re-read: the file is ours to edit only as it is now.
         let current = try HookConfigFile.read(configFile) ?? ""
-        let updated = applyTrustedHashes(hashes, to: current)
-        guard updated != current else { return RefreshOutcome(trusted: hashes.count, changed: false, backup: nil) }
+        let updated = applyTrustedHashes(listed.mapValues { $0.hash }, to: current)
+        guard updated != current else { return outcome }
         try FileUtil.ensureWritable(configFile)
         let backup = try backupAt.flatMap { try FileUtil.backup(configFile, now: $0) }
         try FileUtil.atomicWrite(updated, to: configFile)
-        return RefreshOutcome(trusted: hashes.count, changed: true, backup: backup)
+        return RefreshOutcome(listed: outcome.listed, trusted: outcome.trusted, changed: true, backup: backup)
     }
 
     /// An inherited `CODEX_HOME` is dropped so a scratch home never reaches the real `~/.codex`.

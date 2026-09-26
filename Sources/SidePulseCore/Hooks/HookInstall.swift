@@ -319,7 +319,16 @@ public enum ClaudeHookInstaller {
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
         }
-        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun)
+        let notes = allHooksDisabled(in: updated)
+            ? ["Claude Code hooks are turned off by \"disableAllHooks\"; SidePulse left that alone, "
+                + "so Claude Code runs no hooks until you turn them back on"]
+            : []
+        return InstallResult(provider: .claude, configPath: config, changed: changed, backupPath: backup, dryRun: dryRun,
+                             notes: notes)
+    }
+
+    public static func allHooksDisabled(in text: String) -> Bool {
+        (try? JSONValue.parse(text))?["disableAllHooks"] == .bool(true)
     }
 
     public static func uninstall(paths: SidePulsePaths, dryRun: Bool, now: Date = Date()) throws -> InstallResult {

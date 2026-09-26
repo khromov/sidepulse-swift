@@ -5,6 +5,19 @@ final class HookInstallClaudeTests: XCTestCase {
     typealias T = HookInstallTestData
     let cmd = HookInstallTestData.claudeCommand
 
+    /// Regression: `CLAUDE_CONFIG_DIR` was ignored, so hooks went into a settings file Claude Code never read.
+    func testConfigDirFollowsClaudeConfigDir() {
+        let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        func settings(_ environment: [String: String]) -> String {
+            SidePulsePaths(environment: environment, home: home).claudeSettingsFile.path
+        }
+        XCTAssertEqual(settings([:]), "/Users/tester/.claude/settings.json")
+        XCTAssertEqual(settings(["CLAUDE_CONFIG_DIR": ""]), "/Users/tester/.claude/settings.json")
+        XCTAssertEqual(settings(["CLAUDE_CONFIG_DIR": "/x/claude/"]), "/x/claude/settings.json")
+        XCTAssertEqual(SidePulsePaths(environment: ["CLAUDE_CONFIG_DIR": "/x/claude"], home: home).claudeDir.path, "/x/claude")
+        XCTAssertTrue(settings(["CLAUDE_CONFIG_DIR": "~/work/.claude"]).hasSuffix("/work/.claude/settings.json"))
+    }
+
     // MARK: Pure transform
 
     func testFreshInstallWritesAllEventsWithTimeout() throws {

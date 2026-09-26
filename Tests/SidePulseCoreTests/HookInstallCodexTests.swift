@@ -199,6 +199,67 @@ final class HookInstallCodexTests: XCTestCase {
         }
     }
 
+    /// Regression: TOML puts a key appended after the block into SidePulse's last table, where Codex ignored it and
+    /// the next install or uninstall deleted it.
+    func testKeysAppendedAfterTheBlockAreRefused() throws {
+        for trusted in [false, true] {
+            let box = try HookInstallSandbox()
+            let config = box.paths.codexConfigFile
+            try box.write("model = \"gpt-6\"\n", to: config)
+            _ = try CodexHookInstaller.install(paths: box.paths, cliPath: T.cli, dryRun: false, trust: false)
+            if trusted { try box.trustCodexHooks() }
+            let table = trusted ? "[hooks.state.\"\u{2026}:interrupt:0:0\"]" : "[[hooks.Interrupt.hooks]]"
+            let base = try box.read(config)
+            XCTAssertTrue(base.hasSuffix(trusted ? "trusted_hash = \"sha256:test\"\n" : "\(CodexHookInstaller.managedEnd)\n"))
+            for appended in ["approval_policy = \"never\"\n", "\n# mine\nmodel_reasoning_effort = \"high\" # x\n"] {
+                let text = base + appended
+                try box.write(text, to: config)
+                let backups = box.backups(of: config)
+                let key = appended.contains("approval") ? "approval_policy" : "model_reasoning_effort"
+                let message = "TOML puts \(key) in SidePulse's \(table) table; move it above the SidePulse block"
+                for action in [HookAction.install, .uninstall] {
+                    for dryRun in [true, false] {
+                        XCTAssertThrowsError(try HookInstaller.perform(action, provider: .codex, paths: box.paths, cliPath: T.cli,
+                                                                       dryRun: dryRun, trust: false)) { error in
+                            XCTAssertEqual(error as? HookInstallError, .invalidStructure(path: config.path, message: message))
+                            XCTAssertEqual(String(describing: error), "\(config.path): \(message); fix it by hand, then retry")
+                        }
+                    }
+                }
+                XCTAssertEqual(try box.read(config), text)
+                XCTAssertEqual(box.backups(of: config), backups)
+                // Our last group also ends at the end marker, so even the pure transforms keep a key after it.
+                if !trusted {
+                    XCTAssertTrue(CodexHookInstaller.uninstalling(from: text, configPath: config.path).contains(key))
+                    XCTAssertTrue(CodexHookInstaller.installing(into: text, command: cmd, configPath: config.path).contains(key))
+                }
+            }
+        }
+    }
+
+    func testForeignContentInSidePulseTablesIsRefused() {
+        let installed = CodexHookInstaller.installing(into: "model = 1\n", command: cmd)
+        func problem(_ text: String) -> String? { CodexHookInstaller.managedTableProblem(in: TOMLLines(text), configPath: cfg) }
+        let trust = "\n[hooks.state]\n\n[hooks.state.\"\(cfg):stop:0:0\"]\ntrusted_hash = \"sha256:x\"\nenabled = false\n"
+            + "\n[hooks.state.\"\(cfg):stop:1:0\"]\ntrusted_hash = \"sha256:y\"\nnote = \"mine\"\n"
+        let user = "\n[[hooks.Stop]]\nmatcher = \"*\"\nstatusMessage = \"x\"\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"say\"\n"
+        for text in ["", installed, installed + user + trust, HookInstallFixtures.pythonCodexConfigTrusted,
+                     HookInstallFixtures.pythonCodexConfigTrusted.replacingOccurrences(of: "@CONFIG@", with: cfg),
+                     "[hooks.state.\"/elsewhere/config.toml:stop:0:0\"]\nx = 1\n"] {
+            XCTAssertNil(problem(text), text)
+        }
+        XCTAssertEqual(problem(installed.replacingOccurrences(of: "[[hooks.Stop.hooks]]\n", with: "[[hooks.Stop.hooks]]\nasync = true\n")),
+                       "TOML puts async in SidePulse's [[hooks.Stop.hooks]] table; move it above the SidePulse block")
+        XCTAssertEqual(problem(installed + "[hooks.Interrupt.hooks.env]\nX = \"1\"\n"),
+                       "TOML puts [hooks.Interrupt.hooks.env] in SidePulse's [[hooks.Interrupt.hooks]] table; "
+                        + "move it above the SidePulse block")
+        XCTAssertNotNil(problem("[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ncommand = \"\(cmd)\"\n[hooks.PreToolUse.hooks.extra]\nx = 1\n"))
+        // A trust table of a hook that no longer exists is dropped too.
+        XCTAssertEqual(problem(installed + "\n[hooks.state.\"\(cfg):stop:5:0\"]\ntrusted_hash = \"x\"\n\"a.b\" = 1\n"),
+                       "TOML puts \"a.b\" in SidePulse's [hooks.state.\"\u{2026}:stop:5:0\"] table; "
+                        + "move it above the SidePulse block")
+    }
+
     func testCommandChangeReplacesBlockInPlace() {
         let old = HookCommand.command(cliPath: "/old/sidepulse", provider: .codex)
         let before = "[features]\nhooks = true\n\n" + CodexHookInstaller.block(command: old) + "\n[tui]\nx = 1\n"
@@ -439,6 +500,73 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertTrue(installed.contains("sha256:a"))
         let dotted = "hooks.Stop = []\n[hooks.state.\"\(cfg):stop:0:0\"]\ntrusted_hash = \"sha256:a\"\n"
         XCTAssertEqual(CodexHookInstaller.uninstalling(from: dotted, configPath: cfg), dotted)
+    }
+
+    /// Regression: one group with inline `hooks = [...]` turned off all trust bookkeeping, so uninstall left
+    /// SidePulse's trust tables behind and the user's group kept a key that no longer named it.
+    func testInlineUserGroupKeepsTrustInStep() {
+        let installed = CodexHookInstaller.installing(into: "model = \"gpt-6\"\n", command: cmd)
+        var input = installed + """
+
+        [[hooks.Stop]]
+        matcher = "*"
+        hooks = [
+          { type = "command", command = "say one" },
+          { type = "command", command = "say two" },
+        ]
+
+        [hooks.state]
+
+        """
+        let ours = HookProvider.codex.events.map(CodexHookInstaller.snakeCase)
+        for event in ours { input += "\n[hooks.state.\"\(cfg):\(event):0:0\"]\ntrusted_hash = \"sha256:ours\"\n" }
+        input += "\n[hooks.state.\"\(cfg):stop:1:0\"]\ntrusted_hash = \"sha256:one\"\n"
+        input += "\n[hooks.state.\"\(cfg):stop:1:1\"]\ntrusted_hash = \"sha256:two\"\nenabled = false\n"
+
+        XCTAssertEqual(CodexHookInstaller.installing(into: input, command: cmd, configPath: cfg), input)
+        let removed = CodexHookInstaller.uninstalling(from: input, configPath: cfg)
+        XCTAssertFalse(removed.contains("sha256:ours"), removed)
+        XCTAssertTrue(removed.hasSuffix("""
+        [hooks.state]
+
+        [hooks.state."\(cfg):stop:0:0"]
+        trusted_hash = "sha256:one"
+
+        [hooks.state."\(cfg):stop:0:1"]
+        trusted_hash = "sha256:two"
+        enabled = false
+
+        """), removed)
+        let reinstalled = CodexHookInstaller.installing(into: removed, command: cmd, configPath: cfg)
+        XCTAssertEqual(CodexHookInstaller.installing(into: reinstalled, command: cmd, configPath: cfg), reinstalled)
+        XCTAssertTrue(reinstalled.contains("[hooks.state.\"\(cfg):stop:0:1\"]\ntrusted_hash = \"sha256:two\""),
+                      "the block goes after the user's group, so its keys stay")
+    }
+
+    /// Codex's /hooks marks a hook `enabled = false`; install must not turn it back on when our command changes.
+    func testHookTurnedOffStaysOffWhenOurCommandChanges() {
+        let old = HookCommand.command(cliPath: "/old/sidepulse", provider: .codex)
+        let input = CodexHookInstaller.block(command: old) + """
+
+        [hooks.state]
+
+        [hooks.state."\(cfg):stop:0:0"]
+        trusted_hash = "sha256:old-stop"
+        enabled = false
+
+        [hooks.state."\(cfg):interrupt:0:0"]
+        trusted_hash = "sha256:old-interrupt"
+
+        """
+        XCTAssertEqual(CodexHookInstaller.installing(into: input, command: cmd, configPath: cfg), block + """
+
+        [hooks.state]
+
+        [hooks.state."\(cfg):stop:0:0"]
+        enabled = false
+
+        """)
+        XCTAssertEqual(CodexHookInstaller.uninstalling(from: input, configPath: cfg), "")
     }
 
     // MARK: Detection

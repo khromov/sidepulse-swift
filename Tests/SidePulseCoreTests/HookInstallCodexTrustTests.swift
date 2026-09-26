@@ -91,17 +91,19 @@ final class HookInstallCodexTrustTests: XCTestCase {
         return (path, log)
     }
 
-    private func hook(key: String, command: String, source: String, hash: String?) -> JSONValue {
+    private func hook(key: String, command: String, source: String, hash: String?, enabled: Bool = true) -> JSONValue {
         var object: JSONObject = ["key": .string(key), "eventName": .string("stop"), "handlerType": .string("command"),
-                                  "command": .string(command), "sourcePath": .string(source), "trustStatus": .string("untrusted")]
+                                  "command": .string(command), "sourcePath": .string(source), "enabled": .bool(enabled),
+                                  "trustStatus": .string("untrusted")]
         if let hash { object["currentHash"] = .string(hash) }
         return .object(object)
     }
 
-    private func ourHooksResult(config: String, extra: [JSONValue] = []) -> JSONValue {
+    private func ourHooksResult(config: String, disabled: Set<String> = [], extra: [JSONValue] = []) -> JSONValue {
         var hooks = HookProvider.codex.events.map { event -> JSONValue in
             let snake = CodexHookInstaller.snakeCase(event)
-            return hook(key: "\(config):\(snake):0:0", command: T.codexCommand, source: config, hash: "sha256:\(snake)")
+            return hook(key: "\(config):\(snake):0:0", command: T.codexCommand, source: config, hash: "sha256:\(snake)",
+                        enabled: !disabled.contains(event))
         }
         hooks += extra
         return .object(["data": .array([.object(["cwd": .string("/x"), "hooks": .array(hooks),
@@ -331,6 +333,33 @@ final class HookInstallCodexTrustTests: XCTestCase {
         XCTAssertEqual(try box.read(config), "")
         XCTAssertEqual(box.backups(of: config).count, 1)
         XCTAssertEqual(try box.read(removed.backupPath!), text)
+    }
+
+    /// Regression: hooks turned off with /hooks counted as trusted, so install claimed all 11 while Stop never ran.
+    func testHooksTurnedOffInCodexAreNotCountedAndStayOff() throws {
+        let box = try HookInstallSandbox()
+        let config = box.paths.codexConfigFile
+        var installed = CodexHookInstaller.installing(into: "", command: T.codexCommand, configPath: config.path)
+        installed += "\n[hooks.state]\n\n[hooks.state.\"\(config.path):stop:0:0\"]\nenabled = false\n"
+            + "\n[hooks.state.\"\(config.path):pre_tool_use:0:0\"]\nenabled = false\n"
+        try box.write(installed, to: config)
+        let fake = try makeFakeServer(box, hooksListResult: ourHooksResult(config: config.path, disabled: ["Stop", "PreToolUse"]))
+        let paths = SidePulsePaths(environment: box.paths.environment.merging(["CODEX_CLI_PATH": fake.path]) { $1 }, home: box.home)
+
+        let result = try CodexHookInstaller.install(paths: paths, cliPath: T.cli, dryRun: false)
+        XCTAssertEqual(result.notes, ["trusted 9 Codex hooks", "disabled in /hooks: PreToolUse, Stop; SidePulse left them off, "
+            + "so turn them back on with /hooks in Codex"])
+        let text = try box.read(config)
+        XCTAssertEqual(T.count("trusted_hash = \"sha256:", in: text), 11, "turning one back on needs no new review")
+        XCTAssertTrue(text.contains("[hooks.state.\"\(config.path):stop:0:0\"]\ntrusted_hash = \"sha256:stop\"\nenabled = false\n"))
+        XCTAssertEqual(CodexHookInstaller.disabledEvents(in: text, configPath: config.path), ["PreToolUse", "Stop"])
+        XCTAssertEqual(CodexTrust.hashes(fromHooksList: ourHooksResult(config: config.path, disabled: ["Stop"]),
+                                         configFile: config).count, 11)
+
+        let allOff = try makeFakeServer(box, hooksListResult: ourHooksResult(config: config.path, disabled: Set(HookProvider.codex.events)))
+        let offPaths = SidePulsePaths(environment: box.paths.environment.merging(["CODEX_CLI_PATH": allOff.path]) { $1 }, home: box.home)
+        let again = try CodexHookInstaller.install(paths: offPaths, cliPath: T.cli, dryRun: false)
+        XCTAssertFalse(again.notes.contains { $0.hasPrefix("trusted") || $0.contains("did not list") }, "\(again.notes)")
     }
 
     func testTrustOnlyChangeOnExistingFileMakesOneBackup() throws {

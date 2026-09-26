@@ -407,6 +407,16 @@ enum TOMLString {
         return out + "\""
     }
 
+    static func key(_ s: String) -> String {
+        let bare = !s.isEmpty && s.unicodeScalars.allSatisfy { c in
+            switch c {
+            case "a"..."z", "A"..."Z", "0"..."9", "_", "-": return true
+            default: return false
+            }
+        }
+        return bare ? s : basic(s)
+    }
+
     static func literalPreferred(_ s: String) -> String {
         if s.contains("'''") || s.contains("\n") || s.contains("\r") || s.hasSuffix("'") { return basic(s) }
         return "'''\(s)'''"
