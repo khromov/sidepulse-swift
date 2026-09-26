@@ -123,7 +123,8 @@ public enum ArgumentParser {
                 if let inlineValue {
                     result.values[option.name] = inlineValue
                 } else {
-                    guard index + 1 < arguments.count else {
+                    // A following `--flag` is a forgotten value, not the value (`--opt=--x` still works).
+                    guard index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--") else {
                         throw UsageError("argument --\(option.name): expected one argument")
                     }
                     index += 1

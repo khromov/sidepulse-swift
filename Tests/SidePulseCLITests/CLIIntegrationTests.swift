@@ -351,9 +351,11 @@ final class CLIIntegrationTests: XCTestCase {
         // Only one process may own the LEDs.
         XCTAssertEqual(h.run(["leds"]), 1)
         XCTAssertTrue(h.stderr.text.contains("already drives the LEDs"))
+        XCTAssertTrue(h.stderr.text.contains("a headless 'sidepulse run' (pid \(getpid()))"), h.stderr.text)
 
         let ping = PingReply(data: h.env.app.request("ping", JSONObject(), 1))
         XCTAssertEqual(ping?.version, SidePulseConstants.version)
+        XCTAssertEqual(ping?.kind, .headless)
     }
 
     // MARK: leds --once

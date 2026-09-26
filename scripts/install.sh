@@ -33,7 +33,9 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "${SIDEPULSE_CODESIGN_IDENTITY:-}" ]; then export SIDEPULSE_CODESIGN_IDENTITY; fi
 
+# PlistBuddy prints "File Doesn't Exist, Will Create: …" on stdout for a missing plist.
 bundle_id() {
+    [ -f "$1/Contents/Info.plist" ] || return 0
     /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
@@ -56,6 +58,14 @@ if [ -e "$DEST" ] && [ "$(bundle_id "$DEST")" != "$BUNDLE_ID" ]; then
 fi
 
 "$SRC_ROOT/scripts/build-app.sh"
+
+# Copied next to the old app first (same volume, so the swap is a rename), so a failed copy
+# leaves the old app intact.
+NEW="$APP_DIR/.SidePulse.app.new"
+trap 'rm -rf "$NEW"' EXIT
+trap 'exit 130' HUP INT TERM
+rm -rf "$NEW"
+ditto "$SRC" "$NEW"
 
 installed_app_pids() {
     for pid in $(pgrep -x SidePulse 2>/dev/null || true); do
@@ -88,7 +98,8 @@ if [ -n "$(installed_app_pids)" ]; then
 fi
 
 rm -rf "$DEST"
-ditto "$SRC" "$DEST"
+mv "$NEW" "$DEST"
+trap - EXIT HUP INT TERM
 echo "Installed $DEST"
 
 BIN_DIR="$HOME/.local/bin"

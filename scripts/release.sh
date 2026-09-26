@@ -80,6 +80,22 @@ for bin in "$APP/Contents/MacOS/SidePulse" "$APP/Contents/Helpers/sidepulse"; do
     done
 done
 
+VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")
+ZIP="$ROOT/dist/SidePulse-$VERSION.zip"
+
+# The notarization ticket belongs to these exact binaries, so the manual finish must not rebuild.
+resume_hint() {
+    cat >&2 <<EOF
+Apple may still accept submission $1. Check it with
+  xcrun notarytool info $1 --keychain-profile "$PROFILE"
+Once its status is Accepted, finish by hand without rebuilding first (a new build does not match the ticket):
+  xcrun stapler staple "$APP"
+  spctl --assess --type execute --verbose=2 "$APP"
+  mkdir -p "$ROOT/dist" && rm -f "$ZIP"
+  ditto -c -k --norsrc --keepParent "$APP" "$ZIP"
+EOF
+}
+
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sidepulse-release.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 # --norsrc because macOS tags build output with com.apple.provenance, which ditto would
@@ -91,24 +107,37 @@ SUBMIT_JSON=$(xcrun notarytool submit "$WORK/SidePulse.zip" --keychain-profile "
     echo "$SUBMIT_JSON" >&2
     exit 1
 }
-SUBMISSION=$(printf '%s' "$SUBMIT_JSON" | plutil -extract id raw -o - -)
+SUBMISSION=$(printf '%s' "$SUBMIT_JSON" | plutil -extract id raw -o - - 2>/dev/null) || SUBMISSION=""
+if [ -z "$SUBMISSION" ]; then
+    echo "error: could not read the submission id from notarytool's reply:" >&2
+    echo "$SUBMIT_JSON" >&2
+    echo "Find the id with: xcrun notarytool history --keychain-profile \"$PROFILE\"" >&2
+    resume_hint ID
+    exit 1
+fi
 echo "Submission $SUBMISSION; waiting for Apple (usually a few minutes)..."
 # The final status comes from `info` below, whatever `wait` exits with.
 xcrun notarytool wait "$SUBMISSION" --keychain-profile "$PROFILE" || true
-STATUS=$(xcrun notarytool info "$SUBMISSION" --keychain-profile "$PROFILE" --output-format json \
-    | plutil -extract status raw -o - -)
-if [ "$STATUS" != Accepted ]; then
-    echo "error: notarization of submission $SUBMISSION ended with status \"$STATUS\". Apple's log:" >&2
-    xcrun notarytool log "$SUBMISSION" --keychain-profile "$PROFILE" >&2 || true
-    exit 1
-fi
+INFO=$(xcrun notarytool info "$SUBMISSION" --keychain-profile "$PROFILE" --output-format json) || INFO=""
+STATUS=$(printf '%s' "$INFO" | plutil -extract status raw -o - - 2>/dev/null) || STATUS=""
+case $STATUS in
+    Accepted) ;;
+    "" | "In Progress")
+        echo "error: no final notarization status for submission $SUBMISSION${STATUS:+ (still $STATUS)}." >&2
+        resume_hint "$SUBMISSION"
+        exit 1
+        ;;
+    *)
+        echo "error: notarization of submission $SUBMISSION ended with status \"$STATUS\". Apple's log:" >&2
+        xcrun notarytool log "$SUBMISSION" --keychain-profile "$PROFILE" >&2 || true
+        exit 1
+        ;;
+esac
 
 # Stapling lets Gatekeeper accept the app without asking Apple, for example offline.
 xcrun stapler staple "$APP"
 spctl --assess --type execute --verbose=2 "$APP"
 
-VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")
-ZIP="$ROOT/dist/SidePulse-$VERSION.zip"
 mkdir -p "$ROOT/dist"
 rm -f "$ZIP"
 ditto -c -k --norsrc --keepParent "$APP" "$ZIP"

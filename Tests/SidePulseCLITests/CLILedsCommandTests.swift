@@ -16,6 +16,18 @@ final class CLILedsCommandTests: XCTestCase {
         }
     }
 
+    func testForegroundRefusalNamesAHeadlessOwner() {
+        for arguments in [["leds"], ["run"]] {
+            let harness = CLIHarness()
+            harness.app.running = true
+            harness.app.replies["ping"] = Data(#"{"ok":true,"pid":9,"version":"0.1.0","kind":"headless"}"#.utf8)
+            XCTAssertEqual(harness.run(arguments), 1, "\(arguments)")
+            XCTAssertTrue(harness.stderr.text.contains("a headless 'sidepulse run' (pid 9) already drives the LEDs; "
+                + "stop it with Ctrl-C in its terminal or 'kill 9', or use 'sidepulse leds --once'."), harness.stderr.text)
+            XCTAssertFalse(harness.stderr.text.contains("app stop"), "\(arguments)")
+        }
+    }
+
     func testForegroundIntervalMustBePositive() {
         for value in ["0", "-1", "soon"] {
             let harness = CLIHarness()

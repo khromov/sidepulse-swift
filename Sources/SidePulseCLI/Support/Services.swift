@@ -31,18 +31,30 @@ public struct AppConnection {
 public struct PingReply: Equatable, Sendable {
     public var pid: Int?
     public var version: String?
+    /// Builds before the reply carried a kind were always the app.
+    public var kind: InstanceKind
 
-    public init(pid: Int?, version: String?) { self.pid = pid; self.version = version }
+    public init(pid: Int?, version: String?, kind: InstanceKind = .app) {
+        self.pid = pid; self.version = version; self.kind = kind
+    }
 
     public init?(data: Data?) {
         guard let data, let value = try? JSONValue.parse(data), value["ok"]?.boolValue == true else { return nil }
         pid = value["pid"]?.intValue
         version = value["version"]?.stringValue
+        kind = value["kind"]?.stringValue.flatMap(InstanceKind.init(rawValue:)) ?? .app
     }
 
+    public var isHeadless: Bool { kind == .headless }
+
     public var details: String {
-        [pid.map { "pid \($0)" }, version.map { "version \($0)" }].compactMap { $0 }.joined(separator: ", ")
+        [isHeadless ? "headless 'sidepulse run'" : nil, pid.map { "pid \($0)" }, version.map { "version \($0)" }]
+            .compactMap { $0 }.joined(separator: ", ")
     }
+
+    public var headlessOwner: String { "a headless 'sidepulse run'" + (pid.map { " (pid \($0))" } ?? "") }
+
+    public var headlessStopHint: String { "stop it with Ctrl-C in its terminal" + (pid.map { " or 'kill \($0)'" } ?? "") }
 }
 
 public struct SnapshotLoader {

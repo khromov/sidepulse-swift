@@ -265,7 +265,7 @@ private struct HooksTab: View {
                             .textSelection(.enabled)
                             .multilineTextAlignment(.trailing)
                     } else {
-                        Text(HookCLIPath.notFoundMessage)
+                        Text(HookCLIPath.unresolvedMessage())
                             .font(.caption)
                             .foregroundStyle(.red)
                             .multilineTextAlignment(.trailing)

@@ -34,11 +34,18 @@ public enum IPCMessage: Sendable, Equatable {
     }
 }
 
+/// Lets the CLI tell the menu-bar app from a headless `sidepulse run`, which answers the same socket.
+public enum InstanceKind: String, Sendable {
+    case app, headless
+}
+
 public enum IPCReply {
     public static let ok = Data("ok".utf8)
 
-    public static func ping(pid: pid_t = getpid(), version: String = SidePulseConstants.version) -> Data {
-        let object: JSONObject = ["ok": .bool(true), "pid": JSONValue(Int(pid)), "version": .string(version)]
+    public static func ping(pid: pid_t = getpid(), version: String = SidePulseConstants.version,
+                            kind: InstanceKind = .app) -> Data {
+        let object: JSONObject = ["ok": .bool(true), "pid": JSONValue(Int(pid)), "version": .string(version),
+                                  "kind": .string(kind.rawValue)]
         return Data(JSONValue.object(object).serialized().utf8)
     }
 

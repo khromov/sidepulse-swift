@@ -77,7 +77,9 @@ final class AppServices {
     func setLaunchAtLogin(_ enabled: Bool) throws {
         let manager = launchAgent
         if enabled {
-            try manager.install(programArguments: [SidePulsePaths.currentExecutablePath], start: false)
+            let executable = SidePulsePaths.currentExecutablePath
+            try AppTranslocated.check(executable)
+            try manager.install(programArguments: [executable], start: false)
         } else if ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == manager.label {
             let plist = paths.launchAgentPlist(label: manager.label)
             if FileManager.default.fileExists(atPath: plist.path) {

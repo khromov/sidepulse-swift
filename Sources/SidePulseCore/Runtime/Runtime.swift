@@ -73,8 +73,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
         set { shared.write { $0.onUpdate = newValue } }
     }
 
-    /// Left nil by the headless runtime, which makes `open-settings` fail so the CLI
-    /// knows there is no settings window.
+    /// Left nil by the headless runtime, which makes `open-settings` fail and `ping` answer
+    /// `"kind":"headless"` so the CLI knows there is no settings window.
     public var onOpenSettings: (() -> Void)? {
         get { shared.read { $0.onOpenSettings } }
         set { shared.write { $0.onOpenSettings = newValue } }
@@ -348,7 +348,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         case .command(let name, _):
             switch name {
             case "ping":
-                return IPCReply.ping()
+                return IPCReply.ping(kind: onOpenSettings == nil ? .headless : .app)
             case "status":
                 // Only during start-up: otherwise never wait for the state queue.
                 if shared.read({ $0.starting }) { onState {} }

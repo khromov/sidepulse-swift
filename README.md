@@ -73,12 +73,14 @@ scripts/install.sh --sign "Developer ID Application: …"   # sign with your cer
    signed with `--sign` / `$SIDEPULSE_CODESIGN_IDENTITY` when given, else ad
    hoc. The bundle holds the menu-bar app at `Contents/MacOS/SidePulse` and the
    CLI at `Contents/Helpers/sidepulse`.
-2. **Stops** a running SidePulse: it boots out the `io.sidepulse.swift`
-   LaunchAgent and kills any copy started by hand from the install location,
-   waiting up to 10 s. Then it replaces `DIR/SidePulse.app` (default
-   `~/Applications`). It never replaces another app's bundle: if
-   `DIR/SidePulse.app` has a bundle id other than `io.sidepulse.swift` (for
-   example the Python app), the script stops before building.
+2. **Replaces** `DIR/SidePulse.app` (default `~/Applications`). It first
+   copies the new app to `DIR/.SidePulse.app.new`, so a failed copy leaves the
+   old app in place. Then it stops a running SidePulse: it boots out the
+   `io.sidepulse.swift` LaunchAgent and kills any copy started by hand from
+   the install location, waiting up to 10 s. Last, it swaps the new app in.
+   It never replaces another app's bundle: if `DIR/SidePulse.app` has a
+   bundle id other than `io.sidepulse.swift` (for example the Python app), the
+   script stops before building.
 3. **Links** `~/.local/bin/sidepulse` to
    `DIR/SidePulse.app/Contents/Helpers/sidepulse`. An existing symlink, such as
    the Python install's, is replaced. A regular file is moved to
@@ -101,6 +103,13 @@ device's submenu under **Devices** shows the waiting notice (see
 [Menu-bar app](#menu-bar-app)). If you denied it, allow SidePulse under
 System Settings › Privacy & Security › Files and Folders (Removable Volumes).
 Installing with `--sign IDENTITY` avoids the prompt after updates.
+
+From a release zip (see [Releasing](#releasing)), move `SidePulse.app` to
+`~/Applications` or `/Applications` before you open it. macOS runs an app
+opened straight from `~/Downloads` from a temporary read-only location (App
+Translocation) that is gone after a restart. SidePulse then refuses to write
+that location into hooks or the login item, and says "SidePulse is running from
+a temporary location; move SidePulse.app to Applications and reopen it."
 
 ### What `sidepulse setup` does
 
@@ -158,7 +167,9 @@ writes anyway.
 Exit codes: `0` ok, `1` error, `2` usage error, invalid LED program, or no
 device / ambiguous device. `sidepulse -V` (or `--version`) prints the version,
 and `sidepulse <command> --help` shows a command's options. `run` is an alias
-for `leds` without `--once`.
+for `leds` without `--once`. An option that takes a value never takes the next
+`--flag` as its value (`argument --file-name: expected one argument`); write
+`--file-name=--x` for a value that starts with `--`.
 
 | Command | Purpose |
 | --- | --- |
@@ -200,8 +211,10 @@ argument is given.
 
 **`sidepulse leds [--once] [--dry-run] [--device PATH] [--interval SECONDS]`**
 Without `--once`, runs the SidePulse runtime in the foreground until Ctrl-C.
-This is the menu-bar app without UI. It refuses to start while the app is
-running.
+This is the menu-bar app without UI. It refuses to start while the app, or
+another headless run, owns the socket. For a headless owner the error names its
+pid: `a headless 'sidepulse run' (pid N) already drives the LEDs; stop it with
+Ctrl-C in its terminal or 'kill N', or use 'sidepulse leds --once'.`
 - `--once`: sync once and exit. Every connected Agent-mode device is synced.
   Exits 2 on error.
 - `--device PATH`: requires `--once`. Syncs only this device, whatever its
@@ -247,7 +260,8 @@ that SidePulse did not write, for a plugin that differs from the one this
 SidePulse writes (`written by another SidePulse version; run 'sidepulse install
 opencode' to update it`), and when the `opencode` binary (`~/.opencode/bin` or
 `PATH`) is older than 2.0. The app block reports the app binary, the LaunchAgent plist,
-whether the app is running (pid and version) and the socket path. It ends with
+whether the app is running (pid and version, labelled `headless 'sidepulse run'`
+for a headless owner) and the socket path. It ends with
 `cli: <path> (written by install)` (or `not found`), plus a note when
 `~/.local/bin/sidepulse` is not the SidePulse CLI.
 - `--json`: print the report as JSON. Each provider adds `hook_cli_paths`,
@@ -258,15 +272,16 @@ whether the app is running (pid and version) and the socket path. It ends with
 
 | Action | Effect |
 | --- | --- |
-| `start` (default) | Starts the app: through the LaunchAgent when its plist exists (a plist that runs another binary is started as is, with a note to run `sidepulse app install`), otherwise opens `SidePulse.app` for this session only, without turning on launch at login. A running app is left alone ("already running (pid N)") |
-| `stop` | Boots the app out. The plist stays, so the app returns at next login. An app running outside launchd must be quit from the menu bar |
-| `restart` | `launchctl kickstart -k` of the LaunchAgent's instance. Fails when the app runs outside launchd |
-| `status` | Shows plist, launchd and socket state. Exits 0 only when the app answers |
-| `install` | Writes the LaunchAgent and starts it. If SidePulse already runs outside launchd, only writes the plist |
+| `start` (default) | Starts the app: through the LaunchAgent when its plist exists (a plist that runs another binary is started as is, with a note to run `sidepulse app install`), otherwise opens `SidePulse.app` for this session only, without turning on launch at login. A running app is left alone ("already running (pid N)"). Fails while a headless `sidepulse run` owns the socket |
+| `stop` | Boots the app out. The plist stays, so the app returns at next login ("kept" is printed only when the plist exists). When the socket owner is not the LaunchAgent's instance, it changes nothing and fails: an app running outside launchd must be quit from the menu bar, and a headless `sidepulse run` must be stopped with Ctrl-C or `kill` |
+| `restart` | `launchctl kickstart -k` of the LaunchAgent's instance. Fails when the app runs outside launchd or a headless `sidepulse run` owns the socket |
+| `status` | Shows plist, launchd and socket state. Exits 0 only when the app answers; a headless `sidepulse run` shows as `app: not running (a headless 'sidepulse run' (pid N) owns the socket)` |
+| `install` | Writes the LaunchAgent and starts it. If SidePulse already runs outside launchd, or a headless `sidepulse run` owns the socket, only writes the plist |
 | `uninstall` | Boots the LaunchAgent out and deletes the plist |
 
 - `--foreground`: only with `start`. Runs the app in this terminal instead of
-  via launchd.
+  via launchd. Refuses while the app or a headless `sidepulse run` owns the
+  socket.
 
 **`sidepulse settings`** asks the running app to open its Settings window, and
 starts the app if needed: through its LaunchAgent when launch at login is on,
@@ -446,12 +461,16 @@ variants.
     the Mac is always allowed to sleep.
 - **Launch at login.** This is the LaunchAgent
   `~/Library/LaunchAgents/io.sidepulse.swift.plist`, with `RunAtLoad` and
-  `KeepAlive = {SuccessfulExit: false}`. It also sets `PATH` (the installing
-  shell's `PATH` plus `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`)
-  so the app finds `codex` and `node`. launchd restarts the app after a crash,
-  but it stays quit after **Quit**. Only `sidepulse app install`,
+  `KeepAlive = {SuccessfulExit: false}`. It also sets `PATH` so the app finds
+  `codex` and `node`: the `PATH` of the process that writes the plist (your
+  shell for `sidepulse app install`, `sidepulse setup` and
+  `scripts/install.sh`, the app's own minimal `PATH` when the Settings toggle
+  writes it) plus `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+  launchd restarts the app after a crash, but it stays quit after **Quit**. Only `sidepulse app install`,
   `sidepulse setup` and the Settings toggle write the plist. Turning the toggle on
-  writes the plist for the running binary without starting a second copy.
+  writes the plist for the running binary without starting a second copy. It
+  refuses while the app runs from a temporary App Translocation location (see
+  [Install](#install)).
   `sidepulse app uninstall` removes the plist.
 
 ## Files & paths
@@ -486,7 +505,8 @@ Environment overrides:
 | `SIDEPULSE_NOTARY_PROFILE` | notarytool keychain profile for `scripts/release.sh` (default: `notary`) |
 
 The app started by the LaunchAgent does not see variables exported in your
-shell, except `PATH`, which is copied into the plist at install time.
+shell, except `PATH`, which is copied into the plist from the process that
+writes it (see Launch at login under [Menu-bar app](#menu-bar-app)).
 
 ## How hooks work
 
@@ -637,7 +657,10 @@ same runtime without UI. The runtime does the following, per
   LEDs keep their last program.
 
 The socket answers `ping`, `status`, `open-settings` and `reload-settings`, all
-used by the CLI. `reload-settings` replies
+used by the CLI. `ping` replies
+`{"ok":true,"pid":N,"version":"…","kind":"app"}`, with `"kind":"headless"`
+from `sidepulse run`/`leds`; a reply without `kind` (older builds) counts as the
+app. `reload-settings` replies
 `{"ok":false,"error":"LED write in progress"}` if a write that started with the
 old settings is still running after 2 s. When the app is not running,
 `sidepulse status` rebuilds the status from the logs.
@@ -723,22 +746,28 @@ The script runs these steps:
    It uses universal (arm64 and x86_64) binaries and signs them with the
    hardened runtime and a secure timestamp.
 3. **Notarizes** the app with `notarytool` and waits for Apple's verdict. When
-   the status is not Accepted, it prints Apple's log and exits 1. Otherwise it
-   staples the ticket to the app and checks it with `spctl`.
+   the status is not Accepted, it prints Apple's log and exits 1. When it gets
+   no final status (for example `notarytool info` fails, or the submission is
+   still In Progress), it prints the submission id, the
+   `xcrun notarytool info ID --keychain-profile PROFILE` command and the
+   commands that finish the release by hand (staple, `spctl`, zip), and exits
+   1. Run those without rebuilding: the ticket covers these exact binaries.
+   Otherwise it staples the ticket to the app and checks it with `spctl`.
 4. **Zips** the stapled app to `dist/SidePulse-VERSION.zip` with `ditto` and
    prints the SHA-256. The zip holds no extended attributes (`._` files), so
    the signature stays valid when it is extracted with `unzip` too. An existing zip for the same version is replaced.
 
 It uploads nothing, creates no tag and pushes nothing. You attach the zip to a
 GitHub release yourself, for example with
-`gh release create vVERSION dist/SidePulse-VERSION.zip`.
+`gh release create vVERSION dist/SidePulse-VERSION.zip`. Tell users to move
+`SidePulse.app` to Applications before opening it (see [Install](#install)).
 
 ## Uninstall
 
 ```sh
 scripts/uninstall.sh                 # remove hooks, LaunchAgent, app and CLI link
 scripts/uninstall.sh --purge         # also delete ~/Library/Application Support/SidePulse
-scripts/uninstall.sh --app-dir DIR   # only if neither the CLI link nor the LaunchAgent is left
+scripts/uninstall.sh --app-dir DIR   # remove the app from DIR (overrides the link and LaunchAgent lookup)
 ```
 
 `scripts/uninstall.sh` runs these steps:
@@ -746,14 +775,19 @@ scripts/uninstall.sh --app-dir DIR   # only if neither the CLI link nor the Laun
 1. Runs the app's own CLI: `sidepulse uninstall` removes the agent hooks and
    `sidepulse app uninstall` removes the LaunchAgent. It then boots out and
    deletes the plist in any case.
-2. Stops a copy started by hand and removes the installed `SidePulse.app`: the
+2. Stops a copy started by hand, waits up to 10 s for it and any
+   launchd-started copy to exit, and removes the installed `SidePulse.app`: the
    one `~/.local/bin/sidepulse` points into, else the one the LaunchAgent runs,
    else `DIR/SidePulse.app` (`--app-dir` always wins). A bundle whose
    identifier is not `io.sidepulse.swift` is left alone with a warning. It
    removes `~/.local/bin/sidepulse` only if the link points into a
    `SidePulse.app`. A CLI that was moved aside during install stays at
    `sidepulse.previous`.
-3. Keeps settings and logs unless you pass `--purge`.
+3. Keeps settings and logs unless you pass `--purge`. If SidePulse is still
+   running after the wait, `--purge` keeps them too, because the app writes
+   `latest.json` and `app.log` as it quits. The script then warns and exits 1:
+   quit SidePulse from the menu bar and run `scripts/uninstall.sh --purge`
+   again.
 
 To remove only parts of the install, use `sidepulse uninstall [claude|codex|opencode]`
 for the hooks, and `sidepulse app uninstall` for launch at login.

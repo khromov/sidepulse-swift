@@ -79,6 +79,12 @@ final class CLIAppCommandTests: XCTestCase {
         XCTAssertEqual(PingReply(data: Data(#"{"ok":true,"pid":42,"version":"0.1.0"}"#.utf8)),
                        PingReply(pid: 42, version: "0.1.0"))
         XCTAssertEqual(PingReply(data: Data(#"{"ok":true}"#.utf8)), PingReply(pid: nil, version: nil))
+        XCTAssertEqual(PingReply(data: Data(#"{"ok":true,"pid":42,"version":"0.1.0","kind":"headless"}"#.utf8)),
+                       PingReply(pid: 42, version: "0.1.0", kind: .headless))
+        // Builds before the kind field were always the app.
+        XCTAssertEqual(PingReply(data: Data(#"{"ok":true,"pid":42}"#.utf8))?.kind, .app)
+        XCTAssertEqual(PingReply(data: Data(#"{"ok":true,"kind":"app"}"#.utf8))?.kind, .app)
+        XCTAssertEqual(PingReply(data: Data(#"{"ok":true,"kind":"future"}"#.utf8))?.kind, .app)
         XCTAssertNil(PingReply(data: Data(#"{"ok":false}"#.utf8)))
         XCTAssertNil(PingReply(data: Data("ok".utf8)))
         XCTAssertNil(PingReply(data: nil))
@@ -117,6 +123,11 @@ final class CLIAppCommandTests: XCTestCase {
         XCTAssertTrue(AppStatusText.render(state: LaunchAgentStatus(installed: true, loaded: true), plistPath: plist,
                                            socketPath: "/s", ping: nil, appBinary: nil)
             .contains("  launchd: loaded, not running\n"))
+        let headless = AppStatusText.render(state: LaunchAgentStatus(installed: false, loaded: false), plistPath: plist,
+                                            socketPath: "/s", ping: PingReply(pid: 9, version: "0.1.0", kind: .headless),
+                                            appBinary: nil)
+        XCTAssertTrue(headless.hasPrefix("app: not running (a headless 'sidepulse run' (pid 9) owns the socket)\n"), headless)
+        XCTAssertTrue(headless.contains("  socket: /s (responding, headless 'sidepulse run', pid 9, version 0.1.0)\n"), headless)
     }
 
     func testStatusCommandExitCodeFollowsPing() {
@@ -129,6 +140,11 @@ final class CLIAppCommandTests: XCTestCase {
         running.app.replies["ping"] = Data(#"{"ok":true,"pid":7,"version":"0.1.0"}"#.utf8)
         XCTAssertEqual(running.run(["app", "status"]), 0)
         XCTAssertTrue(running.stdout.text.hasPrefix("app: running\n"))
+
+        let headless = CLIHarness()
+        headless.app.replies["ping"] = Self.headlessPing
+        XCTAssertEqual(headless.run(["app", "status"]), 1)
+        XCTAssertTrue(headless.stdout.text.hasPrefix("app: not running (a headless 'sidepulse run' (pid 9) owns the socket)\n"))
     }
 
     /// Regression: `app start` (and `settings`) wrote the login LaunchAgent when it
@@ -231,9 +247,78 @@ final class CLIAppCommandTests: XCTestCase {
 
     func testStopRefusesAppRunningOutsideLaunchd() {
         let harness = CLIHarness()
-        harness.app.running = true
+        harness.app.replies["ping"] = Data(#"{"ok":true,"pid":5}"#.utf8)
         XCTAssertEqual(harness.run(["app", "stop"]), 1)
-        XCTAssertTrue(harness.stderr.text.contains("outside launchd"))
+        XCTAssertTrue(harness.stderr.text.contains("SidePulse is running outside launchd (pid 5); quit it from the menu bar."))
+        XCTAssertEqual(harness.launchAgent.stops, 0)
+    }
+
+    /// Regression: with Launch at Login on, Quit leaves the job loaded with no pid, so after reopening the app
+    /// from Finder `app stop` booted out the empty job and printed "stopped" while the app kept running.
+    func testStopRefusesWhenTheLoadedJobDoesNotOwnTheSocket() {
+        let harness = CLIHarness()
+        harness.launchAgent.state = LaunchAgentStatus(installed: true, loaded: true, pid: nil)
+        harness.app.replies["ping"] = Data(#"{"ok":true,"pid":99,"version":"0.1.0"}"#.utf8)
+        XCTAssertEqual(harness.run(["app", "stop"]), 1)
+        XCTAssertEqual(harness.launchAgent.stops, 0)
+        XCTAssertTrue(harness.stderr.text.contains("running outside launchd (pid 99); quit it from the menu bar"))
+        XCTAssertEqual(harness.stdout.text, "")
+    }
+
+    /// Regression: the "kept" note was printed after the Settings toggle had deleted the plist.
+    func testStopMentionsTheKeptPlistOnlyWhenItExists() throws {
+        let harness = CLIHarness()
+        harness.launchAgent.state = LaunchAgentStatus(installed: true, loaded: true, pid: 9)
+        harness.app.replies["ping"] = Data(#"{"ok":true,"pid":9}"#.utf8)
+        XCTAssertEqual(harness.run(["app", "stop"]), 0)
+        XCTAssertEqual(harness.stdout.text, "app: stopped\n")
+
+        let plist = harness.paths.launchAgentPlist()
+        try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try CLIFakeLaunchAgent.plist(["/x/SidePulse"]).write(to: plist, atomically: true, encoding: .utf8)
+        XCTAssertEqual(harness.run(["app", "stop"]), 0)
+        XCTAssertEqual(harness.launchAgent.stops, 2)
+        XCTAssertTrue(harness.stdout.text.hasSuffix("app: stopped\n  plist: \(plist.path) (kept: the app starts again at "
+            + "login; 'sidepulse app uninstall' removes it)\n"))
+    }
+
+    static let headlessPing = Data(#"{"ok":true,"pid":9,"version":"0.1.0","kind":"headless"}"#.utf8)
+
+    /// Regression: a headless `sidepulse run` answered ping like the app, so `app` reported it as the app.
+    func testHeadlessRunIsNotTakenForTheApp() throws {
+        let hint = "a headless 'sidepulse run' (pid 9) already drives the LEDs; "
+            + "stop it with Ctrl-C in its terminal or 'kill 9', then run 'sidepulse app start'"
+        for action in ["start", "restart"] {
+            let harness = CLIHarness()
+            harness.installFakeApp()
+            harness.app.replies["ping"] = Self.headlessPing
+            XCTAssertEqual(harness.run(["app", action]), 1, action)
+            XCTAssertEqual(harness.stderr.text, "sidepulse app: \(hint).\n", action)
+            XCTAssertTrue(harness.launchAgent.starts.isEmpty && harness.launchAgent.opened.isEmpty, action)
+        }
+
+        let stop = CLIHarness()
+        stop.app.replies["ping"] = Self.headlessPing
+        stop.launchAgent.state = LaunchAgentStatus(installed: true, loaded: true, pid: nil)
+        XCTAssertEqual(stop.run(["app", "stop"]), 1)
+        XCTAssertEqual(stop.launchAgent.stops, 0)
+        XCTAssertEqual(stop.stderr.text, "sidepulse app: a headless 'sidepulse run' (pid 9) drives the LEDs, not the app; "
+            + "stop it with Ctrl-C in its terminal or 'kill 9'.\n")
+
+        let install = CLIHarness()
+        install.installFakeApp()
+        install.app.replies["ping"] = Self.headlessPing
+        XCTAssertEqual(install.run(["app", "install"]), 0)
+        XCTAssertEqual(install.launchAgent.installs.map(\.start), [false])
+        XCTAssertTrue(install.stdout.text.hasPrefix("app: installed, not started: \(hint)\n"), install.stdout.text)
+
+        let foreground = CLIHarness()
+        foreground.installFakeApp()
+        foreground.app.running = true
+        foreground.app.replies["ping"] = Data(#"{"ok":true,"kind":"headless"}"#.utf8)
+        XCTAssertEqual(foreground.run(["app", "--foreground"]), 1)
+        XCTAssertEqual(foreground.stderr.text, "sidepulse app: a headless 'sidepulse run' already drives the LEDs; "
+            + "stop it with Ctrl-C in its terminal first.\n")
     }
 
     func testInstallSubcommand() {

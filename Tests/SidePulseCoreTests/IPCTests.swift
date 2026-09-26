@@ -56,7 +56,9 @@ final class IPCMessageTests: XCTestCase {
 
     func testReplies() throws {
         let ping = try JSONValue.parse(IPCReply.ping(pid: 42, version: "9.9"))
-        XCTAssertEqual(ping.serialized(), #"{"ok":true,"pid":42,"version":"9.9"}"#)
+        XCTAssertEqual(ping.serialized(), #"{"ok":true,"pid":42,"version":"9.9","kind":"app"}"#)
+        XCTAssertEqual(String(decoding: IPCReply.ping(pid: 42, version: "9.9", kind: .headless), as: UTF8.self),
+                       #"{"ok":true,"pid":42,"version":"9.9","kind":"headless"}"#)
         XCTAssertEqual(String(decoding: IPCReply.unknownCommand, as: UTF8.self), #"{"ok":false,"error":"unknown command"}"#)
         XCTAssertEqual(IPCReply.ok, Data("ok".utf8))
     }
@@ -125,7 +127,7 @@ final class IPCSocketTests: XCTestCase {
             }
         })
         let ping = try XCTUnwrap(EventSocketClient.request("ping", socketPath: socketPath))
-        XCTAssertEqual(String(decoding: ping, as: UTF8.self), #"{"ok":true,"pid":4242,"version":"test"}"#)
+        XCTAssertEqual(String(decoding: ping, as: UTF8.self), #"{"ok":true,"pid":4242,"version":"test","kind":"app"}"#)
         let status = try XCTUnwrap(EventSocketClient.request("status", socketPath: socketPath))
         XCTAssertEqual(try JSONValue.parse(status)["aggregate"]?["mode"], .string("working"))
         XCTAssertEqual(EventSocketClient.request("open-settings", socketPath: socketPath), IPCReply.ok)

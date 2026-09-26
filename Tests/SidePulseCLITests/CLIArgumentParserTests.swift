@@ -49,6 +49,7 @@ final class CLIArgumentParserTests: XCTestCase {
     func testOptionValueMayStartWithDash() throws {
         XCTAssertEqual(try parse(["--opt", "-x"]).value("opt"), "-x")
         XCTAssertEqual(try parse(["--interval", "-1"]).value("interval"), "-1")
+        XCTAssertEqual(try parse(["--opt=--x"]).value("opt"), "--x")
     }
 
     func testDoubleDashTerminatorAndLoneDash() throws {
@@ -69,6 +70,8 @@ final class CLIArgumentParserTests: XCTestCase {
         assertUsageError(["-z"], "unrecognized arguments: -z")
         assertUsageError(["-f"], "unrecognized arguments: -f")
         assertUsageError(["--opt"], "argument --opt: expected one argument")
+        assertUsageError(["--opt", "--flag"], "argument --opt: expected one argument")
+        assertUsageError(["--opt", "--"], "argument --opt: expected one argument")
         assertUsageError(["--flag=yes"], "argument --flag: ignored explicit argument 'yes'")
         assertUsageError(["a", "b", "c", "d"], "unrecognized arguments: c d")
     }

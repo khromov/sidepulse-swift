@@ -89,8 +89,10 @@ enum LedsCommand: CLICommand {
         if env.variables["SIDEPULSE_MOUNT_ROOTS"] != nil { options.mountRoots = env.mountRoots }
 
         if env.app.isRunning() {
-            throw CommandFailure(message: "the SidePulse app is running and already drives the LEDs. "
-                + "Stop it first (sidepulse app stop) or use 'sidepulse leds --once'.")
+            throw CommandFailure(message: AppLauncher.ownerRefusal(
+                env, app: "the SidePulse app is running and already drives the LEDs. "
+                    + "Stop it first (sidepulse app stop) or use 'sidepulse leds --once'.",
+                headlessAlternative: ", or use 'sidepulse leds --once'"))
         }
 
         DiagnosticsLog.shared.url = env.paths.appLogFile

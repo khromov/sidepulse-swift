@@ -89,6 +89,31 @@ final class PresentationHookCLIPathTests: XCTestCase {
         XCTAssertEqual(HookCLIPath.resolve(paths: paths(), runningExecutable: helper.path), helper.path)
     }
 
+    /// Regression: an app opened from ~/Downloads wrote its random, read-only translocation path into hooks.
+    func testTranslocatedAppNeverResolvesItsOwnHelper() throws {
+        let moved = tmp.appendingPathComponent("T/AppTranslocation/6F1E2D3C/d/SidePulse.app")
+        let movedApp = moved.appendingPathComponent("Contents/MacOS/SidePulse")
+        try makeExecutable(movedApp)
+        try makeExecutable(moved.appendingPathComponent("Contents/Helpers/sidepulse"))
+        XCTAssertNil(HookCLIPath.resolve(paths: paths(), runningExecutable: movedApp.path))
+        XCTAssertEqual(HookCLIPath.unresolvedMessage(runningExecutable: movedApp.path), HookCLIPath.translocatedMessage)
+        XCTAssertEqual(HookCLIPath.unresolvedMessage(runningExecutable: app.path), HookCLIPath.notFoundMessage)
+        // The stable link from an earlier install stays usable.
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: helper)
+        XCTAssertEqual(HookCLIPath.resolve(paths: paths(), runningExecutable: movedApp.path), link.path)
+    }
+
+    func testIsTranslocated() {
+        XCTAssertTrue(HookCLIPath.isTranslocated(
+            "/private/var/folders/ab/xyz/T/AppTranslocation/0A1B/d/SidePulse.app/Contents/MacOS/SidePulse"))
+        XCTAssertFalse(HookCLIPath.isTranslocated("/Applications/SidePulse.app/Contents/MacOS/SidePulse"))
+        XCTAssertFalse(HookCLIPath.isTranslocated("/Users/x/AppTranslocationNotes/SidePulse.app/Contents/MacOS/SidePulse"))
+        XCTAssertThrowsError(try AppTranslocated.check("/private/var/folders/T/AppTranslocation/0A1B/d/SidePulse.app/Contents/MacOS/SidePulse")) {
+            XCTAssertEqual(($0 as? LocalizedError)?.errorDescription, HookCLIPath.translocatedMessage)
+        }
+        XCTAssertNoThrow(try AppTranslocated.check(app.path))
+    }
+
     func testProblemWithMissingPath() {
         XCTAssertEqual(HookCLIPath.problem(with: tmp.appendingPathComponent("gone").path, runningExecutable: app.path), "missing")
         XCTAssertNil(HookCLIPath.problem(with: helper.path, runningExecutable: app.path))

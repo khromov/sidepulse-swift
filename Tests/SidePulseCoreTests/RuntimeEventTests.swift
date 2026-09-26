@@ -130,6 +130,7 @@ final class RuntimeEventTests: XCTestCase {
         XCTAssertEqual(ping["ok"], .bool(true))
         XCTAssertEqual(ping["version"]?.stringValue, SidePulseConstants.version)
         XCTAssertEqual(ping["pid"]?.intValue, Int(getpid()))
+        XCTAssertEqual(ping["kind"]?.stringValue, "headless")
         XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: world.paths.socketPath))
 
         let reply = try XCTUnwrap(world.request("status"))
@@ -165,6 +166,7 @@ final class RuntimeEventTests: XCTestCase {
         wait(for: [opened], timeout: 3)
         XCTAssertTrue(runtimeWait { replies.count == 1 })
         XCTAssertEqual(replies.items.first, "ok")
+        XCTAssertEqual(try JSONValue.parse(XCTUnwrap(world.request("ping")))["kind"]?.stringValue, "app")
     }
 
     func testPreviewPlaysThenRestores() throws {

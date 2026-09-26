@@ -11,8 +11,14 @@ public enum AppStatusText {
         case (false, _): launchd = "not loaded"
         }
         let socket = ping.map { $0.details.isEmpty ? "responding" : "responding, \($0.details)" } ?? "not responding"
+        let app: String
+        switch ping {
+        case nil: app = "not running"
+        case let ping? where ping.isHeadless: app = "not running (\(ping.headlessOwner) owns the socket)"
+        default: app = "running"
+        }
         return [
-            "app: \(ping != nil ? "running" : "not running")",
+            "app: \(app)",
             "  plist: \(plistPath.path) (\(state.installed ? "installed" : "missing"))",
             "  launchd: \(launchd)",
             "  socket: \(socketPath) (\(socket))",

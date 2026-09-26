@@ -87,7 +87,10 @@ is too.
 messages to the runtime in accept order, so a hook's `PreToolUse` is never
 applied after its `PostToolUse`. A message waits at most 0.25 s behind an
 unfinished earlier connection. The socket commands are `ping`, `status`,
-`open-settings` and `reload-settings`. `reload-settings` waits up to 2 s for an
+`open-settings` and `reload-settings`. `ping` answers
+`{"ok","pid","version","kind"}`: `kind` is `headless` when the runtime has no
+`onOpenSettings` handler (`sidepulse run`/`leds`), else `app`, and the CLI reads
+a missing `kind` as `app`. `reload-settings` waits up to 2 s for an
 LED write that started with the old settings; if it is still running, the reply
 is `{"ok":false,"error":"LED write in progress"}`.
 
@@ -158,7 +161,10 @@ hook CLI (install, setup, doctor and the app). Order: `$SIDEPULSE_CLI_PATH` as
 is, the stable link when it is a SidePulse CLI, the `Helpers/sidepulse` of the
 bundle the running binary lives in, then the running CLI itself. It accepts
 only a `sidepulse` inside `<X>.app/Contents/Helpers/` or the running CLI, never
-the menu-bar binary or the Python CLI. Doctor checks the CLI the installed
+the menu-bar binary or the Python CLI. A running binary under an
+`/AppTranslocation/` path (an app opened in place from a download) gets no
+bundled or running-CLI fallback, and `unresolvedMessage()` then asks the user
+to move the app to Applications. Doctor checks the CLI the installed
 hooks call with the same rule (an explicit `$SIDEPULSE_CLI_PATH` only has to
 exist).
 
@@ -166,8 +172,9 @@ LaunchAgent: `~/Library/LaunchAgents/io.sidepulse.swift.plist`. It runs the app
 binary with `RunAtLoad`, `KeepAlive={SuccessfulExit:false}` and
 `EnvironmentVariables` `PATH` (the installing process's `PATH` plus
 `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`). Only `app install`,
-`setup` and the Launch at Login toggle write it; `app start` and `settings`
-open the app without it when it is missing, and every start path pings first.
+`setup` and the Launch at Login toggle write it (the toggle throws
+`AppTranslocated` rather than write a translocated path); `app start` and
+`settings` open the app without it when it is missing, and every start path pings first.
 
 Bundle: `Resources/Info.plist` is the template for
 `SidePulse.app/Contents/Info.plist` (`LSUIElement`, bundle id

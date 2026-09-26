@@ -42,7 +42,9 @@ points_into_app() {
     esac
 }
 
+# PlistBuddy prints "File Doesn't Exist, Will Create: …" on stdout for a missing plist.
 bundle_id() {
+    [ -f "$1/Contents/Info.plist" ] || return 0
     /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true
 }
 
@@ -85,12 +87,26 @@ fi
 launchctl bootout "gui/$USER_ID/$LABEL" 2>/dev/null || true
 rm -f "$PLIST"
 
-if [ "$OURS" -eq 1 ]; then
+app_pids() {
     for pid in $(pgrep -x SidePulse 2>/dev/null || true); do
         if [ "$(ps -o comm= -p "$pid" 2>/dev/null || true)" = "$DEST/Contents/MacOS/SidePulse" ]; then
-            kill "$pid" 2>/dev/null || true
+            echo "$pid"
         fi
     done
+}
+
+SURVIVORS=""
+if [ "$OURS" -eq 1 ]; then
+    for pid in $(app_pids); do
+        kill "$pid" 2>/dev/null || true
+    done
+    # The app flushes latest.json and app.log as it quits, which would recreate a purged data directory.
+    tries=0
+    while [ -n "$(app_pids)" ] && [ "$tries" -lt 50 ]; do
+        sleep 0.2
+        tries=$((tries + 1))
+    done
+    SURVIVORS=$(app_pids | tr '\n' ' ')
 fi
 
 if points_into_app "$LINK"; then
@@ -112,7 +128,12 @@ else
     echo "No SidePulse.app at $DEST (pass --app-dir DIR if it is elsewhere)"
 fi
 
-if [ "$PURGE" -eq 1 ]; then
+if [ "$PURGE" -eq 1 ] && [ -n "$SURVIVORS" ]; then
+    echo "warning: SidePulse is still running (pid ${SURVIVORS% }), so $DATA_DIR was kept;" >&2
+    echo "         quit SidePulse from the menu bar, then run scripts/uninstall.sh --purge again" >&2
+    echo "SidePulse is uninstalled, but its settings and logs were not purged."
+    exit 1
+elif [ "$PURGE" -eq 1 ]; then
     rm -rf "$DATA_DIR"
     echo "Removed $DATA_DIR"
 else

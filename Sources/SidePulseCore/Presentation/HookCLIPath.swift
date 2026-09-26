@@ -9,11 +9,23 @@ public enum HookCLIPath {
         if let override = paths.environment["SIDEPULSE_CLI_PATH"], !override.isEmpty { return override }
         let link = paths.defaultCLILink.path
         if problem(with: link, runningExecutable: runningExecutable) == nil { return link }
+        // A translocated path is a read-only mount that is gone after a reboot.
+        guard !isTranslocated(runningExecutable) else { return nil }
         if let bundle = enclosingBundle(of: runningExecutable) {
             let helper = bundle.appendingPathComponent("Contents/Helpers/sidepulse").path
             if problem(with: helper, runningExecutable: runningExecutable) == nil { return helper }
         }
         return isCLIBinary(runningExecutable) ? runningExecutable : nil
+    }
+
+    /// Gatekeeper runs a quarantined app opened in place (such as from ~/Downloads) from a random
+    /// `/AppTranslocation/` mount.
+    public static func isTranslocated(_ path: String) -> Bool {
+        URL(fileURLWithPath: path).pathComponents.contains("AppTranslocation")
+    }
+
+    public static func unresolvedMessage(runningExecutable: String = SidePulsePaths.currentExecutablePath) -> String {
+        isTranslocated(runningExecutable) ? translocatedMessage : notFoundMessage
     }
 
     public static func problem(with path: String,
@@ -71,9 +83,22 @@ public enum HookCLIPath {
     public static let notFoundMessage =
         "The SidePulse command was not found ($SIDEPULSE_CLI_PATH, ~/.local/bin/sidepulse or "
         + "SidePulse.app/Contents/Helpers/sidepulse). Install SidePulse with scripts/install.sh."
+
+    public static let translocatedMessage =
+        "SidePulse is running from a temporary location; move SidePulse.app to Applications and reopen it."
 }
 
 public struct HookCLINotFound: Error, LocalizedError, Equatable {
     public init() {}
-    public var errorDescription: String? { HookCLIPath.notFoundMessage }
+    public var errorDescription: String? { HookCLIPath.unresolvedMessage() }
+}
+
+/// Thrown instead of writing a translocated path into the LaunchAgent plist.
+public struct AppTranslocated: Error, LocalizedError, Equatable {
+    public init() {}
+    public var errorDescription: String? { HookCLIPath.translocatedMessage }
+
+    public static func check(_ executable: String) throws {
+        if HookCLIPath.isTranslocated(executable) { throw AppTranslocated() }
+    }
 }
