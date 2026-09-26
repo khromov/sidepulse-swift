@@ -201,14 +201,12 @@ final class RuntimeLifecycleTests: XCTestCase {
     func testConnectedDevicesAreRememberedAtStartWithTheirNames() throws {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
-        world.updateSettings { $0.defaultDisplay = .manual }
         let runtime = try world.startRuntime()
         runtime.waitUntilIdle()
         let saved = world.settingsStore.load()
         XCTAssertEqual(saved.devices.map(\.name).sorted(), ["SidePulse Dot", "SidePulse Pro"])
-        XCTAssertEqual(saved.devices.map(\.display), [.manual, .manual], "first sighting copies default_display")
-        XCTAssertEqual(world.program("PulseDot"), "boot", "Manual by default: never written")
-        XCTAssertEqual(runtime.deviceInfos().map(\.display), [.manual, .manual])
+        XCTAssertEqual(saved.devices.map(\.display), [.agent, .agent])
+        XCTAssertEqual(runtime.deviceInfos().map(\.display), [.agent, .agent])
     }
 
     // MARK: Keep-awake

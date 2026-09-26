@@ -241,22 +241,7 @@ public enum HookLogStore {
             fd = try openForAppend(path)
         }
         defer { close(fd) }
-
-        let bytes = Array((line + "\n").utf8)
-        var offset = 0
-        while offset < bytes.count {
-            let written = bytes.withUnsafeBytes { buffer -> Int in
-                guard let base = buffer.baseAddress else { return 0 }
-                return Darwin.write(fd, base + offset, buffer.count - offset)
-            }
-            if written > 0 {
-                offset += written
-            } else if written < 0 && errno == EINTR {
-                continue
-            } else {
-                throw FileUtil.posixError("write \(path)")
-            }
-        }
+        guard FileUtil.writeAll(fd, Data((line + "\n").utf8)) else { throw FileUtil.posixError("write \(path)") }
     }
 
     private static func openForAppend(_ path: String) throws -> Int32 {

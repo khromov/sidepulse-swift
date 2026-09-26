@@ -109,6 +109,23 @@ final class FileUtilTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    func testBackupsKeepTheNewestThreeOfOurs() throws {
+        let dir = makeDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.toml")
+        try FileUtil.atomicWrite("x", to: file)
+        for foreign in ["config.toml.bak", "config.toml.bak.old", "other.toml.bak.20250101T000000Z"] {
+            try FileUtil.atomicWrite("keep", to: dir.appendingPathComponent(foreign))
+        }
+        for day in 1...4 { try FileUtil.backup(file, now: Date(timeIntervalSince1970: 1_758_130_963 + Double(day) * 86_400)) }
+        let now = Date(timeIntervalSince1970: 1_758_130_963 + 5 * 86_400)
+        for _ in 0..<10 { try FileUtil.backup(file, now: now) }
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        XCTAssertEqual(names, ["config.toml", "config.toml.bak", "config.toml.bak.20250922T174243Z-10",
+                               "config.toml.bak.20250922T174243Z-8", "config.toml.bak.20250922T174243Z-9",
+                               "config.toml.bak.old", "other.toml.bak.20250101T000000Z"])
+    }
+
     private func makeDir() -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sp-fileutil-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

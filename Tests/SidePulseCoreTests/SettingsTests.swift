@@ -22,13 +22,11 @@ final class SettingsModelTests: XCTestCase {
     func testDefaults() {
         let settings = SidePulseSettings()
         XCTAssertEqual(settings.devices, [])
-        XCTAssertEqual(settings.defaultDisplay, .agent)
         XCTAssertEqual(settings.animations, [:])
         XCTAssertEqual(settings.idleTimeoutSeconds, 3600)
         XCTAssertEqual(settings.sessionRetentionSeconds, 172_800)
         XCTAssertEqual(settings.sleepPolicy, .agents)
         XCTAssertEqual(settings.minBatteryPercent, 20)
-        XCTAssertTrue(settings.extra.isEmpty)
         XCTAssertEqual(settings.matchingProfile?.id, "profile:signal")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
         XCTAssertEqual(LedDisplay.manual.label, "Manual")
@@ -43,7 +41,6 @@ final class SettingsModelTests: XCTestCase {
             "idle_timeout_seconds": 3600,
             "recent_session_retention_seconds": 172800
           },
-          "default_display": "agent",
           "devices": [],
           "sleep_prevention": {
             "min_battery_percent": 20,
@@ -87,7 +84,7 @@ final class SettingsModelTests: XCTestCase {
 
     func testDeviceDecodingRules() throws {
         let loaded = try settings(fromJSON: """
-        {"default_display": "manual", "devices": [
+        {"devices": [
           "garbage", {"name": "no id"}, {"id": ""}, {"id": 7},
           {"id": "/Volumes/PulseDot", "name": "SidePulse Dot", "path": "/Volumes/PulseDot", "display": "agent", "brightness": 127.5},
           {"id": "/Volumes/PulseDot", "name": "Duplicate", "display": "manual"},
@@ -99,19 +96,16 @@ final class SettingsModelTests: XCTestCase {
         """)
         XCTAssertEqual(loaded.devices, [
             DeviceSettings(id: "/Volumes/PulseDot", name: "SidePulse Dot", path: "/Volumes/PulseDot", display: .agent, brightness: 128),
-            DeviceSettings(id: "/Volumes/SidePulsePro", name: "SidePulsePro", path: "/Volumes/SidePulsePro", display: .manual, brightness: 255),
-            DeviceSettings(id: "dev-3", name: "Other Disk", path: "/Volumes/Other Disk", display: .manual, brightness: 255),
-            DeviceSettings(id: "dev-4", name: "dev-4", path: "/", display: .manual, brightness: 255),
-            DeviceSettings(id: "dev-5", name: "dev-5", path: "dev-5", display: .manual, brightness: 255),
+            DeviceSettings(id: "/Volumes/SidePulsePro", name: "SidePulsePro", path: "/Volumes/SidePulsePro", display: .agent, brightness: 255),
+            DeviceSettings(id: "dev-3", name: "Other Disk", path: "/Volumes/Other Disk", display: .agent, brightness: 255),
+            DeviceSettings(id: "dev-4", name: "/", path: "/", display: .agent, brightness: 255),
+            DeviceSettings(id: "dev-5", name: "dev-5", path: "dev-5", display: .agent, brightness: 255),
         ])
     }
 
-    func testDeviceNameFallsBackToThePythonPathName() throws {
-        let loaded = try settings(fromJSON: """
-        {"devices": [{"id": "a", "path": "."}, {"id": "b", "path": "/Volumes/PulseDot/"},
-                     {"id": "c", "path": "/Volumes/X/."}, {"id": "d", "path": "//"}, {"id": "e", "path": "/Volumes/.."}]}
-        """)
-        XCTAssertEqual(loaded.devices.map(\.name), ["a", "PulseDot", "X", "d", ".."])
+    func testDeviceNameFallsBackToTheLastPathComponent() throws {
+        let loaded = try settings(fromJSON: #"{"devices": [{"id": "a"}, {"id": "b", "path": "/Volumes/PulseDot/"}]}"#)
+        XCTAssertEqual(loaded.devices.map(\.name), ["a", "PulseDot"])
     }
 
     func testNonFiniteAndOutOfRangeNumbersAreSavedAsValidJSON() throws {
@@ -159,29 +153,14 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(mixed.animationID(for: .idleReady), "solid-blue")
     }
 
-    func testUnknownKeysArePreservedSorted() throws {
-        let loaded = try settings(fromJSON: """
-        {"future": {"b": 1, "a": [1, {"z": 2, "y": 3}]}, "show_menu_bar_icon": false}
-        """)
-        XCTAssertEqual(loaded.extra.keys, ["future", "show_menu_bar_icon"])
-        XCTAssertEqual(loaded.extra["future"]?.serialized(), #"{"a":[1,{"y":3,"z":2}],"b":1}"#)
-
-        let json = loaded.toJSON()
-        XCTAssertEqual(json.objectValue?.keys, ["agent_animations", "agent_list", "default_display", "devices",
-                                                "future", "show_menu_bar_icon", "sleep_prevention"])
-        XCTAssertEqual(SidePulseSettings.fromJSON(json), loaded)
-
-        var built = SidePulseSettings()
-        built.extra["zeta"] = .object(["b": .bool(true), "a": .null])
-        built.extra["alpha"] = .number("1")
-        XCTAssertEqual(built.extra.keys, ["alpha", "zeta"], "extra is kept in saved (sorted) order")
-        XCTAssertEqual(built.extra["zeta"]?.objectValue?.keys, ["a", "b"])
-        XCTAssertEqual(SidePulseSettings.fromJSON(built.toJSON()), built)
+    func testUnknownKeysAreDroppedOnSave() throws {
+        let loaded = try settings(fromJSON: #"{"future": {"a": 1}, "default_display": "manual", "leds_enabled": false}"#)
+        XCTAssertEqual(loaded, SidePulseSettings())
+        XCTAssertEqual(loaded.toJSON().objectValue?.keys, ["agent_animations", "agent_list", "devices", "sleep_prevention"])
     }
 
     func testJSONRoundTrip() {
         var original = SidePulseSettings()
-        original.defaultDisplay = .manual
         original.setAnimation("kitt", for: .working)
         original.setAnimation("solid-green", for: .completed)
         original.setDisplay(.agent, forDevice: "/Volumes/PulseDot", name: "SidePulse Dot", path: "/Volumes/PulseDot")
@@ -191,7 +170,6 @@ final class SettingsModelTests: XCTestCase {
         original.sessionRetentionSeconds = 1.5
         original.sleepPolicy = .always
         original.minBatteryPercent = 25
-        original.extra["custom"] = .string("kept")
 
         let json = original.toJSON()
 
@@ -199,7 +177,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(json["agent_list"]?.serialized(), #"{"idle_timeout_seconds":900,"recent_session_retention_seconds":1.5}"#)
         XCTAssertEqual(json["devices"]?.serialized(),
                        #"[{"brightness":25,"display":"agent","id":"/Volumes/PulseDot","name":"SidePulse Dot","path":"/Volumes/PulseDot"},"#
-                       + #"{"brightness":128,"display":"manual","id":"/Volumes/SidePulsePro","name":"SidePulse Pro","path":"/Volumes/SidePulsePro"}]"#)
+                       + #"{"brightness":128,"display":"agent","id":"/Volumes/SidePulsePro","name":"SidePulse Pro","path":"/Volumes/SidePulsePro"}]"#)
         XCTAssertEqual(json["agent_animations"]?.serialized(),
                        #"{"completed":"solid-green","long_task_progress":"kitt","tool_running":"kitt","working":"kitt"}"#)
     }
@@ -264,8 +242,6 @@ final class SettingsModelTests: XCTestCase {
         var settings = SidePulseSettings()
         XCTAssertEqual(settings.display(forDevice: "/Volumes/PulseDot"), .agent)
         XCTAssertEqual(settings.brightness(forDevice: "/Volumes/PulseDot"), 255)
-        settings.defaultDisplay = .manual
-        XCTAssertEqual(settings.display(forDevice: "/Volumes/PulseDot"), .manual)
         settings.devices = [DeviceSettings(id: "x", name: "x", path: "x", display: .agent, brightness: 400)]
         XCTAssertEqual(settings.brightness(forDevice: "x"), 255)
         XCTAssertEqual(settings.display(forDevice: "x"), .agent)
@@ -283,27 +259,21 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.device(id: "/Volumes/PulseDot"),
                        DeviceSettings(id: "/Volumes/PulseDot", name: "SidePulse Dot", path: "/Volumes/PulseDot", display: .agent, brightness: 96))
 
-        settings.defaultDisplay = .manual
         settings.setBrightness(300, forDevice: "/Volumes/SidePulsePro", name: "SidePulse Pro", path: "/Volumes/SidePulsePro")
-        XCTAssertEqual(settings.device(id: "/Volumes/SidePulsePro")?.display, .manual)
+        XCTAssertEqual(settings.device(id: "/Volumes/SidePulsePro")?.display, .agent)
         XCTAssertEqual(settings.brightness(forDevice: "/Volumes/SidePulsePro"), 255)
         settings.setBrightness(-1, forDevice: "/Volumes/SidePulsePro")
         XCTAssertEqual(settings.brightness(forDevice: "/Volumes/SidePulsePro"), 0)
         XCTAssertEqual(settings.devices.map(\.id), ["/Volumes/PulseDot", "/Volumes/SidePulsePro"])
     }
 
-    func testRememberCopiesDefaultDisplayOnFirstSighting() {
+    func testRememberAddsANewDeviceOnce() {
         var settings = SidePulseSettings()
-        settings.defaultDisplay = .manual
-
         XCTAssertTrue(settings.remember(candidate("/Volumes/PulseDot")))
         XCTAssertEqual(settings.devices, [
-            DeviceSettings(id: "/Volumes/PulseDot", name: "SidePulse Dot", path: "/Volumes/PulseDot", display: .manual, brightness: 255),
+            DeviceSettings(id: "/Volumes/PulseDot", name: "SidePulse Dot", path: "/Volumes/PulseDot", display: .agent, brightness: 255),
         ])
         XCTAssertFalse(settings.remember(candidate("/Volumes/PulseDot")), "nothing changed")
-
-        settings.defaultDisplay = .agent
-        XCTAssertEqual(settings.display(forDevice: "/Volumes/PulseDot"), .manual, "remembered devices keep their own display")
     }
 
     func testRememberPreservesExistingChoices() {
@@ -337,8 +307,6 @@ final class SettingsModelTests: XCTestCase {
 
         XCTAssertEqual(config.staleAfter, 900)
         XCTAssertEqual(config.retention, 36 * 3600)
-        XCTAssertEqual(config.completedVisible, MonitorConfig().completedVisible)
-        XCTAssertEqual(config.toolRunningTimeout, 0)
     }
 }
 
@@ -362,20 +330,19 @@ final class SettingsStoreTests: XCTestCase {
         let store = SettingsStore(url: paths.settingsFile)
         var settings = SidePulseSettings()
         settings.setAnimation("ember-tide", for: .working)
-        settings.extra["zeta"] = .object(["b": .bool(true), "a": .null])
 
         try store.save(settings)
 
         let text = try String(contentsOf: paths.settingsFile, encoding: .utf8)
         XCTAssertTrue(text.hasPrefix("{\n  \"agent_animations\": {\n    \"long_task_progress\": \"ember-tide\","), text)
-        XCTAssertTrue(text.hasSuffix("  \"zeta\": {\n    \"a\": null,\n    \"b\": true\n  }\n}\n"), text)
+        XCTAssertTrue(text.hasSuffix("    \"policy\": \"agents\"\n  }\n}\n"), text)
         XCTAssertEqual(store.load(), settings)
         XCTAssertNotNil(store.modificationDate)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.settingsFile.path + ".lock"))
         XCTAssertEqual(store.lockURL.path, paths.settingsFile.path + ".lock")
     }
 
-    func testUnknownKeysSurviveUpdates() throws {
+    func testUnknownKeysAreDroppedByUpdates() throws {
         let dir = try makeTempDirectory(self)
         let store = SettingsStore(url: dir.appendingPathComponent("settings.json"))
         try Data(#"{"show_menu_bar_icon": false, "future": [1, 2], "leds_enabled": true}"#.utf8).write(to: store.url)
@@ -383,9 +350,9 @@ final class SettingsStoreTests: XCTestCase {
         try store.update { $0.sleepPolicy = .never }
 
         let saved = try JSONValue.parse(try Data(contentsOf: store.url))
-        XCTAssertEqual(saved["show_menu_bar_icon"], .bool(false))
-        XCTAssertEqual(saved["future"], .array([.number("1"), .number("2")]))
-        XCTAssertNil(saved["leds_enabled"], "the retired Drive LEDs key is dropped, not kept as unknown")
+        XCTAssertNil(saved["show_menu_bar_icon"])
+        XCTAssertNil(saved["future"])
+        XCTAssertNil(saved["leds_enabled"])
         XCTAssertEqual(saved["sleep_prevention"]?["policy"], .string("never"))
     }
 
@@ -506,7 +473,7 @@ final class SettingsStoreTests: XCTestCase {
     func testUnreadableFileIsNotReplaced() throws {
         let dir = try makeTempDirectory(self)
         let store = SettingsStore(url: dir.appendingPathComponent("settings.json"))
-        try Data(#"{"default_display": "manual"}"#.utf8).write(to: store.url)
+        try Data(#"{"sleep_prevention": {"policy": "always"}}"#.utf8).write(to: store.url)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: store.url.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: store.url.path) }
         guard (try? Data(contentsOf: store.url)) == nil else { throw XCTSkip("running with permission to read anything") }
@@ -514,7 +481,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.update { $0.sleepPolicy = .never })
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: store.url.path)
-        XCTAssertEqual(store.load().defaultDisplay, .manual, "the original content is still there")
+        XCTAssertEqual(store.load().sleepPolicy, .always, "the original content is still there")
     }
 
     func testUpdateWaitsForALockHeldByAnotherProcess() throws {

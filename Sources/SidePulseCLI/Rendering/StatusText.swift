@@ -21,7 +21,7 @@ public enum SnapshotOrigin: Equatable, Sendable {
 public enum StatusText {
     /// Empty optional fields are omitted, like Python's truthiness checks.
     public static func describe(_ status: AgentStatus, now: Date) -> String {
-        let age = wholeSeconds(status.age(now: now))
+        let age = AgeFormat.wholeSeconds(status.age(now: now))
         var text = "\(status.displayName): \(status.mode.label) event=\(status.eventName)"
         if let origin = status.origin, !origin.isEmpty { text += " origin=\(origin)" }
         if let tool = status.toolName, !tool.isEmpty { text += " tool=\(tool)" }
@@ -52,11 +52,5 @@ public enum StatusText {
             lines += statuses.map { "  \(describe($0, now: snapshot.collectedAt))" }
         }
         return lines.joined(separator: "\n")
-    }
-
-    /// Truncates like Python `int(x)`, clamped so huge values can't trap.
-    static func wholeSeconds(_ value: Double) -> Int {
-        guard value.isFinite else { return 0 }
-        return Int(max(0, min(value, Double(Int32.max))))
     }
 }

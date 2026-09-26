@@ -13,24 +13,8 @@ public enum DisplayNames {
         case "codex": return "Codex"
         case "claude": return "Claude"
         case "opencode": return "OpenCode"
-        default: return pythonTitle(provider)
+        default: return provider.capitalized
         }
-    }
-
-    static func pythonTitle(_ text: String) -> String {
-        var out = ""
-        var previousCased = false
-        for scalar in text.unicodeScalars {
-            let properties = scalar.properties
-            if properties.isCased {
-                out += previousCased ? properties.lowercaseMapping : properties.titlecaseMapping
-                previousCased = true
-            } else {
-                out.unicodeScalars.append(scalar)
-                previousCased = false
-            }
-        }
-        return out
     }
 
     public static func truncate(_ text: String, _ limit: Int) -> String {

@@ -92,6 +92,26 @@ public enum FileUtil {
         return String(cString: real)
     }
 
+    /// Retries `EINTR`; a zero-byte write fails with `EIO` so a misbehaving mount cannot make a caller spin.
+    static func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return true }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(fd, base + offset, buffer.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written < 0 && errno == EINTR {
+                    continue
+                } else {
+                    if written == 0 { errno = EIO }
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     static func posixError(_ what: String) -> NSError {
         let code = errno
         return NSError(domain: NSPOSIXErrorDomain, code: Int(code),
@@ -106,16 +126,31 @@ public enum FileUtil {
     public static func backup(_ url: URL, now: Date = Date()) throws -> URL? {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return nil }
-        let base = url.path + ".bak." + TimeFormat.backupStamp(now)
-        var candidate = base
-        var n = 2
-        while fm.fileExists(atPath: candidate) {
-            candidate = "\(base)-\(n)"
-            n += 1
+        let dir = url.deletingLastPathComponent()
+        let base = url.lastPathComponent + ".bak." + TimeFormat.backupStamp(now)
+        // Numbered past the highest existing copy, because pruning can free a lower name within the same second.
+        let taken = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).compactMap { name in
+            name == base ? 1 : name.hasPrefix(base + "-") ? Int(name.dropFirst(base.count + 1)) : nil
         }
-        let dest = URL(fileURLWithPath: candidate)
+        let next = (taken.max() ?? 0) + 1
+        let dest = dir.appendingPathComponent(next == 1 ? base : "\(base)-\(next)")
         try fm.copyItem(at: writeTarget(url), to: dest)
+        pruneBackups(of: url)
         return dest
+    }
+
+    static let keptBackups = 3
+
+    /// Every install, uninstall and trust refresh adds a backup; only names in our own stamp format are touched.
+    static func pruneBackups(of url: URL) {
+        let prefix = url.lastPathComponent + ".bak."
+        let dir = url.deletingLastPathComponent()
+        let ours = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter {
+            $0.hasPrefix(prefix) && $0.dropFirst(prefix.count).wholeMatch(of: #/\d{8}T\d{6}Z(-\d+)?/#) != nil
+        }
+        for name in ours.sorted(by: { $0.localizedStandardCompare($1) == .orderedDescending }).dropFirst(keptBackups) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        }
     }
 
     public static func readText(_ url: URL) -> String? {
@@ -156,7 +191,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
         queue.async {
             // POSIX calls only: FileHandle's legacy write APIs raise uncatchable
             // ObjC exceptions on ENOSPC/EIO, which would crash-loop the app.
-            if echo { Self.writeAll(STDERR_FILENO, line) }
+            if echo { _ = FileUtil.writeAll(STDERR_FILENO, line) }
             guard let url else { return }
             var info = stat()
             if stat(url.path, &info) == 0, info.st_size > 2 << 20 {
@@ -167,20 +202,8 @@ public final class DiagnosticsLog: @unchecked Sendable {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
             guard fd >= 0 else { return }
-            Self.writeAll(fd, line)
+            _ = FileUtil.writeAll(fd, line)
             close(fd)
-        }
-    }
-
-    private static func writeAll(_ fd: Int32, _ data: Data) {
-        data.withUnsafeBytes { buf in
-            guard let base = buf.baseAddress else { return }
-            var offset = 0
-            while offset < buf.count {
-                let n = write(fd, base + offset, buf.count - offset)
-                if n < 0 { if errno == EINTR { continue }; return }
-                offset += n
-            }
         }
     }
 }

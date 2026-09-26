@@ -36,25 +36,14 @@ public struct DeviceSettings: Sendable, Equatable {
 
 public struct SidePulseSettings: Sendable, Equatable {
     public var devices: [DeviceSettings] = []
-    public var defaultDisplay: LedDisplay = .agent
     /// Only explicit selections are stored, keyed by AgentMode raw value.
     public var animations: [String: String] = [:]
     public var idleTimeoutSeconds: Double = 3600
     public var sessionRetentionSeconds: Double = 172_800
     public var sleepPolicy: SleepPolicy = .agents
     public var minBatteryPercent: Double = 20
-    /// Unknown top-level keys, kept key-sorted as saved so equality does not depend on insertion order.
-    public var extra: JSONObject = JSONObject() {
-        didSet { extra = Self.canonical(extra) }
-    }
 
     public init() {}
-
-    /// The retired `leds_enabled` is listed so older files drop it on the next save
-    /// instead of keeping it in `extra`.
-    static let knownKeys: Set<String> = [
-        "agent_animations", "agent_list", "default_display", "devices", "leds_enabled", "sleep_prevention",
-    ]
 
     // MARK: JSON
 
@@ -64,10 +53,7 @@ public struct SidePulseSettings: Sendable, Equatable {
         var settings = SidePulseSettings()
         guard let root = value.objectValue else { return settings }
 
-        if let display = root["default_display"]?.stringValue.flatMap(LedDisplay.init(rawValue:)) {
-            settings.defaultDisplay = display
-        }
-        settings.devices = decodeDevices(root["devices"], defaultDisplay: settings.defaultDisplay)
+        settings.devices = decodeDevices(root["devices"])
         settings.animations = decodeAnimations(root["agent_animations"])
 
         let agentList = root["agent_list"]?.objectValue ?? JSONObject()
@@ -85,12 +71,6 @@ public struct SidePulseSettings: Sendable, Equatable {
         if let percent = finiteNumber(sleep["min_battery_percent"]) {
             settings.minBatteryPercent = min(100, max(0, percent))
         }
-
-        var extra = JSONObject()
-        for (key, value) in root where !knownKeys.contains(key) {
-            extra[key] = value
-        }
-        settings.extra = extra
         return settings
     }
 
@@ -101,13 +81,12 @@ public struct SidePulseSettings: Sendable, Equatable {
         func seconds(_ value: Double, _ fallback: Double) -> JSONValue {
             JSONValue(value.isFinite ? max(0, value) : fallback, integralAsInt: true)
         }
-        var root = extra
+        var root = JSONObject()
         root["agent_animations"] = .object(JSONObject(animations.map { ($0.key, JSONValue.string($0.value)) }))
         root["agent_list"] = .object([
             "idle_timeout_seconds": seconds(idleTimeoutSeconds, defaults.idleTimeoutSeconds),
             "recent_session_retention_seconds": seconds(sessionRetentionSeconds, defaults.sessionRetentionSeconds),
         ])
-        root["default_display"] = .string(defaultDisplay.rawValue)
         root["devices"] = .array(devices.map { device in
             .object([
                 "brightness": JSONValue(LedProgram.clampBrightness(device.brightness)),
@@ -125,10 +104,6 @@ public struct SidePulseSettings: Sendable, Equatable {
         return JSONValue.object(root).sortedKeys()
     }
 
-    private static func canonical(_ object: JSONObject) -> JSONObject {
-        JSONValue.object(object).sortedKeys().objectValue ?? object
-    }
-
     private static func finiteNumber(_ value: JSONValue?) -> Double? {
         guard let number = value?.doubleValue, number.isFinite else { return nil }
         return number
@@ -139,7 +114,7 @@ public struct SidePulseSettings: Sendable, Equatable {
         return string
     }
 
-    private static func decodeDevices(_ value: JSONValue?, defaultDisplay: LedDisplay) -> [DeviceSettings] {
+    private static func decodeDevices(_ value: JSONValue?) -> [DeviceSettings] {
         guard let items = value?.arrayValue else { return [] }
         var devices: [DeviceSettings] = []
         var seen = Set<String>()
@@ -147,17 +122,12 @@ public struct SidePulseSettings: Sendable, Equatable {
             guard let entry = item.objectValue, let id = nonEmptyString(entry["id"]),
                   seen.insert(id).inserted else { continue }
             let path = nonEmptyString(entry["path"]) ?? id
-            let name = nonEmptyString(entry["name"]) ?? pythonPathName(path) ?? id
-            let display = entry["display"]?.stringValue.flatMap(LedDisplay.init(rawValue:)) ?? defaultDisplay
+            let name = nonEmptyString(entry["name"]) ?? URL(fileURLWithPath: path).lastPathComponent
+            let display = entry["display"]?.stringValue.flatMap(LedDisplay.init(rawValue:)) ?? .agent
             let brightness = LedProgram.normalizeBrightness(entry["brightness"]?.doubleValue)
             devices.append(DeviceSettings(id: id, name: name, path: path, display: display, brightness: brightness))
         }
         return devices
-    }
-
-    /// Python `Path(path).name` ignores `.` components, so "a/." is "a".
-    private static func pythonPathName(_ path: String) -> String? {
-        path.split(separator: "/").last { $0 != "." }.map(String.init)
     }
 
     private static func decodeAnimations(_ value: JSONValue?) -> [String: String] {
@@ -215,7 +185,7 @@ public struct SidePulseSettings: Sendable, Equatable {
     public func device(id: String) -> DeviceSettings? { devices.first { $0.id == id } }
 
     public func display(forDevice id: String) -> LedDisplay {
-        device(id: id)?.display ?? defaultDisplay
+        device(id: id)?.display ?? .agent
     }
 
     public func brightness(forDevice id: String) -> Int {
@@ -231,7 +201,6 @@ public struct SidePulseSettings: Sendable, Equatable {
         upsertDevice(id: id, name: name, path: path) { $0.brightness = value }
     }
 
-    /// Pins `defaultDisplay` on first sighting, since that default only applies to never-seen devices.
     @discardableResult
     public mutating func remember(_ device: DeviceCandidate) -> Bool {
         let before = devices

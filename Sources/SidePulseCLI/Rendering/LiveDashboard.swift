@@ -169,7 +169,7 @@ public enum LiveDashboard {
     }
 
     public static func formatDuration(_ seconds: Double) -> String {
-        let total = StatusText.wholeSeconds(seconds)
+        let total = AgeFormat.wholeSeconds(seconds)
         if total < 60 { return "\(total)s" }
         let minutes = total / 60
         if minutes < 60 { return "\(minutes)m\(twoDigits(total % 60))s" }

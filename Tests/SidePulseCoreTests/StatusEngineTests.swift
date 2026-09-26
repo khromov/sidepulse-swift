@@ -39,22 +39,10 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(snapshot.aggregate.activeCount, 2)
     }
 
-    func testOrphanedToolRunningExpiresBeforeSessionStaleTimeout() {
-        let engine = StatusEngine(config: MonitorConfig(staleAfter: 300, toolRunningTimeout: 120))
-        engine.ingest(provider: "codex", line: codexLine("PreToolUse", at: 0, ["session_id": .string("codex-session"), "tool_name": .string("Bash")]))
-        let snapshot = engine.snapshot(now: t0.addingTimeInterval(180))
-        XCTAssertEqual(snapshot.aggregate.mode, .idleReady)
-        XCTAssertEqual(snapshot.statuses, [])
-        XCTAssertEqual(snapshot.staleStatuses.map(\.mode), [.toolRunning])
-        XCTAssertEqual(snapshot.staleStatuses.first?.stale, true)
-        XCTAssertEqual(snapshot.aggregate.staleCount, 1)
-        XCTAssertNil(snapshot.aggregate.representative)
-    }
-
     func testCompletedStatusExpiresBeforeSessionStaleTimeout() {
-        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600, completedVisible: 15))
+        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600))
         engine.ingest(provider: "codex", line: codexLine("Stop", at: 0, ["session_id": .string("codex-session"), "last_assistant_message": .string("Done.")]))
-        let snapshot = engine.snapshot(now: t0.addingTimeInterval(60))
+        let snapshot = engine.snapshot(now: t0.addingTimeInterval(21 * 60))
         XCTAssertEqual(snapshot.aggregate.mode, .idleReady)
         XCTAssertEqual(snapshot.statuses, [])
         XCTAssertEqual(snapshot.staleStatuses.map(\.mode), [.completed])
@@ -71,7 +59,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     func testCompletedStatusIsHiddenWhenActiveWorkExists() {
-        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600, completedVisible: 15))
+        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600))
         engine.ingest(provider: "codex", line: codexLine("Stop", at: 0, ["session_id": .string("done-session"), "last_assistant_message": .string("Done.")]))
         engine.ingest(provider: "codex", line: codexLine("PreToolUse", at: 0, ["session_id": .string("working-session"), "tool_name": .string("Bash")]))
         let snapshot = engine.snapshot(now: t0)
@@ -149,15 +137,6 @@ final class StatusEngineTests: XCTestCase {
 
         let fresh = SnapshotBuilder.build(statuses: [status], config: MonitorConfig(), now: t0.addingTimeInterval(-2), sources: [])
         XCTAssertEqual(fresh.aggregate.mode, .working)
-    }
-
-    func testNegativeWindowsDisableSpecialCases() {
-        let completed = AgentStatus(provider: "codex", agentID: "codex:session:a", displayName: "a", mode: .completed,
-                                    updatedAt: t0.addingTimeInterval(-7200), eventName: "Stop")
-        var config = MonitorConfig(staleAfter: 10_000, completedVisible: -1)
-        XCTAssertEqual(SnapshotBuilder.build(statuses: [completed], config: config, now: t0, sources: []).statuses.count, 1)
-        config.staleAfter = 3600
-        XCTAssertEqual(SnapshotBuilder.build(statuses: [completed], config: config, now: t0, sources: []).statuses.count, 0)
     }
 
     func testSnapshotOrderIsPriorityThenNewestThenKey() {

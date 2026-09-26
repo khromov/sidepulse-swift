@@ -1,20 +1,11 @@
 import Foundation
 
 public struct MonitorConfig: Sendable, Equatable {
-    public var staleAfter: TimeInterval = 3600
-    /// 0 = disabled.
-    public var toolRunningTimeout: TimeInterval = 0
-    public var completedVisible: TimeInterval = 1200
-    public var idleVisible: TimeInterval = 0
-    /// A Working row from PostToolUse settles to Completed after this long.
-    public var postToolWorkingVisible: TimeInterval = 120
-    public var retention: TimeInterval = 172_800
+    public var staleAfter: TimeInterval
+    public var retention: TimeInterval
 
-    public init() {}
-    public init(staleAfter: TimeInterval, toolRunningTimeout: TimeInterval = 0, completedVisible: TimeInterval = 1200,
-                idleVisible: TimeInterval = 0, postToolWorkingVisible: TimeInterval = 120, retention: TimeInterval = 172_800) {
-        self.staleAfter = staleAfter; self.toolRunningTimeout = toolRunningTimeout; self.completedVisible = completedVisible
-        self.idleVisible = idleVisible; self.postToolWorkingVisible = postToolWorkingVisible; self.retention = retention
+    public init(staleAfter: TimeInterval = 3600, retention: TimeInterval = 172_800) {
+        self.staleAfter = staleAfter; self.retention = retention
     }
 }
 
@@ -342,14 +333,16 @@ struct StatusMetadata: Equatable {
 }
 
 public enum SnapshotBuilder {
-    /// A negative visibility window disables its special case instead of hiding rows.
+    static let completedVisible: TimeInterval = 1200
+    /// A Working row from PostToolUse settles to Completed after this long.
+    static let postToolWorkingVisible: TimeInterval = 120
+
     public static func build(statuses: [AgentStatus], config: MonitorConfig, now: Date, sources: [SourceInfo]) -> MonitorSnapshot {
         var fresh: [AgentStatus] = []
         var stale: [AgentStatus] = []
         for original in statuses {
             var status = original
-            if status.mode == .working, status.eventName == "PostToolUse", config.postToolWorkingVisible >= 0,
-               status.age(now: now) > config.postToolWorkingVisible {
+            if status.mode == .working, status.eventName == "PostToolUse", status.age(now: now) > postToolWorkingVisible {
                 status.mode = .completed
             }
             status.stale = isStale(status, config: config, now: now)
@@ -377,10 +370,12 @@ public enum SnapshotBuilder {
 
     static func isStale(_ status: AgentStatus, config: MonitorConfig, now: Date) -> Bool {
         let age = status.age(now: now)
-        if status.mode == .completed && config.completedVisible >= 0 { return age > config.completedVisible }
-        if status.mode == .idleReady && config.idleVisible >= 0 { return age > config.idleVisible }
-        return age > config.staleAfter
-            || (status.mode == .toolRunning && config.toolRunningTimeout > 0 && age > config.toolRunningTimeout)
+        switch status.mode {
+        case .completed: return age > completedVisible
+        // An idle row is only news at the moment it arrives.
+        case .idleReady: return age > 0
+        default: return age > config.staleAfter
+        }
     }
 
     /// agentID breaks ties so the order is deterministic.

@@ -247,24 +247,10 @@ public enum LedWriter {
             throw failure
         }
 
-        let bytes = Array(program.utf8)
-        var offset = 0
-        while offset < bytes.count {
-            let written = bytes.withUnsafeBytes { buffer in
-                Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
-            }
-            if written < 0 {
-                if errno == EINTR { continue }
-                let failure = posixFailure("Could not write", path)
-                close(fd)
-                throw failure
-            }
-            if written == 0 {
-                // Bail out instead of spinning on a misbehaving mount that accepts zero bytes.
-                close(fd)
-                throw LedError.writeFailed("Could not write \(path): no bytes were written")
-            }
-            offset += written
+        guard FileUtil.writeAll(fd, Data(program.utf8)) else {
+            let failure = posixFailure("Could not write", path)
+            close(fd)
+            throw failure
         }
         // The bytes are with the OS once the file is closed, so a filesystem that refuses to sync
         // must not fail the write.
