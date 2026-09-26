@@ -445,6 +445,9 @@ enum UnixSocket {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         configure(fd)
+        // Lets a whole record fit in the kernel before the server accepts, so a busy server cannot time the hook out.
+        var sendBuffer = Int32(SidePulseConstants.maxEventBytes)
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sendBuffer, socklen_t(MemoryLayout<Int32>.size))
         let rc = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))

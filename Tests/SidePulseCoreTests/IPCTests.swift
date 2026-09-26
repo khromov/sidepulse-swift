@@ -256,6 +256,14 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == 1 })
     }
 
+    /// Regression: with the default 8 KB send buffer a large record missed the hook's 0.2 s timeout
+    /// whenever the server was slow to accept.
+    func testWholeRecordFitsBeforeTheServerAccepts() {
+        descriptors.append(IPCTestSupport.makeSilentListener(at: socketPath))
+        XCTAssertTrue(EventSocketClient.send(paddedEvent(size: SidePulseConstants.maxEventBytes), socketPath: socketPath,
+                                             timeout: SidePulseConstants.hookSendTimeout))
+    }
+
     func testOversizeMessageIsDropped() throws {
         let inbox = IPCTestSupport.Inbox<IPCMessage>()
         _ = try startServer(inbox: inbox)
@@ -554,11 +562,14 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertEqual(EventSocketClient.request("status", socketPath: socketPath, timeout: 3), IPCReply.ok)
     }
 
-    func testEventSendIsBoundedByTimeoutWhenServerIsHung() {
+    func testEventSendIsBoundedByTimeoutWhenServerIsHung() throws {
         descriptors.append(IPCTestSupport.makeSilentListener(at: socketPath))
-        let big = paddedEvent(size: 900_000) // far larger than the socket buffers
         let started = Date()
-        XCTAssertFalse(EventSocketClient.send(big, socketPath: socketPath, timeout: 0.2))
+        let fd = try XCTUnwrap(UnixSocket.connect(path: socketPath, deadline: SocketDeadline(after: 0.2)))
+        defer { close(fd) }
+        // More than even the enlarged send buffer holds, so the write has to wait on the hung server.
+        let big = Data(count: 4 * SidePulseConstants.maxEventBytes)
+        XCTAssertFalse(UnixSocket.writeAll(fd, big, deadline: SocketDeadline(after: 0.2)))
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.6)
     }
 }
