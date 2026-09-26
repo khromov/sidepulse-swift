@@ -27,51 +27,88 @@ public struct LatestStore: Sendable {
     }
 }
 
+public struct LogRecovery: Sendable {
+    public var statuses: [AgentStatus]
+    var pendingPermissions: [String: Set<String>]
+}
+
 public enum LogScanner {
     /// About 6,000 of today's 650-byte records, well past the 2,000-line recovery window.
     static let tailBytes: UInt64 = 4 << 20
 
     public static func readRecentLines(url: URL, maxLines: Int) -> [String] {
-        readRecentLines(url: url, maxLines: maxLines, tailBytes: tailBytes)
+        readTail(url: url, maxLines: maxLines, tailBytes: tailBytes).lines
     }
 
     static func readRecentLines(url: URL, maxLines: Int, tailBytes: UInt64) -> [String] {
-        guard maxLines > 0, let handle = try? FileHandle(forReadingFrom: url) else { return [] }
-        defer { try? handle.close() }
-        guard let size = try? handle.seekToEnd() else { return [] }
+        readTail(url: url, maxLines: maxLines, tailBytes: tailBytes).lines
+    }
+
+    /// `reachedStart` means nothing before the returned lines was left out. A missing
+    /// or non-regular file (opened non-blocking, so a FIFO can't hang) reads as empty.
+    static func readTail(url: URL, maxLines: Int, tailBytes: UInt64) -> (lines: [String], reachedStart: Bool) {
+        let fd = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return ([], true) }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return ([], true) }
+        guard maxLines > 0 else { return ([], info.st_size == 0) }
+        let size = UInt64(max(0, info.st_size))
         let start = size > tailBytes ? size - tailBytes : 0
-        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return [] }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return ([], false) }
         var lines = data.split(separator: UInt8(ascii: "\n"))
         // A read that began mid-file starts with a partial line.
         if start > 0, !lines.isEmpty { lines.removeFirst() }
-        return lines.suffix(maxLines).map { String(decoding: $0, as: UTF8.self) }
-    }
-
-    public static func events(provider: String, url: URL, maxLines: Int) -> [HookEvent] {
-        events(provider: provider, url: url, maxLines: maxLines, now: Date())
-    }
-
-    static func events(provider: String, url: URL, maxLines: Int, now: Date) -> [HookEvent] {
-        readRecentLines(url: url, maxLines: maxLines).compactMap { EventParser.parseLine(provider: provider, line: $0, now: now) }
+        let reachedStart = start == 0 && lines.count <= maxLines
+        return (lines.suffix(maxLines).map { String(decoding: $0, as: UTF8.self) }, reachedStart)
     }
 
     public static func scan(sources: [SourceInfo], maxLines: Int = SidePulseConstants.recoveryMaxLines,
                             config: MonitorConfig = MonitorConfig(),
                             codexTitle: ((String) -> String?)? = nil) -> [AgentStatus] {
-        let engine = StatusEngine(config: config, codexTitle: codexTitle)
-        for event in orderedEvents(sources: sources, maxLines: maxLines) { engine.ingest(event) }
-        return engine.statuses.values.sorted {
-            $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.agentID < $1.agentID
-        }
+        recover(sources: sources, maxLines: maxLines, config: config, codexTitle: codexTitle).statuses
     }
 
-    /// Hook timestamps have millisecond resolution, so ties are common; `sorted` is stable, so source and
-    /// line order break them.
+    public static func recover(sources: [SourceInfo], maxLines: Int = SidePulseConstants.recoveryMaxLines,
+                               config: MonitorConfig = MonitorConfig(),
+                               codexTitle: ((String) -> String?)? = nil) -> LogRecovery {
+        let engine = StatusEngine(config: config, codexTitle: codexTitle)
+        for event in orderedEvents(sources: sources, maxLines: maxLines) { engine.ingest(event) }
+        let statuses = engine.statuses.values.sorted {
+            $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.agentID < $1.agentID
+        }
+        return LogRecovery(statuses: statuses, pendingPermissions: engine.pendingPermissions)
+    }
+
+    /// A provider's sources (oldest first, like `defaultSources`) share one window read
+    /// from the newest, so an older file is only read where it leaves no gap.
+    /// Hook timestamps have millisecond resolution, so ties are common; `sorted` is
+    /// stable, so source and line order break them.
     static func orderedEvents(sources: [SourceInfo], maxLines: Int, now: Date = Date()) -> [HookEvent] {
         var seen = Set<String>()
-        return sources.filter { seen.insert("\($0.provider)\u{0}\($0.path)").inserted }
-            .flatMap { events(provider: $0.provider, url: URL(fileURLWithPath: $0.path), maxLines: maxLines, now: now) }
-            .sorted { $0.loggedAt < $1.loggedAt }
+        var providers: [String] = []
+        var paths: [String: [String]] = [:]
+        for source in sources where seen.insert("\(source.provider)\u{0}\(source.path)").inserted {
+            if paths[source.provider] == nil { providers.append(source.provider) }
+            paths[source.provider, default: []].append(source.path)
+        }
+        var events: [HookEvent] = []
+        for provider in providers {
+            var budget = maxLines
+            var newestFirst: [[String]] = []
+            for path in paths[provider, default: []].reversed() {
+                guard budget > 0 else { break }
+                let tail = readTail(url: URL(fileURLWithPath: path), maxLines: budget, tailBytes: tailBytes)
+                newestFirst.append(tail.lines)
+                budget -= tail.lines.count
+                if !tail.reachedStart { break }
+            }
+            for lines in newestFirst.reversed() {
+                events += lines.compactMap { EventParser.parseLine(provider: provider, line: $0, now: now) }
+            }
+        }
+        return events.sorted { $0.loggedAt < $1.loggedAt }
     }
 
     /// Codex precedes Claude (Python's tie order) and each rotated `.1` log precedes

@@ -193,7 +193,8 @@ for `leds` without `--once`. An option that takes a value never takes the next
 
 **`sidepulse status [--json] [--all] [--offline] [--watch]`**
 Asks the running app. If the app is not running, or with `--offline`, the
-status is rebuilt from the hook logs with the same state machine.
+status is rebuilt from the hook logs with the same state machine and Codex
+thread titles as the app.
 - `--json`: print the snapshot as JSON.
 - `--all`: also list stale agents.
 - `--offline`: read the hook logs instead of asking the app.
@@ -309,11 +310,11 @@ animation.
 | Mode | Priority | Menu bar | Default LED (Signal profile) | Set by |
 | --- | --- | --- | --- | --- |
 | Blocked / Error | 1 | Ask | `solid-red` | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response |
-| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a Notification that needs input, `Stop`/`SubagentStop` whose final message asks a question |
+| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog` or `agent_needs_input` Notification, an `idle_prompt` or untyped Notification whose text asks for input, `Stop`/`SubagentStop` whose final message asks a question |
 | Tool Running | 3 | Working | `ember-tide` | `PreToolUse` |
 | Long Task Progress | 4 | Working | `ember-tide` | Explicit marker only (`progress`) |
-| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, other Notifications |
-| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop` without a question, `SessionEnd`, a completion Notification, a subagent whose session ended (`SessionEnd`) or that the parent `Stop` no longer lists as running |
+| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, any other `idle_prompt` or untyped Notification |
+| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop` without a question, `SessionEnd`, an `idle_prompt` or untyped Notification that reports completion, a subagent closed along with its session or its parent's turn (see Subagents below) |
 | Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, `Interrupt` (Codex, OpenCode) |
 
 How the global display state is chosen:
@@ -324,7 +325,8 @@ How the global display state is chosen:
 - **Staleness.** A row goes stale once it is older than the **Idle timeout**
   (default 1 hour, set in Settings > General). Stale rows drop out of the
   aggregate. `status --all` still lists them. Tool Running has
-  no separate time limit.
+  no separate time limit. A row dated more than 5 minutes in the future (after
+  the clock was set back) is stale too.
 - **Done window.** A Completed row stays visible for 20 minutes, then drops
   out, and the LEDs return to the dim idle pattern. Completed and Idle rows are
   set aside while any other agent is active, so Done only shows when nothing
@@ -336,6 +338,9 @@ How the global display state is chosen:
   never turns Done, a fresh session nobody has typed into, or a session whose
   history was not seen, into Ask. Other Notifications, such as permission
   prompts, still ask on a row that is not Completed.
+- **Other Notifications.** A Notification type not named in the table, such as
+  `auth_success` or `agent_completed`, is ignored, so it never starts a Working
+  row that nothing settles.
 - **Settling.** `PostToolUse` means the tool returned, not that the turn has
   finished. If no newer event arrives, the Working row settles to Completed
   after 2 minutes. This way a missed `Stop` cannot leave the display stuck on
@@ -345,11 +350,17 @@ How the global display state is chosen:
   finished or failed), `Stop`, `Interrupt`, `SessionEnd`, the subagent's own
   `SubagentStop`, or the next prompt. Unrelated events from the same session
   cannot hide it. A denied command runs nothing, so it stays Ask until the turn
-  ends or the next prompt.
+  ends or the next prompt. A prompt still pending when the app restarts stays
+  sticky, because the startup log scan rebuilds it.
 - **Subagents.** Claude sends no `SubagentStop` for a subagent killed with its
-  session. So `SessionEnd`, or a parent `Stop`'s list of running background
-  tasks, closes those rows instead of leaving them active (and holding
-  keep-awake) until the idle timeout.
+  session, so `SessionEnd` closes the session's active subagent rows instead of
+  leaving them active (and holding keep-awake) until the idle timeout. A parent
+  `Stop` lists the background tasks still running, and a subagent that was on
+  the previous `Stop`'s list but is missing from this one is closed too. The
+  list also holds workflow and shell task ids, so a subagent that was never
+  listed, such as one a Workflow runs, stays open until its own `SubagentStop`
+  or the idle timeout. OpenCode subagents run synchronously, so the parent's
+  `Stop`, `StopFailure` or `Interrupt` closes any that are still open.
 - **Interrupt.** `Interrupt` (Codex, and OpenCode for a stopped or cancelled
   turn) returns the session to Idle without marking it Completed.
 
@@ -367,6 +378,9 @@ message:
 ```
 
 - A marker overrides the event rules for every event except `Interrupt`.
+- Markers are read only from the agent's final message
+  (`last_assistant_message`), so a marker line inside a command or a
+  notification, such as an OpenCode permission prompt, is ignored.
 - A marker must be a whole line and is case-insensitive.
   `<!-- sidepulse status: ask -->` and `[sidepulse status: ask]` also work, and
   so does `agent-monitor` in place of `sidepulse`.
@@ -647,6 +661,10 @@ are lost.
 
 - **Subagents.** A subagent session reports under its parent session with its
   own `agent_id` (`SubagentStart`, `SubagentStop`), like a Claude subagent.
+  OpenCode reports no end for a subagent that failed, and a question in its
+  final message keeps it on Ask, so the parent's `Stop`, `StopFailure` or
+  `Interrupt` closes the subagent rows that are still open. Rows show the last 8
+  characters of the `ses_…` id, because the start of the id changes slowly.
 - **One copy per project.** OpenCode's background service loads the plugin
   once per open project, and every copy sees every event. The copies share
   their state, so each event is handled once.
@@ -667,13 +685,18 @@ same runtime without UI. The runtime does the following, per
 - **Start.** It binds `events.sock` before writing anything, and refuses to
   start if another process holds `events.sock.lock` or listens there. It then applies
   `settings.json`, loads `latest.json`, and reconciles the rows with the tail
-  of the provider logs (the last 2000 lines of each, within its last 4 MB). Finally it starts a 15 s
+  of the provider logs: the last 2000 lines per provider, within the last 4 MB
+  of each file, with the rotated `.1` log read only for what the current log
+  leaves of that window. A log path that is not a regular file (a FIFO, for
+  example) reads as empty. Finally it starts a 15 s
   status refresh and a 2 s device poll. The first device discovery runs in the
   background, and the LEDs are synced as soon as it finds them.
 - **Event order.** Connections are read in parallel, but events are applied in
-  the order the connections were accepted, so a hook's `PreToolUse` is never
-  applied after its `PostToolUse`. A message waits at most 0.25 s behind an
-  unfinished earlier connection.
+  the order the connections were accepted. The runtime waits about 0.25 s
+  behind an unfinished earlier connection before moving on. An event that
+  still arrives late is ignored if it was logged up to 5 s before its row's
+  last update, so a hook's `PreToolUse` is not applied after its
+  `PostToolUse`.
 - **LED sync.** Each event updates the status engine and triggers a coalesced
   LED sync, so the latest mode is never dropped. Each Agent-mode device is
   rewritten only when its state, brightness or animation changes, or when its
@@ -701,6 +724,12 @@ old settings is still running after 2 s. When the app is not running,
   key SidePulse does not write, such as `statusMessage`, they refuse instead.
 - A failed tool call (any non-zero exit, for example `grep` with no match)
   briefly shows Blocked / Error. This is the same as the Python version.
+- A compaction in the middle of a turn can show the row as Idle until the
+  agent's next event.
+- The runtime does not keep a parent `Stop`'s list of background tasks across
+  a restart. The first `Stop` after a restart only records the list, so a
+  subagent that dropped off it in the meantime stays open until its own
+  `SubagentStop` or the idle timeout.
 - OpenCode: `opencode run --standalone` exits right after its last event, so a
   record still queued at that moment can be lost. For example, the final
   `Interrupt` after an auto-rejected permission can go missing, and the row

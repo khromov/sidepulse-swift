@@ -112,7 +112,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func makeModel(snapshot: MonitorSnapshot) -> StatusMenuModel {
         StatusMenuModel(snapshot: snapshot, settings: runtime.settings, devices: runtime.deviceInfos(),
-                        keepAwakeActive: runtime.keepAwakeActive, now: Date())
+                        keepAwakeActive: runtime.keepAwakeActive, now: Date(),
+                        projectName: DisplayNames.cachedProjectName(cwd:))
     }
 
     private func rebuild(snapshot: MonitorSnapshot) {

@@ -86,6 +86,24 @@ final class CLIStatusTests: XCTestCase {
         XCTAssertTrue(h.stdout.text.hasPrefix("Source: hook logs (offline)\nAggregate: Idle / Ready (0 active, 0 stale)"))
     }
 
+    /// Regression: the offline scan ignored the Codex session-index titles the app shows.
+    func testOfflineStatusUsesCodexSessionIndexTitles() throws {
+        let h = CLIHarness()
+        h.env.snapshots = .standard
+        let codexDir = h.home.appendingPathComponent(".codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+        try Data(#"{"id":"abcdef12-3456","thread_name":"Parser refactor thread"}"#.utf8)
+            .write(to: codexDir.appendingPathComponent("session_index.jsonl"))
+        try FileManager.default.createDirectory(at: h.paths.logsDir, withIntermediateDirectories: true)
+        let stamp = TimeFormat.iso8601Millis(h.clock.addingTimeInterval(-5))
+        let record = #"{"logged_at":"\#(stamp)","hook_event_name":"UserPromptSubmit","session_id":"abcdef12-3456","cwd":"/nonexistent-sidepulse-test/proj","prompt":"please refactor the parser module"}"#
+        try Data((record + "\n").utf8).write(to: h.paths.logFile(for: "codex"))
+
+        XCTAssertEqual(h.run(["status", "--offline"]), 0)
+        XCTAssertTrue(h.stdout.text.contains("  proj: Parser refactor thread (abcdef12): Working event=UserPromptSubmit"),
+                      h.stdout.text)
+    }
+
     func testWatchClearsTheScreenAndRedrawsEveryTwoSeconds() {
         let calls = CallLog()
         let h = harness(app: CLIFixtures.snapshot, logs: CLIFixtures.empty, calls: calls)

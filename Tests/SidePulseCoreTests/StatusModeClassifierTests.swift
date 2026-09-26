@@ -32,7 +32,7 @@ final class StatusModeClassifierTests: XCTestCase {
         XCTAssertEqual(mode("Interrupt", ["sidepulse_status": .string("ask")]), .idleReady)
         XCTAssertEqual(mode("PreToolUse", ["sidepulse_status": .string("done")]), .completed)
         XCTAssertEqual(mode("PostToolUseFailure", ["sidepulse_mode": .string("working")]), .working)
-        XCTAssertEqual(mode("Notification", ["message": .string("<!-- sidepulse:blocked -->")]), .blockedError)
+        XCTAssertEqual(mode("PostToolUse", ["last_assistant_message": .string("<!-- sidepulse:blocked -->")]), .blockedError)
         XCTAssertEqual(mode("SessionStart", ["sidepulse_status": .string("progress")]), .longTaskProgress)
         XCTAssertEqual(mode("Stop", ["sidepulse_status": .number("1"), "sidepulse_mode": .string("ask")]), .waitingForInput,
                        "non-string fields are skipped")
@@ -134,6 +134,38 @@ final class StatusModeClassifierTests: XCTestCase {
         }
     }
 
+    func testMarkerSpacingEdgeCases() {
+        let vectors: [(String, AgentMode?)] = [
+            ("[sidepulse status:  ask  ]", .waitingForInput),
+            ("\n\n  <!-- sidepulse:done -->\n\n", .completed),
+            ("<!-- sidepulse:\n\ndone\n\n-->", .completed),
+            ("[sidepulse\nstatus:\nask\n]", nil),
+            ("<!-- sidepulse: - -->", nil),
+            ("<!-- sidepulse:  -->", nil),
+            ("<!-- sidepulse: ask", nil),
+        ]
+        for (text, expected) in vectors {
+            XCTAssertEqual(ModeClassifier.markerMode(in: text), expected, text.debugDescription)
+        }
+    }
+
+    /// Regression: overlapping space quantifiers made an unclosed marker take cubic
+    /// time, and a leading `\s*` did the same across blank lines.
+    func testUnclosedMarkersTakeLinearTime() {
+        let inputs = [
+            "<!-- sidepulse: " + String(repeating: " ", count: 16_000),
+            "sidepulse\n" + String(repeating: "\n", count: 16_000),
+            "<!-- sidepulse: a" + String(repeating: " a", count: 8_000),
+            "[sidepulse status: " + String(repeating: " ", count: 16_000),
+            "sidepulse\n" + String(repeating: " \n", count: 8_000),
+        ]
+        for text in inputs {
+            let start = Date()
+            XCTAssertNil(ModeClassifier.markerMode(in: text))
+            XCTAssertLessThan(Date().timeIntervalSince(start), 0.5, String(text.prefix(20)).debugDescription)
+        }
+    }
+
     func testMarkerValueVocabulary() {
         let vectors: [(String, AgentMode?)] = [
             ("ask", .waitingForInput), (" ASK ", .waitingForInput), ("Waiting-For-Input", .waitingForInput),
@@ -149,10 +181,16 @@ final class StatusModeClassifierTests: XCTestCase {
         }
     }
 
-    func testExplicitModeReadsLastAssistantMessageThenMessage() {
-        XCTAssertEqual(ModeClassifier.explicitMode(raw: ["last_assistant_message": .string(""), "message": .string("<!-- sidepulse:ask -->")]),
+    /// Regression: OpenCode puts a permission's whole command in `message`, and a
+    /// marker line inside it replaced the Ask.
+    func testExplicitModeReadsOnlyLastAssistantMessage() {
+        XCTAssertEqual(ModeClassifier.explicitMode(raw: ["last_assistant_message": .string("<!-- sidepulse:ask -->")]),
                        .waitingForInput)
-        XCTAssertNil(ModeClassifier.explicitMode(raw: ["last_assistant_message": .string("hi"), "message": .string("<!-- sidepulse:ask -->")]))
+        XCTAssertNil(ModeClassifier.explicitMode(raw: ["last_assistant_message": .string(""), "message": .string("<!-- sidepulse:ask -->")]))
+        XCTAssertNil(ModeClassifier.explicitMode(raw: ["message": .string("<!-- sidepulse:done -->")]))
+        XCTAssertEqual(mode("PermissionRequest", ["message": .string("cat >> AGENTS.md <<'EOF'\n<!-- sidepulse:done -->\nEOF")]),
+                       .waitingForInput)
+        XCTAssertEqual(mode("Notification", ["message": .string("<!-- sidepulse:blocked -->")]), .working)
     }
 
     func testNotificationClassifier() {
@@ -168,11 +206,21 @@ final class StatusModeClassifierTests: XCTestCase {
         XCTAssertEqual(notification("agent_needs_input", "X needs your input"), .waitingForInput)
         XCTAssertEqual(notification("idle_prompt", "Turn complete"), .completed)
         XCTAssertEqual(notification("idle_prompt", " Done "), .completed)
-        XCTAssertEqual(notification("other", "done"), .working)
         XCTAssertEqual(notification(nil, "Task completed; please confirm"), .completed, "completion wins")
         XCTAssertEqual(notification(nil, "Deploy confirmed"), .waitingForInput, "plain substring: confirmed")
-        XCTAssertEqual(notification("heartbeat", "still going"), .working)
+        XCTAssertEqual(notification(nil, "still going"), .working)
         XCTAssertEqual(mode("Notification", ["notification_type": .null, "message": .string("x")]), .working)
+
+        // Input types ask whatever the message says, and any other type is ignored.
+        XCTAssertEqual(notification("permission_prompt", "Task completed"), .waitingForInput)
+        XCTAssertEqual(notification(" Elicitation_Dialog ", "Pick one"), .waitingForInput)
+        XCTAssertEqual(notification("elicitation_url_dialog", "Open the link"), .waitingForInput)
+        XCTAssertEqual(notification("agent_needs_input", "Reviewer is blocked"), .waitingForInput)
+        XCTAssertNil(notification("other", "done"))
+        XCTAssertNil(notification("heartbeat", "still going"))
+        XCTAssertNil(notification("auth_success", "Authentication successful"))
+        XCTAssertNil(notification("elicitation_complete", "please confirm"))
+        XCTAssertNil(notification("agent_completed", "Task completed"))
     }
 
     func testToolResponseFailure() {

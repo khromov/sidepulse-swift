@@ -76,7 +76,9 @@ public struct SnapshotLoader {
         fromLogs: { env in
             // Same staleness/retention as the app, from the user's settings.
             let config = SettingsStore(url: env.paths.settingsFile).load().monitorConfig
-            let statuses = LogScanner.scan(sources: LogScanner.defaultSources(paths: env.paths), config: config)
+            let index = CodexSessionIndex(paths: env.paths)
+            let statuses = LogScanner.scan(sources: LogScanner.defaultSources(paths: env.paths), config: config,
+                                           codexTitle: { index.title(forSession: $0) })
             // Show the live log files (not the rotated `.1` copies) as sources.
             let shown = HookProvider.allCases.map {
                 SourceInfo(provider: $0.rawValue, path: env.paths.logFile(for: $0.rawValue).path)

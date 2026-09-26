@@ -187,7 +187,7 @@ public enum SessionRows {
 
     // MARK: Helpers
 
-    static func shortID(_ sessionID: String) -> String { String(sessionID.prefix(8)) }
+    static func shortID(_ sessionID: String) -> String { DisplayNames.shortID(sessionID) }
 
     static func collisionKey(provider: String, title: String, project: String?) -> String {
         provider.lowercased() + "\u{0}" + DisplayNames.normalizeForComparison(menuTitle(title: title, project: project))

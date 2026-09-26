@@ -57,7 +57,7 @@ final class StatusOpenCodeTests: XCTestCase {
         let first = try XCTUnwrap(engine.statuses[a])
         XCTAssertEqual(first.provider, "opencode")
         XCTAssertEqual(first.origin, "OpenCode")
-        XCTAssertEqual(first.displayName, "projA: Run the shell command 'echo hi' with your shell tool, then reply with... (ses_f21a)")
+        XCTAssertEqual(first.displayName, "projA: Run the shell command 'echo hi' with your shell tool, then reply with... (2m6nYgg1)")
         XCTAssertEqual(SessionRows.detail(for: first, now: t0.addingTimeInterval(30)), "Done \u{b7} Stop \u{b7} 26s ago \u{b7} OpenCode")
         XCTAssertEqual(engine.statuses[sub]?.sessionID, "ses_f21a76392ffezchKrN5VHPpriB")
         XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(30)).aggregate.mode, .waitingForInput)
@@ -89,5 +89,50 @@ final class StatusOpenCodeTests: XCTestCase {
         ])
         XCTAssertEqual(engine.statuses["opencode:session:ses_y"]?.message, "Model unavailable: opencode/x")
         XCTAssertEqual(engine.statuses["opencode:session:ses_y"]?.displayName, "OpenCode session ses_y")
+    }
+
+    /// Regression: the plugin puts the whole command in `message`, so a marker line in
+    /// a command that writes agent instructions replaced the Ask.
+    func testMarkerInsidePermissionCommandKeepsTheAsk() {
+        let s = "opencode:session:ses_m"
+        let engine = run([
+            (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_m","prompt":"add the marker advice"}"#, s, .working),
+            (#"{"hook_event_name":"PermissionRequest","session_id":"ses_m","tool_name":"shell","tool_input":{"command":"cat >> AGENTS.md <<'EOF'\n<!-- sidepulse:done -->\nEOF"},"message":"OpenCode needs permission: shell cat >> AGENTS.md <<'EOF'\n<!-- sidepulse:done -->\nEOF"}"#, s, .waitingForInput),
+        ])
+        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(5)).aggregate.mode, .waitingForInput)
+    }
+
+    /// Regression: OpenCode sends no SubagentStop for a subagent that failed and never
+    /// lists background tasks, so its Blocked row outlived the parent's turn.
+    func testParentTurnEndClosesSubagentsThatFailedOrAsked() throws {
+        let p = "opencode:session:ses_p"
+        let c = "opencode:agent:ses_c"
+        let failed = run([
+            (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_p","prompt":"delegate"}"#, p, .working),
+            (#"{"hook_event_name":"SubagentStart","session_id":"ses_p","agent_id":"ses_c","agent_type":"general"}"#, c, .working),
+            (#"{"hook_event_name":"StopFailure","session_id":"ses_p","agent_id":"ses_c","error":"rate_limit","error_details":"Too many requests"}"#, c, .blockedError),
+            (#"{"hook_event_name":"Stop","session_id":"ses_p","last_assistant_message":"The subagent failed."}"#, p, .completed),
+        ])
+        XCTAssertEqual(failed.statuses[c]?.mode, .completed)
+        XCTAssertEqual(failed.statuses[c]?.eventName, "Stop")
+        XCTAssertEqual(failed.snapshot(now: t0.addingTimeInterval(60)).aggregate.mode, .completed)
+
+        let asked = run([
+            (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_p","prompt":"delegate"}"#, p, .working),
+            (#"{"hook_event_name":"SubagentStart","session_id":"ses_p","agent_id":"ses_c","agent_type":"general"}"#, c, .working),
+            (#"{"hook_event_name":"SubagentStop","session_id":"ses_p","agent_id":"ses_c","last_assistant_message":"Which file should I edit?"}"#, c, .waitingForInput),
+            (#"{"hook_event_name":"StopFailure","session_id":"ses_p","error":"provider.no-route"}"#, p, .blockedError),
+        ])
+        XCTAssertEqual(asked.statuses[c]?.mode, .completed)
+
+        let interrupted = run([
+            (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_p","prompt":"delegate"}"#, p, .working),
+            (#"{"hook_event_name":"SubagentStart","session_id":"ses_p","agent_id":"ses_c","agent_type":"general"}"#, c, .working),
+            (#"{"hook_event_name":"PermissionRequest","session_id":"ses_p","agent_id":"ses_c","tool_name":"shell","tool_input":{"command":"rm -rf build"}}"#, c, .waitingForInput),
+            (#"{"hook_event_name":"Interrupt","session_id":"ses_p","reason":"user"}"#, p, .idleReady),
+        ])
+        XCTAssertEqual(interrupted.statuses[c]?.mode, .completed)
+        XCTAssertEqual(interrupted.pendingPermissions, [:])
+        XCTAssertEqual(interrupted.snapshot(now: t0.addingTimeInterval(60)).aggregate.activeCount, 0)
     }
 }

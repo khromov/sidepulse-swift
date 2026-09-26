@@ -13,9 +13,7 @@ public enum ModeClassifier {
         case "PermissionRequest":
             return .waitingForInput
         case "Notification":
-            if notificationIsCompletion(raw: raw) { return .completed }
-            if notificationNeedsInput(raw: raw) { return .waitingForInput }
-            return .working
+            return notificationMode(raw: raw)
         case "PreToolUse":
             return .toolRunning
         case "PostToolUse":
@@ -39,20 +37,23 @@ public enum ModeClassifier {
         for key in ["sidepulse_status", "sidepulse_mode"] {
             if let value = raw[key]?.stringValue, let mode = normalizeMarkerValue(value) { return mode }
         }
-        guard let text = PyText.firstTruthy(raw["last_assistant_message"], raw["message"])?.stringValue else { return nil }
+        // OpenCode puts a whole permission command in `message`, and a marker line in it must not hide the Ask.
+        guard let text = raw["last_assistant_message"]?.stringValue else { return nil }
         return markerMode(in: text)
     }
 
     /// `useUnixLineSeparators` makes `^`/`$` treat only `\n` as a line break, like
-    /// Python's `(?im)`.
+    /// Python's `(?im)`. Possessive quantifiers, a value that starts and ends with a
+    /// non-space, and no `\n` outside the marker keep a long unclosed marker linear.
     private static let markerPatterns: [TextRegex] = {
         let s = "[\(PyText.regexSpaceClass)]"
+        let h = "[\(PyText.regexLineSpaceClass)]"
         let name = #"(?:sidepulse|agent[-_ ]monitor)"#
-        let value = #"([a-z0-9_ -]+)"#
+        let value = #"([a-z0-9_-](?:[a-z0-9_ -]*[a-z0-9_-])?)"#
         return [
-            "^\(s)*<!--\(s)*\(name)\(s)*:\(s)*\(value)\(s)*-->\(s)*$",
-            "^\(s)*<!--\(s)*\(name)\(s)+(?:status|mode)\(s)*:\(s)*\(value)\(s)*-->\(s)*$",
-            "^\(s)*\\[\(name)\(s)+(?:status|mode)\(s)*:\(s)*\(value)\\]\(s)*$",
+            "^\(h)*+<!--\(s)*\(name)\(s)*+:\(s)*+\(value)\(s)*+-->\(h)*+$",
+            "^\(h)*+<!--\(s)*\(name)\(s)+(?:status|mode)\(s)*+:\(s)*+\(value)\(s)*+-->\(h)*+$",
+            "^\(h)*+\\[\(name)\(s)+(?:status|mode)\(s)*+:\(s)*+\(value) *+\\]\(h)*+$",
         ].map { TextRegex($0, options: [.caseInsensitive, .anchorsMatchLines, .useUnixLineSeparators]) }
     }()
 
@@ -98,6 +99,21 @@ public enum ModeClassifier {
     }
 
     // MARK: Notifications
+
+    private static let inputNotificationTypes: Set<String> = [
+        "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
+    ]
+
+    /// Other types, such as `auth_success` or `agent_completed`, are informational and
+    /// would otherwise become a Working row that never settles.
+    public static func notificationMode(raw: JSONObject) -> AgentMode? {
+        let type = PyText.strip(raw["notification_type"]?.stringValue ?? "").lowercased()
+        if inputNotificationTypes.contains(type) { return .waitingForInput }
+        guard type.isEmpty || type == "idle_prompt" else { return nil }
+        if notificationIsCompletion(raw: raw) { return .completed }
+        if notificationNeedsInput(raw: raw) { return .waitingForInput }
+        return .working
+    }
 
     private static let completionPhrases = [
         "turn complete", "turn completed", "task complete", "task completed",

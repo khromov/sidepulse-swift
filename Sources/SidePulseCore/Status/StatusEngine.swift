@@ -9,8 +9,9 @@ public struct MonitorConfig: Sendable, Equatable {
     }
 }
 
-/// Not thread-safe, and it never compares timestamps, so callers must serialize
-/// access and ingest events in order.
+/// Not thread-safe, so callers must serialize access. Events are applied in the
+/// order they are ingested, except that one logged shortly before its row's last
+/// update is dropped as late (see `lateEventWindow`).
 public final class StatusEngine {
     public var config: MonitorConfig
     public private(set) var statuses: [String: AgentStatus] = [:]
@@ -19,6 +20,12 @@ public final class StatusEngine {
     private var metadataBySession: [String: StatusMetadata] = [:]
     private var metadataByStatus: [String: StatusMetadata] = [:]
     private var pending: [String: Set<String>] = [:]
+    private var backgroundTasks: [String: Set<String>] = [:]
+
+    /// The socket server stops waiting for a stalled message after about 0.25 s, so it
+    /// can arrive after newer events; the bound keeps a backward clock jump from
+    /// freezing a row.
+    static let lateEventWindow: TimeInterval = 5
 
     /// Codex desktop's background helper sessions (suggestions, safety checks) use
     /// these prompts and must not show as rows.
@@ -36,6 +43,13 @@ public final class StatusEngine {
     public func ingest(_ event: HookEvent) -> AgentStatus? {
         // Metadata is updated even when the event is dropped below.
         let metadata = updateMetadata(for: event)
+        if isLate(event) {
+            // The command has finished either way, so its prompt must not stay sticky.
+            if event.eventName == "PostToolUse" || event.eventName == "PostToolUseFailure" {
+                trackPendingPermissions(event)
+            }
+            return nil
+        }
         guard let status = makeStatus(for: event, metadata: metadata) else { return nil }
         trackPendingPermissions(event)
         completeFinishedSubagents(after: event)
@@ -53,13 +67,19 @@ public final class StatusEngine {
         return ingest(event)
     }
 
+    private func isLate(_ event: HookEvent) -> Bool {
+        guard let row = statuses[event.statusKey] else { return false }
+        let lag = row.updatedAt.timeIntervalSince(event.loggedAt)
+        return lag > 0 && lag <= Self.lateEventWindow
+    }
+
     public func load(_ restored: [AgentStatus]) {
         for var status in restored {
             if status.provider == "codex", !status.isSubagent,
                let sessionID = status.sessionID, let title = codexSessionTitle(sessionID) {
                 status.displayName = DisplayNames.displayName(
                     project: DisplayNames.projectName(cwd: status.cwd), title: title,
-                    short: PyText.prefix(sessionID, 8), fallback: status.displayName)
+                    short: DisplayNames.shortID(sessionID), fallback: status.displayName)
             }
             statuses[status.agentID] = status
             seedMetadata(from: status)
@@ -84,12 +104,31 @@ public final class StatusEngine {
         return changed
     }
 
+    /// Restores the scan's pending prompts only where the row is still that same
+    /// PermissionRequest, so a newer row is never held on Ask by an old prompt.
+    @discardableResult
+    public func reconcile(with recovery: LogRecovery) -> Bool {
+        let changed = reconcile(with: recovery.statuses)
+        let scanned = Dictionary(recovery.statuses.map { ($0.agentID, $0) }, uniquingKeysWith: { first, _ in first })
+        for (key, signatures) in recovery.pendingPermissions {
+            guard let row = statuses[key], let scannedRow = scanned[key], row.eventName == "PermissionRequest",
+                  scannedRow.eventName == "PermissionRequest",
+                  abs(row.updatedAt.timeIntervalSince(scannedRow.updatedAt)) < 0.001 else { continue }
+            pending[key, default: []].formUnion(signatures)
+        }
+        return changed
+    }
+
+    /// Uses the absolute age so a row dated in the future (a backward clock jump) is
+    /// pruned too.
     public func prune(now: Date) {
         let cutoff = max(config.staleAfter, config.retention)
-        statuses = statuses.filter { $0.value.age(now: now) <= cutoff }
-        metadataByStatus = metadataByStatus.filter { now.timeIntervalSince($0.value.lastSeen) <= cutoff }
-        metadataBySession = metadataBySession.filter { now.timeIntervalSince($0.value.lastSeen) <= cutoff }
+        func keep(_ date: Date) -> Bool { abs(now.timeIntervalSince(date)) <= cutoff }
+        statuses = statuses.filter { keep($0.value.updatedAt) }
+        metadataByStatus = metadataByStatus.filter { keep($0.value.lastSeen) }
+        metadataBySession = metadataBySession.filter { keep($0.value.lastSeen) }
         pending = pending.filter { statuses[$0.key] != nil }
+        backgroundTasks = backgroundTasks.filter { statuses[$0.key] != nil }
     }
 
     public func snapshot(now: Date = Date(), sources: [SourceInfo] = []) -> MonitorSnapshot {
@@ -167,10 +206,10 @@ public final class StatusEngine {
         let agentPrefix = "\(status.provider):agent:"
         if PyText.startsWith(status.agentID, agentPrefix) {
             let agentID = String(decoding: status.agentID.utf8.dropFirst(agentPrefix.utf8.count), as: UTF8.self)
-            return "agent " + PyText.prefix(agentID, 8)
+            return "agent " + DisplayNames.shortID(agentID)
         }
         guard let sessionID = status.sessionID, !sessionID.isEmpty else { return nil }
-        return PyText.prefix(sessionID, 8)
+        return DisplayNames.shortID(sessionID)
     }
 
     /// Nil without a cwd, because then the project prefix can't be told apart from
@@ -198,11 +237,11 @@ public final class StatusEngine {
         let label = DisplayNames.fallbackProviderLabel(event.provider)
         let displayName: String
         if let agentID = event.agentID, !agentID.isEmpty {
-            let short = PyText.prefix(agentID, 8)
+            let short = DisplayNames.shortID(agentID)
             displayName = self.displayName(for: event, metadata: metadata, short: "agent \(short)",
                                            fallback: "\(label) agent \(short)")
         } else if let sessionID = event.sessionID, !sessionID.isEmpty {
-            let short = PyText.prefix(sessionID, 8)
+            let short = DisplayNames.shortID(sessionID)
             displayName = self.displayName(for: event, metadata: metadata, short: short,
                                            fallback: "\(label) session \(short)")
         } else {
@@ -261,23 +300,29 @@ public final class StatusEngine {
         }
     }
 
-    /// Claude sends no SubagentStop for a subagent killed with its session, so a
-    /// parent SessionEnd, or a parent Stop via its `background_task_ids`, closes them.
+    /// Claude sends no SubagentStop for a subagent killed with its session, nor OpenCode
+    /// for one that failed or asked (they run synchronously, so the parent's turn end closes them).
+    /// A Claude Stop closes only ids its `background_task_ids` dropped since the last one,
+    /// because the list also holds workflow and shell task ids.
     private func completeFinishedSubagents(after event: HookEvent) {
         guard event.agentID?.isEmpty ?? true, let sessionID = event.sessionID, !sessionID.isEmpty else { return }
         let prefix = "\(event.provider):agent:"
-        var running: Set<String> = []
-        switch event.eventName {
-        case "SessionEnd":
-            break
-        case "Stop":
-            guard let ids = event.raw["background_task_ids"]?.arrayValue else { return }
-            running = Set(ids.compactMap { $0.stringValue.map { prefix + $0 } })
-        default:
+        let finished: (String) -> Bool
+        if event.provider == "opencode", ["Stop", "StopFailure", "Interrupt"].contains(event.eventName) {
+            finished = { _ in true }
+        } else if event.eventName == "SessionEnd" {
+            backgroundTasks[event.statusKey] = nil
+            finished = { _ in true }
+        } else if event.eventName == "Stop", let ids = event.raw["background_task_ids"]?.arrayValue {
+            let running = Set(ids.compactMap(\.stringValue))
+            let dropped = Set((backgroundTasks[event.statusKey] ?? []).subtracting(running).map { prefix + $0 })
+            backgroundTasks[event.statusKey] = running
+            finished = { dropped.contains($0) }
+        } else {
             return
         }
         for (key, var row) in statuses where row.mode.isActive && row.sessionID == sessionID
-            && PyText.startsWith(key, prefix) && !running.contains(key) {
+            && PyText.startsWith(key, prefix) && finished(key) {
             row.mode = .completed
             row.updatedAt = event.loggedAt
             row.eventName = event.eventName
@@ -368,7 +413,12 @@ public enum SnapshotBuilder {
                                statuses: fresh, staleStatuses: stale)
     }
 
+    /// A row dated further ahead than this (a backward clock jump) would otherwise
+    /// never age.
+    static let futureTolerance: TimeInterval = 300
+
     static func isStale(_ status: AgentStatus, config: MonitorConfig, now: Date) -> Bool {
+        if status.updatedAt.timeIntervalSince(now) > futureTolerance { return true }
         let age = status.age(now: now)
         switch status.mode {
         case .completed: return age > completedVisible

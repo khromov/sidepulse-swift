@@ -198,6 +198,16 @@ final class PresentationSessionRowsTests: XCTestCase {
         XCTAssertEqual(titles, ["Same (aaaaaaaa)  repo", "Same  repo", "SAME (cccccccc)  Repo"])
     }
 
+    /// Regression: OpenCode ids share a time prefix, so both suffixes read `(ses_f212)`.
+    func testCollidingOpenCodeRowsGetDistinctSuffixes() {
+        let a = status("opencode", "opencode:session:ses_f212d491cffeAbCdEfGh12", "k: hi (CdEfGh12)", .completed, age: 1,
+                       session: "ses_f212d491cffeAbCdEfGh12", cwd: "/x/k")
+        let b = status("opencode", "opencode:session:ses_f212ee51affeZyXwVuTs34", "k: hi (XwVuTs34)", .completed, age: 2,
+                       session: "ses_f212ee51affeZyXwVuTs34", cwd: "/x/k")
+        let rows = SessionRows.rows(for: [a, b], now: now, projectName: basename)
+        XCTAssertEqual(rows.map(\.menuTitle), ["hi (CdEfGh12)  k", "hi (XwVuTs34)  k"])
+    }
+
     func testCollidingRowWithoutSessionIDKeepsTitle() {
         let a = status("codex", "codex:unknown", "Same", .completed, age: 1)
         let b = status("codex", "codex:session:s2", "Same", .completed, age: 2, session: "s2")

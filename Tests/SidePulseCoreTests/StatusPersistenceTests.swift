@@ -161,7 +161,7 @@ final class StatusPersistenceTests: XCTestCase {
         let log = try write(lines.map { JSONValue.object($0).serialized() }.joined(separator: "\n"), "restart-\(UUID()).jsonl")
         let engine = StatusEngine()
         engine.load(Array(live.statuses.values))
-        engine.reconcile(with: LogScanner.scan(sources: [SourceInfo(provider: "claude", path: log.path)], maxLines: maxLines))
+        engine.reconcile(with: LogScanner.recover(sources: [SourceInfo(provider: "claude", path: log.path)], maxLines: maxLines))
         return engine
     }
 
@@ -215,6 +215,31 @@ final class StatusPersistenceTests: XCTestCase {
         let interrupted = try restart(from: live, lines: [claude("UserPromptSubmit", 300, ["prompt": .string("go")]),
                                                           claude("Notification", 360, idlePrompt)])
         XCTAssertEqual(interrupted.statuses["claude:session:s"]?.mode, .waitingForInput)
+    }
+
+    /// Regression: a restart during an approval lost the sticky prompt, so the next
+    /// unrelated event replaced the Ask.
+    func testRestartDuringPendingPermissionKeepsItSticky() throws {
+        let rm: JSONObject = ["tool_name": .string("Bash"), "tool_input": .object(["command": .string("rm -rf build")])]
+        let lines = [claude("UserPromptSubmit", 0, ["prompt": .string("clean up")]), claude("PreToolUse", 1, rm),
+                     claude("PermissionRequest", 2, rm)]
+        let live = StatusEngine()
+        for line in lines { live.ingest(provider: "claude", line: line) }
+        let latest = LatestStore(url: tmp.appendingPathComponent("pending/latest.json"))
+        try latest.save(Array(live.statuses.values), now: t0.addingTimeInterval(3))
+        let log = try write(lines.map { JSONValue.object($0).serialized() }.joined(separator: "\n"), "pending/claude.jsonl")
+
+        let restarted = StatusEngine()
+        restarted.load(latest.load())
+        restarted.reconcile(with: LogScanner.recover(sources: [SourceInfo(provider: "claude", path: log.path)]))
+        XCTAssertNil(restarted.ingest(provider: "claude", line: claude("PreToolUse", 4, ["tool_name": .string("Read")])))
+        XCTAssertEqual(restarted.statuses["claude:session:s"]?.mode, .waitingForInput)
+
+        var done = rm
+        done["tool_response"] = .object(["exit_code": .number("0")])
+        restarted.ingest(provider: "claude", line: claude("PostToolUse", 5, done))
+        XCTAssertEqual(restarted.statuses["claude:session:s"]?.mode, .working)
+        XCTAssertEqual(restarted.pendingPermissions, [:])
     }
 
     // MARK: scan
@@ -288,6 +313,63 @@ final class StatusPersistenceTests: XCTestCase {
             .write(to: paths.logFile(for: "claude"))
         let rows = LogScanner.scan(sources: LogScanner.defaultSources(paths: paths))
         XCTAssertEqual(rows.first?.eventName, "Stop")
+    }
+
+    private func jsonl(_ lines: [JSONObject]) -> String {
+        lines.map { JSONValue.object($0).serialized() }.joined(separator: "\n") + "\n"
+    }
+
+    /// Regression: both files were read to `maxLines`, so a current log longer than the
+    /// window skipped the lines between them and revived a prompt answered in that gap.
+    func testRotatedLogIsReadOnlyWhereItLeavesNoGap() throws {
+        let rm: JSONObject = ["session_id": .string("old"), "tool_name": .string("Bash"),
+                              "tool_input": .object(["command": .string("rm -rf build")])]
+        let rotated = try write(jsonl([claude("PermissionRequest", 0, rm)]), "gap/claude.jsonl.1")
+        let filler = (1...5).map { claude("PreToolUse", Double($0), ["session_id": .string("busy")]) }
+        let current = try write(jsonl([claude("Stop", 0.5, ["session_id": .string("old")])] + filler), "gap/claude.jsonl")
+        let sources = [SourceInfo(provider: "claude", path: rotated.path), SourceInfo(provider: "claude", path: current.path)]
+
+        XCTAssertEqual(LogScanner.scan(sources: sources, maxLines: 5).map(\.agentID), ["claude:session:busy"])
+        // With room for the whole current log, the rest of the window comes from `.1`.
+        let rows = LogScanner.scan(sources: sources, maxLines: 7)
+        XCTAssertEqual(rows.first { $0.agentID == "claude:session:old" }?.eventName, "Stop")
+
+        // The window is shared: two lines of budget left take only the tail of `.1`.
+        let twoRotated = try write(jsonl([claude("PreToolUse", 0, ["session_id": .string("a")]),
+                                          claude("PreToolUse", 0, ["session_id": .string("b")]),
+                                          claude("PreToolUse", 0, ["session_id": .string("c")])]), "budget/claude.jsonl.1")
+        let oneCurrent = try write(jsonl([claude("Stop", 1, ["session_id": .string("d")])]), "budget/claude.jsonl")
+        let shared = LogScanner.scan(sources: [SourceInfo(provider: "claude", path: twoRotated.path),
+                                               SourceInfo(provider: "claude", path: oneCurrent.path)], maxLines: 3)
+        XCTAssertEqual(Set(shared.map(\.agentID)), ["claude:session:b", "claude:session:c", "claude:session:d"])
+    }
+
+    /// Regression: a FIFO at a log path blocked `open()`, hanging startup recovery and
+    /// `status --offline`.
+    func testFIFOAtALogPathReadsAsEmpty() throws {
+        let home = tmp.appendingPathComponent("home", isDirectory: true)
+        let paths = SidePulsePaths(environment: ["SIDEPULSE_HOME": tmp.appendingPathComponent("root").path, "HOME": home.path], home: home)
+        try FileManager.default.createDirectory(at: paths.logsDir, withIntermediateDirectories: true)
+        let fifo = paths.logFile(for: "claude")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        // Opening the writer end unblocks a reader stuck in open(), so a regression fails instead of hanging.
+        defer {
+            let writer = open(fifo.path, O_WRONLY | O_NONBLOCK)
+            if writer >= 0 { close(writer) }
+        }
+        try Data(jsonl([claude("Stop", 0, ["session_id": .string("rotated")])]).utf8)
+            .write(to: paths.logsDir.appendingPathComponent("claude.jsonl.1"))
+
+        final class Result: @unchecked Sendable { var rows: [AgentStatus] = [] }
+        let result = Result()
+        let finished = expectation(description: "scan returns")
+        DispatchQueue.global().async {
+            result.rows = LogScanner.scan(sources: LogScanner.defaultSources(paths: paths))
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual(result.rows.map(\.agentID), ["claude:session:rotated"], "the rotated log is still read")
+        XCTAssertEqual(LogScanner.readRecentLines(url: fifo, maxLines: 5), [])
     }
 
     // MARK: CodexSessionIndex

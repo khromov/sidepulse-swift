@@ -18,6 +18,9 @@ enum PyText {
     /// U+001C–U+001F.
     static let regexSpaceClass = #"\t\n\x{0B}\f\r\x{1C}-\x{20}\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}"#
 
+    /// `regexSpaceClass` without `\n`, the only line break under `useUnixLineSeparators`.
+    static let regexLineSpaceClass = #"\t\x{0B}\f\r\x{1C}-\x{20}\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}"#
+
     static func strip(_ text: String) -> String {
         strip(text, where: isSpace)
     }

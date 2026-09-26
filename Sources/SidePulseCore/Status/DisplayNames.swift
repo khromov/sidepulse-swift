@@ -93,6 +93,13 @@ public enum DisplayNames {
         return name
     }
 
+    /// For the main thread, where a stat on a dead network mount would hang the menu;
+    /// the status engine resolves every row's cwd on its own queue first.
+    public static func cachedProjectName(cwd: String?) -> String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        return projectCache.peek(cwd)
+    }
+
     /// Splits on the `/` byte because a combining mark right after a slash would glue
     /// both into one grapheme and hide the separator.
     static func resolveProjectName(cwd: String) -> String {
@@ -111,6 +118,13 @@ public enum DisplayNames {
     }
 
     // MARK: Names
+
+    /// OpenCode ids are `ses_` plus a slowly changing time prefix, so only their tail
+    /// tells sessions apart.
+    public static func shortID(_ id: String) -> String {
+        guard PyText.startsWith(id, "ses_") else { return PyText.prefix(id, 8) }
+        return String(String.UnicodeScalarView(id.unicodeScalars.suffix(8)))
+    }
 
     public static func displayName(project: String?, title: String?, short: String, fallback: String) -> String {
         let project = project.flatMap { $0.isEmpty ? nil : $0 }
@@ -152,6 +166,10 @@ private final class ProjectNameCache: Sendable {
             guard let entry = names[cwd], entry.expires > ProcessInfo.processInfo.systemUptime else { return nil }
             return entry.name
         }
+    }
+
+    func peek(_ cwd: String) -> String? {
+        names.withLock { $0[cwd]?.name }
     }
 
     func set(_ cwd: String, _ name: String) {

@@ -322,9 +322,9 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(engine.statuses["claude:session:s"]?.mode, .completed)
     }
 
-    func testParentStopCompletesSubagentsItDoesNotListAsRunning() {
+    func testParentStopCompletesSubagentsItStopsListing() {
         let engine = StatusEngine()
-        for agent in ["listed", "dead"] {
+        for agent in ["kept", "dropped", "never-listed"] {
             engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 1, ["session_id": .string("s"), "agent_id": .string(agent)]))
         }
         // No list (a Codex or older payload): nothing is closed.
@@ -333,20 +333,67 @@ final class StatusEngineTests: XCTestCase {
         engine.ingest(provider: "claude", line: claudeLine("SubagentStop", at: 3, [
             "session_id": .string("s"), "agent_id": .string("other"), "background_task_ids": .array([]),
         ]))
-        XCTAssertEqual(engine.statuses["claude:agent:dead"]?.mode, .toolRunning)
-
+        // The first list only records what runs.
         engine.ingest(provider: "claude", line: claudeLine("Stop", at: 4, [
-            "session_id": .string("s"), "background_task_ids": .array([.string("listed"), .string("bu7j64oq8")]),
+            "session_id": .string("s"),
+            "background_task_ids": .array([.string("kept"), .string("dropped"), .string("bu7j64oq8")]),
         ]))
-        XCTAssertEqual(engine.statuses["claude:agent:listed"]?.mode, .toolRunning)
-        XCTAssertEqual(engine.statuses["claude:agent:dead"]?.mode, .completed)
-        XCTAssertEqual(engine.statuses["claude:agent:dead"]?.eventName, "Stop")
+        for agent in ["kept", "dropped", "never-listed"] {
+            XCTAssertEqual(engine.statuses["claude:agent:\(agent)"]?.mode, .toolRunning, agent)
+        }
+
+        engine.ingest(provider: "claude", line: claudeLine("Stop", at: 5, [
+            "session_id": .string("s"), "background_task_ids": .array([.string("kept")]),
+        ]))
+        XCTAssertEqual(engine.statuses["claude:agent:kept"]?.mode, .toolRunning)
+        XCTAssertEqual(engine.statuses["claude:agent:dropped"]?.mode, .completed)
+        XCTAssertEqual(engine.statuses["claude:agent:dropped"]?.eventName, "Stop")
+        XCTAssertEqual(engine.statuses["claude:agent:never-listed"]?.mode, .toolRunning, "an id never listed proves nothing")
 
         // Through the hook: a real Stop payload's background_tasks.
         let payload = #"{"hook_event_name":"Stop","session_id":"s","background_tasks":[]}"#
-        let record = HookRuntime.makeRecord(provider: .claude, payload: Data(payload.utf8), now: t0.addingTimeInterval(5), origin: nil)
+        let record = HookRuntime.makeRecord(provider: .claude, payload: Data(payload.utf8), now: t0.addingTimeInterval(6), origin: nil)
         engine.ingest(provider: "claude", line: record)
-        XCTAssertEqual(engine.statuses["claude:agent:listed"]?.mode, .completed)
+        XCTAssertEqual(engine.statuses["claude:agent:kept"]?.mode, .completed)
+        XCTAssertEqual(engine.statuses["claude:agent:never-listed"]?.mode, .toolRunning)
+    }
+
+    /// Regression (real log): a Workflow run lists its workflow task id, not its
+    /// subagents' ids, so each parent Stop closed subagents that kept working and
+    /// cleared their pending approval.
+    func testParentStopKeepsWorkflowSubagentsRunning() {
+        let engine = StatusEngine()
+        engine.ingest(provider: "claude", line: claudeLine("UserPromptSubmit", at: 0, ["session_id": .string("s"), "prompt": .string("run it")]))
+        engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 1, [
+            "session_id": .string("s"), "agent_id": .string("adb6249bbbb0fa33a"), "tool_name": .string("Read"),
+        ]))
+        engine.ingest(provider: "claude", line: claudeLine("PermissionRequest", at: 2, [
+            "session_id": .string("s"), "agent_id": .string("ae12c25a859d9d601"), "tool_name": .string("Bash"),
+            "tool_input": bash("rm -rf build"),
+        ]))
+        for offset in [3.0, 10.0] {
+            engine.ingest(provider: "claude", line: claudeLine("Stop", at: offset, [
+                "session_id": .string("s"), "background_task_ids": .array([.string("w8gr024r6")]),
+            ]))
+        }
+        XCTAssertEqual(engine.statuses["claude:agent:adb6249bbbb0fa33a"]?.mode, .toolRunning)
+        XCTAssertEqual(engine.statuses["claude:agent:ae12c25a859d9d601"]?.mode, .waitingForInput)
+        XCTAssertEqual(engine.pendingPermissions["claude:agent:ae12c25a859d9d601"], ["Bash\u{0}rm -rf build"])
+        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(11)).aggregate.mode, .waitingForInput)
+    }
+
+    func testPruneForgetsBackgroundTaskLists() {
+        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600, retention: 7200))
+        engine.ingest(provider: "claude", line: claudeLine("Stop", at: 0, [
+            "session_id": .string("s"), "background_task_ids": .array([.string("a1")]),
+        ]))
+        engine.prune(now: t0.addingTimeInterval(7300))
+        XCTAssertEqual(engine.statuses, [:])
+        engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 7400, ["session_id": .string("s"), "agent_id": .string("a1")]))
+        engine.ingest(provider: "claude", line: claudeLine("Stop", at: 7401, [
+            "session_id": .string("s"), "background_task_ids": .array([]),
+        ]))
+        XCTAssertEqual(engine.statuses["claude:agent:a1"]?.mode, .toolRunning, "the pruned list no longer counts")
     }
 
     // MARK: Codex helper sessions
@@ -467,11 +514,73 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(engine.statuses["claude:agent:sub"]?.origin, "Claude in VS Code", "subagents inherit the session origin")
     }
 
-    func testLiveIngestUsesArrivalOrder() {
+    /// The socket server stops waiting for a stalled message after about 0.25 s, so it
+    /// can arrive after newer events.
+    func testLateEventDoesNotOverwriteNewerState() {
         let engine = StatusEngine()
+        let key = "claude:session:s"
         engine.ingest(provider: "claude", line: claudeLine("Stop", at: 10, ["session_id": .string("s")]))
-        engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 5, ["session_id": .string("s")]))
-        XCTAssertEqual(engine.statuses["claude:session:s"]?.mode, .toolRunning, "a late, older event still overwrites")
+        XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 9, ["session_id": .string("s")])))
+        XCTAssertEqual(engine.statuses[key]?.mode, .completed)
+        XCTAssertEqual(engine.statuses[key]?.updatedAt, t0.addingTimeInterval(10))
+        XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("PermissionRequest", at: 9.5, [
+            "session_id": .string("s"), "tool_name": .string("Bash"), "tool_input": bash("ls"),
+        ])))
+        XCTAssertEqual(engine.pendingPermissions, [:], "a late prompt is not remembered")
+
+        // Same-millisecond stamps are common and not late.
+        XCTAssertEqual(engine.ingest(provider: "claude", line: claudeLine("UserPromptSubmit", at: 10, ["session_id": .string("s")]))?.mode,
+                       .working)
+        // Beyond the window (a backward clock jump), arrival order wins again.
+        XCTAssertEqual(engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 4, ["session_id": .string("s")]))?.mode,
+                       .toolRunning)
+        // Other rows are not affected.
+        XCTAssertNotNil(engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 1, ["session_id": .string("t")])))
+    }
+
+    func testLatePostToolUseStillReleasesItsPrompt() {
+        let engine = StatusEngine()
+        let key = "claude:session:s"
+        engine.ingest(provider: "claude", line: claudeLine("PermissionRequest", at: 10, [
+            "session_id": .string("s"), "tool_name": .string("Bash"), "tool_input": bash("ls"),
+        ]))
+        XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("PostToolUse", at: 9.5, [
+            "session_id": .string("s"), "tool_name": .string("Bash"), "tool_input": bash("ls"),
+        ])))
+        XCTAssertEqual(engine.statuses[key]?.mode, .waitingForInput)
+        XCTAssertEqual(engine.pendingPermissions, [:])
+    }
+
+    /// Regression: Claude's informational Notifications (here `auth_success`) became a
+    /// Working row that never settled.
+    func testInformationalNotificationDoesNotStartWork() {
+        let engine = StatusEngine()
+        engine.ingest(provider: "claude", line: claudeLine("SessionStart", at: 0, ["session_id": .string("s")]))
+        XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("Notification", at: 1, [
+            "session_id": .string("s"), "notification_type": .string("auth_success"),
+            "message": .string("Authentication successful"),
+        ])))
+        XCTAssertEqual(engine.statuses["claude:session:s"]?.mode, .idleReady)
+        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(3000)).aggregate.activeCount, 0)
+    }
+
+    /// Regression: OpenCode ids share a slowly changing time prefix, so every session
+    /// and subagent showed the same short id.
+    func testOpenCodeShortIDsUseTheRandomTail() {
+        let engine = StatusEngine()
+        for (session, agent) in [("ses_f212d491cffeAbCdEfGh12", "ses_f21a75481ffeHAfkHcYaH3t3yL"),
+                                 ("ses_f212ee51affeZyXwVuTs34", "ses_f21a74000ffeQwErTyUiOp12")] {
+            engine.ingest(provider: "opencode", line: claudeLine("UserPromptSubmit", at: 0, [
+                "session_id": .string(session), "cwd": .string("/Users/dev/k"), "prompt": .string("hi"),
+            ]))
+            engine.ingest(provider: "opencode", line: claudeLine("SubagentStart", at: 1, [
+                "session_id": .string(session), "agent_id": .string(agent),
+            ]))
+        }
+        XCTAssertEqual(engine.statuses["opencode:session:ses_f212d491cffeAbCdEfGh12"]?.displayName, "k: hi (CdEfGh12)")
+        XCTAssertEqual(engine.statuses["opencode:session:ses_f212ee51affeZyXwVuTs34"]?.displayName, "k: hi (XwVuTs34)")
+        XCTAssertEqual(engine.statuses["opencode:agent:ses_f21a75481ffeHAfkHcYaH3t3yL"]?.displayName, "k: hi (agent YaH3t3yL)")
+        XCTAssertEqual(engine.statuses["opencode:agent:ses_f21a74000ffeQwErTyUiOp12"]?.displayName, "k: hi (agent TyUiOp12)")
     }
 
     func testUnknownEventsAreDropped() {
@@ -662,5 +771,42 @@ final class StatusEngineTests: XCTestCase {
         // The pruned session's metadata is gone too: no title/cwd comes back.
         engine.ingest(provider: "claude", line: claudeLine("Stop", at: 7400, ["session_id": .string("old")]))
         XCTAssertEqual(engine.statuses["claude:session:old"]?.displayName, "Claude session old")
+    }
+
+    /// Regression: `age` clamps to 0, so after a backward clock jump a row dated in the
+    /// future stayed fresh and was never pruned.
+    func testFutureDatedRowsGoStaleAndArePruned() {
+        let engine = StatusEngine(config: MonitorConfig(staleAfter: 3600, retention: 7200))
+        for (session, offset) in [("soon", 200.0), ("far", 400.0), ("beyond", 7300.0)] {
+            engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: offset, ["session_id": .string(session)]))
+        }
+        let snapshot = engine.snapshot(now: t0)
+        XCTAssertEqual(snapshot.statuses.map(\.sessionID), ["soon"])
+        XCTAssertEqual(Set(snapshot.staleStatuses.compactMap(\.sessionID)), ["far", "beyond"])
+        XCTAssertEqual(snapshot.aggregate.mode, .toolRunning)
+
+        engine.prune(now: t0)
+        XCTAssertEqual(Set(engine.statuses.keys), ["claude:session:soon", "claude:session:far"])
+    }
+
+    func testReconcileRestoresPendingPromptsOnlyForTheSamePermissionRow() {
+        let key = "claude:session:s"
+        func row(_ event: String, _ mode: AgentMode, _ offset: TimeInterval) -> AgentStatus {
+            AgentStatus(provider: "claude", agentID: key, displayName: "Claude session s", mode: mode,
+                        updatedAt: t0.addingTimeInterval(offset), eventName: event, sessionID: "s")
+        }
+        let recovery = LogRecovery(statuses: [row("PermissionRequest", .waitingForInput, 2)],
+                                   pendingPermissions: [key: ["Bash\u{0}rm -rf build"]])
+
+        let same = StatusEngine()
+        same.load([row("PermissionRequest", .waitingForInput, 2)])
+        same.reconcile(with: recovery)
+        XCTAssertEqual(same.pendingPermissions, [key: ["Bash\u{0}rm -rf build"]])
+
+        let newer = StatusEngine()
+        newer.load([row("Stop", .completed, 5)])
+        newer.reconcile(with: recovery)
+        XCTAssertEqual(newer.pendingPermissions, [:], "a newer row is never pinned to an old prompt")
+        XCTAssertEqual(newer.statuses[key]?.mode, .completed)
     }
 }

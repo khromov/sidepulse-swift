@@ -177,9 +177,9 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 current[row.agentID].map { $0.updatedAt < row.updatedAt } ?? true
             })
             let index = codexIndex
-            let recovered = LogScanner.scan(sources: LogScanner.defaultSources(paths: paths),
-                                            config: settings.monitorConfig,
-                                            codexTitle: { index.title(forSession: $0) })
+            let recovered = LogScanner.recover(sources: LogScanner.defaultSources(paths: paths),
+                                               config: settings.monitorConfig,
+                                               codexTitle: { index.title(forSession: $0) })
             let reconciled = engine.reconcile(with: recovered)
             engine.prune(now: now)
             policy = KeepAwakePolicy(grace: options.keepAwakeGrace)

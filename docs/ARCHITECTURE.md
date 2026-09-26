@@ -87,10 +87,11 @@ the current user, and then check with `getpeereid` that the process serving it
 is too.
 
 `EventSocketServer` reads each connection on a concurrent queue but hands the
-messages to the runtime in accept order, so a hook's `PreToolUse` is never
-applied after its `PostToolUse`. A message waits at most 0.25 s behind an
-unfinished earlier connection. The socket commands are `ping`, `status`,
-`open-settings` and `reload-settings`. `ping` answers
+messages to the runtime in accept order, waiting about 0.25 s behind an
+unfinished earlier connection. A message that still arrives late is ignored by
+`StatusEngine` if it was logged up to 5 s before its row's last update, so a
+hook's `PreToolUse` is not applied after its `PostToolUse`. The socket commands
+are `ping`, `status`, `open-settings` and `reload-settings`. `ping` answers
 `{"ok","pid","version","kind"}`: `kind` is `headless` when the runtime has no
 `onOpenSettings` handler (`sidepulse run`/`leds`), else `app`, and the CLI reads
 a missing `kind` as `app`. `reload-settings` waits up to 2 s for an
@@ -104,6 +105,10 @@ serial state queue. Callers rely on these rules:
 - UI reads (`snapshot()`, `settings`, `deviceInfos()`, `keepAwakeActive`) come
   from lock-protected caches and never wait for the state queue, device I/O or
   a settings write.
+- The menu gets project names from `DisplayNames.cachedProjectName`, which
+  never touches the filesystem. The engine resolves each row's cwd on the state
+  queue when it applies an event or restores a row, and the menu falls back to
+  the row's label on a miss.
 - `updateSettings`, `setDeviceDisplay`, `setDeviceBrightness`, `removeDevice`
   and `refresh` return at once. `settings` shows the change immediately; the
   save and its effects run on the state queue, then `onUpdate` fires.

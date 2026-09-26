@@ -106,4 +106,28 @@ final class StatusDisplayNamesTests: XCTestCase {
         XCTAssertNil(DisplayNames.projectName(cwd: nil))
         XCTAssertNil(DisplayNames.projectName(cwd: ""))
     }
+
+    func testCachedProjectNameNeverTouchesTheFilesystem() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StatusDisplayNames-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nested = root.appendingPathComponent("cached_repo/src")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("cached_repo/.git"), withIntermediateDirectories: true)
+
+        XCTAssertNil(DisplayNames.cachedProjectName(cwd: nested.path), "a miss resolves nothing")
+        XCTAssertEqual(DisplayNames.projectName(cwd: nested.path), "cached_repo")
+        try FileManager.default.removeItem(at: root)
+        XCTAssertEqual(DisplayNames.cachedProjectName(cwd: nested.path), "cached_repo")
+        XCTAssertNil(DisplayNames.cachedProjectName(cwd: nil))
+        XCTAssertNil(DisplayNames.cachedProjectName(cwd: ""))
+    }
+
+    func testShortIDUsesTheTailOfOpenCodeIDs() {
+        XCTAssertEqual(DisplayNames.shortID("019ee395-2f64-7cc3"), "019ee395")
+        XCTAssertEqual(DisplayNames.shortID("a72ce317aff816536"), "a72ce317")
+        XCTAssertEqual(DisplayNames.shortID("ses_f212d491cffeAbCdEfGh12"), "CdEfGh12")
+        XCTAssertEqual(DisplayNames.shortID("ses_f212ee51affeZyXwVuTs34"), "XwVuTs34")
+        XCTAssertEqual(DisplayNames.shortID("ses_y"), "ses_y")
+        XCTAssertEqual(DisplayNames.shortID("abc"), "abc")
+    }
 }
