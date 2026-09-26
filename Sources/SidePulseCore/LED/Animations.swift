@@ -12,7 +12,7 @@ public struct Animation: Sendable, Equatable, Identifiable {
 
 public enum AnimationLibrary {
     public static var all: [Animation] {
-        BuiltInPrograms.catalog
+        BuiltInPrograms.catalog + ExtraPrograms.catalog
     }
 
     public static func animation(id: String) -> Animation? {
@@ -26,7 +26,8 @@ public enum AnimationLibrary {
 
     public static func program(id: String, ledCount: Int) throws -> String {
         guard let animation = animation(id: id),
-              let program = BuiltInPrograms.files[fileName(for: animation, ledCount: ledCount)] else {
+              let program = BuiltInPrograms.files[fileName(for: animation, ledCount: ledCount)]
+                ?? ExtraPrograms.files[fileName(for: animation, ledCount: ledCount)] else {
             throw LedError.unknownAnimation(id)
         }
         return program
@@ -54,7 +55,7 @@ public struct AnimationProfile: Sendable, Equatable, Identifiable {
 
 public enum AnimationProfiles {
     public static var builtIn: [AnimationProfile] {
-        BuiltInPrograms.profiles
+        BuiltInPrograms.profiles + ExtraPrograms.profiles
     }
 
     public static func profile(id: String) -> AnimationProfile? {

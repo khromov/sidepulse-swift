@@ -69,7 +69,7 @@ Key design points that span several files:
 - **`LEDS.LED` writes.** This file is the exception: it is written in place by `LedWriter`, and only truncated after the caller re-checks that it still wants the write. The re-check matters because `open()` can block on the macOS removable-volume permission prompt.
 - **Finding SidePulse hooks.** Identify our hooks, current and Python-era, only by command markers (`HookCommand.isSidePulseCommand`), never by log paths.
 - **Stable hook command.** Hook commands point at the stable `~/.local/bin/sidepulse` link. Codex trust hashes bind to the exact command string, so changing the command format invalidates trust.
-- **Generated file.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` is generated. Don't edit it by hand. Regenerate it with `SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests`.
+- **Generated file.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` is generated. Don't edit it by hand; Swift-only animations and profiles (such as Signal) go in `ExtraPrograms.swift`. Regenerate it with `SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests`.
 - **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed.
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.

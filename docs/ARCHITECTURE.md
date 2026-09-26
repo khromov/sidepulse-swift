@@ -20,7 +20,7 @@ In scope:
 - LED output:
   - device discovery;
   - Dot vs Pro LED count;
-  - built-in animations and the Cyan/Ember/Purple profiles;
+  - built-in animations and the Cyan/Ember/Purple/Signal profiles;
   - per-device Agent/Manual mode and brightness;
   - keepalive touches (8-LED/SD devices only);
   - hot-plug.

@@ -414,13 +414,14 @@ The Settings window has four tabs:
 | Tab | Contents |
 | --- | --- |
 | General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** |
-| Animations | Profile picker: **Cyan** (the default), **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
+| Animations | Profile picker: **Cyan** (the default), **Ember**, **Purple** or **Signal** (solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done). It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
 | Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
 | Hooks | For each provider: status, config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
-Cyan Complete, Amber Pulse, Solid Green, KITT Scanner, KITT Scanner Red, Night
-Rider, and the Ember and Purple families (Idle, Tide, Attention, Complete).
+Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, KITT Scanner,
+KITT Scanner Red, Night Rider, and the Ember and Purple families (Idle, Tide,
+Attention, Complete).
 Animations that depend on the LED layout have separate 2-LED and 8-LED
 variants.
 
@@ -672,7 +673,8 @@ The script runs these steps:
    the status is not Accepted, it prints Apple's log and exits 1. Otherwise it
    staples the ticket to the app and checks it with `spctl`.
 4. **Zips** the stapled app to `dist/SidePulse-VERSION.zip` with `ditto` and
-   prints the SHA-256. An existing zip for the same version is replaced.
+   prints the SHA-256. The zip holds no extended attributes (`._` files), so
+   the signature stays valid when it is extracted with `unzip` too. An existing zip for the same version is replaced.
 
 It uploads nothing, creates no tag and pushes nothing. You attach the zip to a
 GitHub release yourself, for example with

@@ -82,7 +82,9 @@ done
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/sidepulse-release.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
-ditto -c -k --keepParent "$APP" "$WORK/SidePulse.zip"
+# --norsrc because macOS tags build output with com.apple.provenance, which ditto would
+# store as ._ files that `unzip` extracts into the bundle and so breaks its signature.
+ditto -c -k --norsrc --keepParent "$APP" "$WORK/SidePulse.zip"
 
 echo "Uploading to Apple's notary service..."
 SUBMIT_JSON=$(xcrun notarytool submit "$WORK/SidePulse.zip" --keychain-profile "$PROFILE" --output-format json) || {
@@ -109,7 +111,7 @@ VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Co
 ZIP="$ROOT/dist/SidePulse-$VERSION.zip"
 mkdir -p "$ROOT/dist"
 rm -f "$ZIP"
-ditto -c -k --keepParent "$APP" "$ZIP"
+ditto -c -k --norsrc --keepParent "$APP" "$ZIP"
 SHA256=$(shasum -a 256 "$ZIP" | cut -d ' ' -f 1)
 
 echo

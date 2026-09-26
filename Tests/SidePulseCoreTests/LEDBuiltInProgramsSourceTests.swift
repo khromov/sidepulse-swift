@@ -206,13 +206,13 @@ final class LEDBuiltInProgramsSourceTests: XCTestCase {
         guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
         let input = try LEDBuiltInProgramsGenerator.load(repo: repo)
 
-        XCTAssertEqual(AnimationLibrary.all.map { LEDBuiltInProgramsGenerator.Entry(id: $0.id, name: $0.name,
-                                                                                countSpecific: $0.countSpecific) },
+        XCTAssertEqual(BuiltInPrograms.catalog.map { LEDBuiltInProgramsGenerator.Entry(id: $0.id, name: $0.name,
+                                                                                   countSpecific: $0.countSpecific) },
                        input.catalog)
         XCTAssertEqual(BuiltInPrograms.files, Dictionary(uniqueKeysWithValues: input.files.map { ($0.name, $0.program) }))
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), input.profiles.map(\.id))
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.name), input.profiles.map(\.name))
-        for (profile, expected) in zip(AnimationProfiles.builtIn, input.profiles) {
+        XCTAssertEqual(BuiltInPrograms.profiles.map(\.id), input.profiles.map(\.id))
+        XCTAssertEqual(BuiltInPrograms.profiles.map(\.name), input.profiles.map(\.name))
+        for (profile, expected) in zip(BuiltInPrograms.profiles, input.profiles) {
             XCTAssertEqual(Dictionary(uniqueKeysWithValues: profile.animations.map { ($0.key.rawValue, $0.value) }),
                            expected.animations, profile.id)
         }
