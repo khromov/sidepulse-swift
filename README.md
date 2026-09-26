@@ -47,7 +47,8 @@ Cursor, Grok and Junie support.
 
 ## Requirements
 
-- macOS 26 or later.
+- macOS 26 or later. The release zip is for Apple silicon only; on an Intel
+  Mac, build from source with `scripts/install.sh`.
 - A Swift 6 toolchain: Xcode 16 or later. The package uses swift-tools-version
   6.0 and compiles in Swift 5 language mode.
 - The scripts use the standard macOS tools `codesign`, `plutil`, `ditto` and
@@ -798,7 +799,7 @@ The script runs these steps:
    from `--notary-profile` / `$SIDEPULSE_NOTARY_PROFILE` (default `notary`).
    If the working tree has uncommitted changes, it prints a warning.
 2. **Builds** `build/SidePulse.app` with `scripts/build-app.sh --distribution`.
-   It uses universal (arm64 and x86_64) binaries and signs them with the
+   It builds arm64 binaries only and signs them with the
    hardened runtime and a secure timestamp.
 3. **Notarizes** the app with `notarytool` and waits for Apple's verdict. When
    the status is not Accepted, it prints Apple's log and exits 1. When it gets

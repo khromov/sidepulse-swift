@@ -35,7 +35,7 @@ if [ "$DISTRIBUTION" -eq 1 ]; then
         echo "error: --distribution needs SIDEPULSE_CODESIGN_IDENTITY (a \"Developer ID Application: …\" identity)" >&2
         exit 1
     fi
-    ARCH_FLAGS="--arch arm64 --arch x86_64"
+    ARCH_FLAGS="--arch arm64"
     SIGN_FLAGS="--options runtime --timestamp"
 fi
 
@@ -49,7 +49,7 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-echo "Building SidePulse $VERSION ($CONFIG${ARCH_FLAGS:+, universal})..."
+echo "Building SidePulse $VERSION ($CONFIG${ARCH_FLAGS:+, arm64})..."
 # ARCH_FLAGS is unquoted on purpose: it holds zero or more separate arguments.
 swift build -c "$CONFIG" $ARCH_FLAGS --product sidepulse
 swift build -c "$CONFIG" $ARCH_FLAGS --product SidePulseApp
@@ -78,7 +78,7 @@ codesign --verify --strict "$APP"
 if [ "$IDENTITY" = "-" ]; then
     echo "Built $APP (signed ad hoc; set SIDEPULSE_CODESIGN_IDENTITY to sign with a certificate)"
 elif [ "$DISTRIBUTION" -eq 1 ]; then
-    echo "Built $APP (universal, signed for distribution with $IDENTITY)"
+    echo "Built $APP (arm64, signed for distribution with $IDENTITY)"
 else
     echo "Built $APP (signed with $IDENTITY)"
 fi

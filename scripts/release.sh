@@ -70,14 +70,13 @@ if ! codesign -dvv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:';
     echo "error: $APP is not signed with a Developer ID Application certificate, which notarization requires" >&2
     exit 1
 fi
-# Every build config shares one SwiftPM output directory, so a concurrent build can swap in host-only binaries.
+# Every build config shares one SwiftPM output directory, so a concurrent build can swap in other binaries.
 for bin in "$APP/Contents/MacOS/SidePulse" "$APP/Contents/Helpers/sidepulse"; do
-    for arch in arm64 x86_64; do
-        if ! lipo "$bin" -verify_arch "$arch"; then
-            echo "error: $bin has no $arch slice; was another swift build running in this checkout?" >&2
-            exit 1
-        fi
-    done
+    ARCHS=$(lipo -archs "$bin")
+    if [ "$ARCHS" != arm64 ]; then
+        echo "error: $bin is built for '$ARCHS', not arm64 only; was another swift build running in this checkout?" >&2
+        exit 1
+    fi
 done
 
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")
