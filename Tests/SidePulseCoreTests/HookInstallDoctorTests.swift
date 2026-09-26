@@ -7,7 +7,7 @@ final class HookInstallDoctorTests: XCTestCase {
     func testEmptyHome() throws {
         let box = try HookInstallSandbox()
         let infos = HookDoctor.inspectAll(paths: box.paths)
-        XCTAssertEqual(infos.map(\.provider), [.claude, .codex])
+        XCTAssertEqual(infos.map(\.provider), [.claude, .codex, .opencode])
         for info in infos {
             XCTAssertFalse(info.configExists)
             XCTAssertFalse(info.agentDetected)
@@ -18,6 +18,7 @@ final class HookInstallDoctorTests: XCTestCase {
         }
         XCTAssertTrue(infos[0].hooksEnabled)
         XCTAssertFalse(infos[1].hooksEnabled)
+        XCTAssertTrue(infos[2].hooksEnabled)
         XCTAssertEqual(HookDoctor.renderText(infos), """
         claude:
           config: \(box.paths.claudeSettingsFile.path) (missing)
@@ -29,6 +30,10 @@ final class HookInstallDoctorTests: XCTestCase {
           hooks: not installed
           legacy python hooks: 0
           log: \(box.paths.logFile(for: "codex").path) (missing)
+        opencode:
+          config: \(box.paths.openCodePluginFile.path) (missing)
+          hooks: not installed
+          log: \(box.paths.logFile(for: "opencode").path) (missing)
         """)
     }
 
@@ -37,13 +42,15 @@ final class HookInstallDoctorTests: XCTestCase {
         let cli = try box.makeBundledCLI()
         _ = try ClaudeHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
         _ = try CodexHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false, trust: false)
+        _ = try OpenCodePluginInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
         try box.trustCodexHooks()
         try box.write("", to: box.paths.logFile(for: "claude"))
         let infos = HookDoctor.inspectAll(paths: box.paths)
         XCTAssertTrue(infos.allSatisfy(\.fullyInstalled))
         XCTAssertTrue(infos.allSatisfy(\.agentDetected))
         XCTAssertEqual(infos[1].installedEvents, HookProvider.codex.events)
-        XCTAssertEqual(infos.map(\.hookCLIPaths), [[cli], [cli]])
+        XCTAssertEqual(infos[2].installedEvents, HookProvider.opencode.events)
+        XCTAssertEqual(infos.map(\.hookCLIPaths), [[cli], [cli], [cli]])
         XCTAssertEqual(HookDoctor.renderText(infos), """
         claude:
           config: \(box.paths.claudeSettingsFile.path) (found)
@@ -58,6 +65,11 @@ final class HookInstallDoctorTests: XCTestCase {
           trust: 11/11 hooks trusted
           legacy python hooks: 0
           log: \(box.paths.logFile(for: "codex").path) (missing)
+        opencode:
+          config: \(box.paths.openCodePluginFile.path) (found)
+          hooks: installed (14/14 events)
+          hook cli: \(cli) (ok)
+          log: \(box.paths.logFile(for: "opencode").path) (missing)
         """)
 
         let json = HookDoctor.renderJSON(infos)
@@ -194,8 +206,8 @@ final class HookInstallDoctorTests: XCTestCase {
         try box.write(HookInstallFixtures.pythonClaudeSettings, to: box.paths.claudeSettingsFile)
         try box.write(HookInstallFixtures.pythonCodexConfigReinstalled, to: box.paths.codexConfigFile)
         let infos = HookDoctor.inspectAll(paths: box.paths)
-        XCTAssertEqual(infos.map(\.legacyHooks), [14, 11])
-        XCTAssertEqual(infos.map(\.installedEvents), [[], []])
+        XCTAssertEqual(infos.map(\.legacyHooks), [14, 11, 0])
+        XCTAssertEqual(infos.map(\.installedEvents), [[], [], []])
         XCTAssertTrue(infos[1].hooksEnabled)
     }
 }

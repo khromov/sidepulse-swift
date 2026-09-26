@@ -122,11 +122,17 @@ public enum OriginDetector {
         case (.codex, .vscode): return "Codex in VS Code"
         case (.codex, .cursor): return "Codex in Cursor"
         case (.codex, .windsurf): return "Codex in Windsurf"
+        // The OpenCode plugin always sends its own origin, so this only labels hand-run hooks.
+        case (.opencode, _): return "OpenCode"
         }
     }
 
     public static func unknownLabel(_ provider: HookProvider) -> String {
-        provider == .claude ? "Claude" : "Codex"
+        switch provider {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .opencode: return "OpenCode"
+        }
     }
 
     static func cleanLabel(_ value: String?) -> String? {

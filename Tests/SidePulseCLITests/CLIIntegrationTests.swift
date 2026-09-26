@@ -219,6 +219,24 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(bad.stdout.text, "")
     }
 
+    func testOpenCodeHookLogThenOfflineStatus() throws {
+        let h = makeHarness(["SIDEPULSE_DISABLE_EVENT_SOCKET": "1"])
+        h.env.stdin = .data(Data((#"{"hook_event_name":"Stop","session_id":"ses_1","cwd":"/tmp/proj","#
+            + #""last_assistant_message":"Should I also add unit tests for this?","agent_origin":"OpenCode","#
+            + #""agent_origin_kind":"opencode","agent_origin_source":"plugin","agent_origin_confidence":"explicit"}"#).utf8))
+        XCTAssertEqual(h.run(["hook-log", "--provider", "opencode"]), 0)
+        XCTAssertEqual(h.stdout.text, "")
+        XCTAssertEqual((read(h.paths.logFile(for: "opencode")) ?? "").split(separator: "\n").count, 1)
+
+        XCTAssertEqual(h.run(["status", "--offline", "--json"]), 0)
+        let value = try JSONValue.parse(h.stdout.text)
+        XCTAssertEqual(value["aggregate"]?["mode"]?.stringValue, "waiting_for_input")
+        let row = value["statuses"]?.arrayValue?.first
+        XCTAssertEqual(row?["provider"]?.stringValue, "opencode")
+        XCTAssertEqual(row?["origin"]?.stringValue, "OpenCode")
+        XCTAssertEqual(value["sources"]?.arrayValue?.compactMap { $0["provider"]?.stringValue }, ["claude", "codex", "opencode"])
+    }
+
     func testOfflineStatusOverTempLogs() throws {
         let h = makeHarness()
         try writeLog(h, provider: "claude", records: [
@@ -407,6 +425,7 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(claude.contains(CLIHarness.cliPath))
         XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.codexConfigFile.path),
                        "codex is not installed, so its config must not be created")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.openCodePluginFile.path))
         XCTAssertTrue(h.stdout.text.hasPrefix("claude: updated\n"))
 
         let again = makeHarness()
@@ -419,14 +438,27 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(codex.run(["install", "codex", "--no-trust"]), 0, codex.stderr.text)
         XCTAssertTrue((read(h.paths.codexConfigFile) ?? "").contains("# >>> sidepulse hooks >>>"))
 
+        let opencode = makeHarness()
+        opencode.env.paths = h.paths
+        XCTAssertEqual(opencode.run(["install", "opencode"]), 0, opencode.stderr.text)
+        XCTAssertEqual(read(h.paths.openCodePluginFile), OpenCodePluginInstaller.source(cliPath: CLIHarness.cliPath))
+        XCTAssertEqual(opencode.stdout.text, """
+            opencode: updated
+              config: \(h.paths.openCodePluginFile.path)
+              log: \(h.paths.logFile(for: "opencode").path)
+
+            """)
+
         let doctor = makeHarness()
         doctor.env.paths = h.paths
         doctor.env.app = .socket(path: h.paths.socketPath)
         XCTAssertEqual(doctor.run(["doctor", "--json"]), 0)
         let report = try JSONValue.parse(doctor.stdout.text)
         let providers = report["providers"]?.arrayValue ?? []
-        XCTAssertEqual(providers.compactMap { $0["provider"]?.stringValue }, ["claude", "codex"])
+        XCTAssertEqual(providers.compactMap { $0["provider"]?.stringValue }, ["claude", "codex", "opencode"])
         XCTAssertEqual(providers.first?["missing_events"]?.arrayValue?.count, 0)
+        XCTAssertEqual(providers.last?["missing_events"]?.arrayValue?.count, 0)
+        XCTAssertEqual(providers.last?["hook_cli_paths"], .array([.string(CLIHarness.cliPath)]))
         XCTAssertEqual(report["app"]?["running"]?.boolValue, false)
         XCTAssertEqual(report["app"]?["cli_path"]?.stringValue, CLIHarness.cliPath)
 
@@ -443,6 +475,8 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertFalse((read(h.paths.codexConfigFile) ?? "").contains("sidepulse hooks"))
         XCTAssertTrue(remove.stdout.text.contains("claude: removed\n"))
         XCTAssertTrue(remove.stdout.text.contains("codex: removed\n"))
+        XCTAssertTrue(remove.stdout.text.contains("opencode: removed\n"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.openCodePluginFile.path))
     }
 
     func testMalformedClaudeConfigIsReportedAndLeftAlone() throws {

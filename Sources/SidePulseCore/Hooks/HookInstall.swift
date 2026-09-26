@@ -3,9 +3,17 @@ import Foundation
 public enum HookProvider: String, CaseIterable, Sendable {
     case claude
     case codex
+    case opencode
 
-    public var label: String { self == .claude ? "Claude Code" : "Codex" }
+    public var label: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex"
+        case .opencode: return "OpenCode"
+        }
+    }
 
+    /// For OpenCode, the records the SidePulse plugin emits, since OpenCode has no hook config.
     public var events: [String] {
         switch self {
         case .claude:
@@ -14,16 +22,34 @@ public enum HookProvider: String, CaseIterable, Sendable {
         case .codex:
             return ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
                     "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop", "Interrupt"]
+        case .opencode:
+            return ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+                    "PermissionRequest", "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop",
+                    "StopFailure", "Interrupt", "SessionEnd"]
         }
     }
 
     public func configFile(_ paths: SidePulsePaths) -> URL {
-        self == .claude ? paths.claudeSettingsFile : paths.codexConfigFile
+        switch self {
+        case .claude: return paths.claudeSettingsFile
+        case .codex: return paths.codexConfigFile
+        case .opencode: return paths.openCodePluginFile
+        }
     }
 
-    /// Used to decide whether the agent looks installed.
     public func configDir(_ paths: SidePulsePaths) -> URL {
-        self == .claude ? paths.claudeDir : paths.codexDir
+        switch self {
+        case .claude: return paths.claudeDir
+        case .codex: return paths.codexDir
+        case .opencode: return paths.openCodeConfigDir
+        }
+    }
+
+    /// Whether the agent looks installed; OpenCode only creates its config directory on first run.
+    public func isDetected(_ paths: SidePulsePaths) -> Bool {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: configDir(paths).path, isDirectory: &isDir), isDir.boolValue { return true }
+        return self == .opencode && OpenCodePluginInstaller.findOpenCodeBinary(paths: paths) != nil
     }
 }
 
@@ -114,11 +140,14 @@ public enum HookInstaller {
         switch (action, provider) {
         case (.uninstall, .claude): return try ClaudeHookInstaller.uninstall(paths: paths, dryRun: dryRun)
         case (.uninstall, .codex): return try CodexHookInstaller.uninstall(paths: paths, dryRun: dryRun)
+        case (.uninstall, .opencode): return try OpenCodePluginInstaller.uninstall(paths: paths, dryRun: dryRun)
         case (.install, _):
             guard let cliPath else { throw HookCLINotFound() }
-            return provider == .claude
-                ? try ClaudeHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
-                : try CodexHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun, trust: trust)
+            switch provider {
+            case .claude: return try ClaudeHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
+            case .codex: return try CodexHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun, trust: trust)
+            case .opencode: return try OpenCodePluginInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
+            }
         }
     }
 }
@@ -134,6 +163,7 @@ public enum HookInstallError: Error, Equatable, CustomStringConvertible {
     /// A shape we refuse to rewrite (e.g. `"hooks": []`) because rewriting it would destroy user data.
     case invalidStructure(path: String, message: String)
     case unreadable(path: String, message: String)
+    case notOurs(path: String)
 
     public var description: String {
         switch self {
@@ -143,6 +173,8 @@ public enum HookInstallError: Error, Equatable, CustomStringConvertible {
             return "\(path): \(message); fix it by hand, then retry"
         case .unreadable(let path, let message):
             return "could not read \(path): \(message)"
+        case .notOurs(let path):
+            return "\(path) was not written by SidePulse; move it away, then retry"
         }
     }
 
@@ -152,6 +184,7 @@ public enum HookInstallError: Error, Equatable, CustomStringConvertible {
         case .invalidJSON(_, let m): return .invalidJSON(path: path, message: m)
         case .invalidStructure(_, let m): return .invalidStructure(path: path, message: m)
         case .unreadable(_, let m): return .unreadable(path: path, message: m)
+        case .notOurs: return .notOurs(path: path)
         }
     }
 }

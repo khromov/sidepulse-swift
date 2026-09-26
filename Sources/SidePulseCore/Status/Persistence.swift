@@ -135,7 +135,7 @@ public enum LogScanner {
     /// its current one, which is always listed so callers can report it missing.
     public static func defaultSources(paths: SidePulsePaths) -> [SourceInfo] {
         var sources: [SourceInfo] = []
-        for provider in ["codex", "claude"] {
+        for provider in ["codex", "claude", "opencode"] {
             let current = paths.logFile(for: provider)
             let rotated = current.appendingPathExtension("1")
             if FileManager.default.fileExists(atPath: rotated.path) {

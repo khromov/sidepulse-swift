@@ -358,7 +358,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         if action == .uninstall {
             let confirmed = AppServices.confirm(
                 title: "Uninstall \(provider.label) hooks?",
-                message: "SidePulse will stop receiving \(provider.label) status updates. A backup of \(hook.configPath.path) is kept.",
+                message: HookPresentation.uninstallConfirmation(provider: provider, configPath: hook.configPath.path),
                 confirmTitle: HookAction.uninstall.label)
             guard confirmed else { return }
         }

@@ -10,7 +10,7 @@ enum DoctorCommand: CLICommand {
     )
 
     static func run(_ arguments: ParsedArguments, _ env: CLIEnvironment) throws -> Int32 {
-        let infos = HookDoctor.inspectAll(paths: env.paths, runningExecutable: env.executablePath)
+        let infos = HookDoctor.inspectAll(paths: env.paths, runningExecutable: env.executablePath, checkVersions: true)
         let app = DoctorAppInfo.gather(env)
         if arguments.has("json") {
             var report = HookDoctor.renderJSON(infos).objectValue ?? JSONObject()

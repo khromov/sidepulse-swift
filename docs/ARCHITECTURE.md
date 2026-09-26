@@ -9,8 +9,9 @@ mount as FAT volumes and are driven by writing a small DSL to `LEDS.LED`
 ## Scope
 
 In scope:
-- Agent status monitoring through hooks, for **Claude Code** and **Codex** only.
-  - Hook install and uninstall, including Codex trust hashes.
+- Agent status monitoring through hooks, for **Claude Code**, **Codex** and **OpenCode**.
+  - Hook install and uninstall, including Codex trust hashes and the OpenCode
+    plugin (OpenCode has no hook settings).
   - Removal of Python-era hooks.
   - `doctor`.
 - The full status state machine from the Python collector:
@@ -69,6 +70,11 @@ sidepulse status     ─▶ asks the app over the socket ({"command":"status"}),
 sidepulse leds/run   ─▶ runs SidePulseRuntime headless in the foreground
 ```
 
+OpenCode has no hook settings. Its SidePulse plugin (`plugins/sidepulse.js` in
+OpenCode's config directory) reads OpenCode's event stream inside OpenCode's
+background service and runs the same `hook-log --provider opencode` command for
+each event, one CLI at a time so records keep their order.
+
 The app is the only thing that owns monitor state and LED writes. The runtime
 binds the socket before it writes anything, and refuses to start if another
 process already listens on it.
@@ -110,14 +116,18 @@ serial state queue. Callers rely on these rules:
 
 ## Paths
 
-All paths hang off `SidePulsePaths`. They are never taken from XDG variables,
-so the hook, the CLI and the app launched by the LaunchAgent always agree.
-`SIDEPULSE_HOME` overrides the root; tests use it.
+All paths hang off `SidePulsePaths`. SidePulse's own paths are never taken from
+XDG variables, so the hook, the CLI and the app launched by the LaunchAgent
+always agree. `SIDEPULSE_HOME` overrides the root; tests use it. Agent config
+locations follow the agent's own overrides: `CODEX_HOME` for Codex, and
+`OPENCODE_CONFIG_DIR`, then `XDG_CONFIG_HOME/opencode`, then
+`~/.config/opencode` for OpenCode (plugin: `plugins/sidepulse.js`).
 
 Files under the root (`~/Library/Application Support/SidePulse/`):
 - `settings.json`
 - `latest.json`
-- `logs/claude.jsonl` and `logs/codex.jsonl` (rotated at 8 MB to `.1`)
+- `logs/claude.jsonl`, `logs/codex.jsonl` and `logs/opencode.jsonl` (rotated at
+  8 MB to `.1`)
 - `events.sock`
 - `app.log` (rotated at 2 MB), plus the LaunchAgent's `app.out.log` and
   `app.err.log`
@@ -163,7 +173,7 @@ and zips it to `dist/SidePulse-VERSION.zip`.
 | Status | `SidePulseCore/Status/*` | models, `EventParser`, `ModeClassifier`, `DisplayNames`, `StatusEngine`, `SnapshotBuilder`, `LatestStore`, `LogScanner`, `CodexSessionIndex` |
 | LED | `SidePulseCore/LED/*` | `LedText`, `DeviceDiscovery`, `LedWriter`, `KeepaliveToucher`, `AnimationLibrary`, `AnimationProfiles`, `LedProgram`, `AgentLedController` |
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
-| Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
+| Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
 | System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and power assertion (`KeepAwakeAssertion`), launchd, legacy Python cleanup |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
@@ -178,8 +188,8 @@ fast.
 
 - Swift 5 language mode, macOS 14+, no third-party dependencies.
 - Tests use XCTest (`swift test`).
-- Tests never modify the real `~/.claude`, `~/.codex`, `~/Library/LaunchAgents`
-  or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read
+- Tests never modify the real `~/.claude`, `~/.codex`, `~/.config/opencode`,
+  `~/Library/LaunchAgents` or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read
   copies of the real agent configs). Use a temporary directory with
   `SidePulsePaths(environment: [...], home: tmp)` and `SIDEPULSE_HOME`.
 - The hook path never writes to stdout and always exits 0.
@@ -197,9 +207,12 @@ fast.
   `LedError.accessDenied`, shown on the device as a permission notice.
 - The diagnostics log (`DiagnosticsLog`, `app.log`) uses plain POSIX writes.
 - Writes to third-party configs make a backup (`<file>.bak.<stamp>`) when they
-  change an existing file.
+  change an existing file. The OpenCode plugin is SidePulse's own file: install
+  backs up a changed older copy, and uninstall deletes it without a backup.
 - Hooks are identified by command markers (`HookCommand.isSidePulseCommand`),
-  never by log paths.
+  never by log paths. The OpenCode plugin counts as ours only with the marker
+  line `OpenCodePluginInstaller.marker`; any other `sidepulse.js` is never
+  replaced or deleted.
 - Prefer `\u{2028}` style escapes in Swift sources over literal invisible
   characters.
 

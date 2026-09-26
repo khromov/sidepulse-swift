@@ -2,8 +2,8 @@
 
 A lightweight Swift replacement for the Python
 [`sidepulse`](https://github.com/inteliwear/sidepulse) project: a `sidepulse`
-CLI plus a native macOS menu-bar app that show Claude Code and Codex agent
-status on SidePulse LEDs.
+CLI plus a native macOS menu-bar app that show Claude Code, Codex and OpenCode
+agent status on SidePulse LEDs.
 
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
@@ -14,16 +14,17 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
 
 ### Differences from the Python version
 
-- **Claude Code and Codex only.** Hooks are installed into
+- **Claude Code, Codex and OpenCode.** Hooks are installed into
   `~/.claude/settings.json` and `~/.codex/config.toml`, and Codex hooks are
-  marked trusted automatically.
+  marked trusted automatically. OpenCode, which the Python version does not
+  hook, gets a SidePulse plugin (see [How hooks work](#how-hooks-work)).
 - **No Python.** It ships as one app bundle containing the menu-bar app and the
   CLI, and uses no third-party dependencies. The agent hook runs the native CLI
   directly, so no Python interpreter starts on every tool call.
 - **New data paths.** Everything lives under
-  `~/Library/Application Support/SidePulse`. XDG variables are never read, and
-  Python-era state in `~/.local/state/sidepulse` or `~/.config/sidepulse` is
-  neither read nor removed.
+  `~/Library/Application Support/SidePulse`. XDG variables are never read for
+  SidePulse's own files, and Python-era state in `~/.local/state/sidepulse` or
+  `~/.config/sidepulse` is neither read nor removed.
 - **Flat CLI.** The command is `sidepulse status`, not
   `sidepulse agent-monitor status`. A leading `agent-monitor` is still accepted
   and ignored.
@@ -104,16 +105,17 @@ Installing with `--sign IDENTITY` avoids the prompt after updates.
 ### What `sidepulse setup` does
 
 ```sh
-sidepulse setup [claude|codex|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]
+sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]
 ```
 
 1. **Migrates away from the Python install** (skip with `--no-migrate`). It
    boots out and deletes these LaunchAgents: `io.sidepulse.agentstatus`,
    `io.sidepulse.service`, `com.sidepulse.agentstatus` and
    `com.pixiepulse.agentstatus`. It leaves `io.sidepulse.sdejectguard` alone.
-2. **Installs hooks** for every agent whose config directory exists
-   (`~/.claude`, `~/.codex`), or only for the providers you name. The same edit
-   removes Python-era SidePulse hooks: those that call `hook_entry.py`,
+2. **Installs hooks** for every agent that looks installed (`~/.claude`,
+   `~/.codex`, and for OpenCode its config directory or an `opencode` binary in
+   `~/.opencode/bin` or on `PATH`), or only for the providers you name. The
+   same edit removes Python-era SidePulse hooks: those that call `hook_entry.py`,
    `agent-monitor hook-log` or `sidepulse hook-log`, plus Codex
    `# >>> agent-monitor hooks >>>` blocks. It also marks the Codex hooks trusted
    (skip with `--no-trust`).
@@ -171,7 +173,7 @@ and `sidepulse <command> --help` shows a command's options. Aliases:
 | `write` | Write an LED program to a SidePulse device |
 | `leds` | Mirror agent status to the LEDs (headless) |
 | `run` | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
-| `install` | Install agent hooks (Claude Code, Codex) |
+| `install` | Install agent hooks (Claude Code, Codex, OpenCode) |
 | `uninstall` | Remove agent hooks |
 | `doctor` | Check hook installation and the app |
 | `app` | Start, stop or inspect the menu-bar app |
@@ -179,7 +181,7 @@ and `sidepulse <command> --help` shows a command's options. Aliases:
 | `version` | Print the version |
 | `help` | Show help for sidepulse or one command |
 
-**`sidepulse setup [claude|codex|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]`**
+**`sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-migrate] [--no-trust]`**
 - `--no-app`: only install hooks. Do not install or start the menu-bar app.
 - `--dry-run`: show what would change without changing anything.
 - `--no-migrate`: leave the Python SidePulse LaunchAgents alone.
@@ -233,10 +235,12 @@ running.
 **`sidepulse run [--dry-run] [--interval SECONDS]`**
 The same as `sidepulse leds` without `--once`.
 
-**`sidepulse install [claude|codex|all]... [--dry-run] [--no-trust]`**
-With no provider named, installs hooks for each agent whose config directory
-exists. Python-era SidePulse hooks are replaced. Hook commands call
-`~/.local/bin/sidepulse` when it links to the CLI inside a `SidePulse.app`,
+**`sidepulse install [claude|codex|opencode|all]... [--dry-run] [--no-trust]`**
+With no provider named, installs hooks for each agent that looks installed (see
+`setup`). Python-era SidePulse hooks are replaced. For OpenCode, install writes
+the SidePulse plugin `~/.config/opencode/plugins/sidepulse.js` and notes when
+the installed OpenCode is older than 2.0, which cannot load it. Hook commands
+call `~/.local/bin/sidepulse` when it links to the CLI inside a `SidePulse.app`,
 else that bundled CLI directly (or the running CLI for a development build).
 A `~/.local/bin/sidepulse` that is anything else, such as the Python install's,
 is ignored with a note. `$SIDEPULSE_CLI_PATH` overrides all of this.
@@ -244,9 +248,10 @@ is ignored with a note. `$SIDEPULSE_CLI_PATH` overrides all of this.
 - `--no-trust`: do not mark the Codex hooks trusted. Install then reminds you to
   approve them with `/hooks` in Codex.
 
-**`sidepulse uninstall [claude|codex|all]... [--dry-run]`**
-Removes SidePulse hooks, current and Python-era, from both providers by
-default. Other hooks are left untouched.
+**`sidepulse uninstall [claude|codex|opencode|all]... [--dry-run]`**
+Removes SidePulse hooks, current and Python-era, from every provider by
+default, and deletes the SidePulse OpenCode plugin. Other hooks are left
+untouched, and a `sidepulse.js` that SidePulse did not write stays with a note.
 - `--dry-run`: show what would change without writing.
 
 **`sidepulse doctor [--json]`**
@@ -259,7 +264,12 @@ checked for existence. For Codex it also reports `trust: n/11 hooks trusted`,
 with advice to approve them with `/hooks` or run `sidepulse install codex` when
 entries are missing and the hooks feature is on. When the feature is off it
 reports `hooks feature: disabled ([features] hooks is not true, so Codex runs
-no hooks)`. The app block reports the app binary, the LaunchAgent plist,
+no hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
+events the installed plugin emits. It reports `error:` for a `sidepulse.js`
+that SidePulse did not write, for a plugin that differs from the one this
+SidePulse writes (`written by another SidePulse version; run 'sidepulse install
+opencode' to update it`), and when the `opencode` binary (`~/.opencode/bin` or
+`PATH`) is older than 2.0. The app block reports the app binary, the LaunchAgent plist,
 whether the app is running (pid and version) and the socket path. It ends with
 `cli: <path> (written by install)` (or `not found`), plus a note when
 `~/.local/bin/sidepulse` is not the SidePulse CLI.
@@ -289,8 +299,9 @@ otherwise for this session only. It never changes the login item. If a headless
 **`sidepulse version`** and **`sidepulse help [COMMAND]`** print the version
 and the help text.
 
-`sidepulse hook-log --provider <claude|codex>` is the internal entry point that
-agent hooks call. See [How hooks work](#how-hooks-work).
+`sidepulse hook-log --provider <claude|codex|opencode>` is the internal entry
+point that agent hooks and the OpenCode plugin call. See
+[How hooks work](#how-hooks-work).
 
 ## Agent status
 
@@ -305,7 +316,7 @@ animation.
 | Long Task Progress | 4 | Working | `ember-tide` | Explicit marker only (`progress`) |
 | Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, other Notifications |
 | Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop` without a question, `SessionEnd`, a completion Notification, a subagent whose session ended (`SessionEnd`) or that the parent `Stop` no longer lists as running |
-| Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, Codex `Interrupt` |
+| Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, `Interrupt` (Codex, OpenCode) |
 
 How the global display state is chosen:
 
@@ -341,8 +352,8 @@ How the global display state is chosen:
   session. So `SessionEnd`, or a parent `Stop`'s list of running background
   tasks, closes those rows instead of leaving them active (and holding
   keep-awake) until the idle timeout.
-- **Interrupt.** Codex `Interrupt` returns the session to Idle without marking
-  it Completed.
+- **Interrupt.** `Interrupt` (Codex, and OpenCode for a stopped or cancelled
+  turn) returns the session to Idle without marking it Completed.
 
 ### Explicit markers
 
@@ -403,7 +414,7 @@ started by the LaunchAgent exits quietly (see `app.log`).
 | **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. The tooltip shows state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
 | **Devices** | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected |
 | **Keep Awake** | **Never** / **When Agents Work** / **Always**. "Keeping Mac awake" appears while the Mac is held awake |
-| **Hooks** | One item per provider, for example `Claude Code — Installed`. Statuses: Installed; Needs repair (the hooks call a missing or non-SidePulse CLI); Installed, not trusted (Codex has no trust entry: approve with `/hooks` in Codex, or click to reinstall); Disabled; Partial; Not installed; Error. An agent whose config directory does not exist shows a disabled item (Not detected). Clicking uninstalls a complete install (after confirmation), and otherwise installs or repairs |
+| **Hooks** | One item per provider, for example `Claude Code — Installed`. Statuses: Installed; Needs repair (the hooks call a missing or non-SidePulse CLI); Installed, not trusted (Codex has no trust entry: approve with `/hooks` in Codex, or click to reinstall); Disabled; Partial; Not installed; Error. An agent that does not look installed shows a disabled item (Not detected). Clicking uninstalls a complete install (after confirmation), and otherwise installs or repairs |
 | **Open Logs Folder** | Reveals `logs/` in Finder |
 | **Settings...** (⌘,) | Opens the settings window |
 | **Launch at Login** | Adds or removes the LaunchAgent plist |
@@ -475,13 +486,14 @@ variants.
 | --- | --- |
 | `~/Library/Application Support/SidePulse/settings.json` | Settings: devices, animations, timeouts, keep-awake. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced |
 | `…/SidePulse/latest.json` | Restart snapshot of agent rows, written with a short delay |
-| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB |
+| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB |
 | `…/SidePulse/events.sock` | Unix socket served by the app. Falls back to `/tmp/sidepulse-<uid>/events.sock` if the path is too long |
 | `…/SidePulse/app.log`, `app.out.log`, `app.err.log` | App diagnostics, and the LaunchAgent's stdout and stderr |
 | `~/Library/LaunchAgents/io.sidepulse.swift.plist` | Launch at login |
 | `~/Applications/SidePulse.app` | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications` |
 | `~/.local/bin/sidepulse` | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly |
 | `~/.claude/settings.json`, `~/.codex/config.toml` | Agent configs. `$CODEX_HOME` is honored. Every change backs up the old file as `<file>.bak.<stamp>`. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
+| `~/.config/opencode/plugins/sidepulse.js` | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted |
 | `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive` | Device files (`keepalive` on 8-LED devices only) |
 
 Environment overrides:
@@ -495,6 +507,7 @@ Environment overrides:
 | `SIDEPULSE_DISABLE_EVENT_SOCKET=1` | The hook only logs and does not notify the app |
 | `SIDEPULSE_AGENT_ORIGIN`, `SIDEPULSE_AGENT_ORIGIN_KIND` | Override the detected origin label, for example "Claude in VS Code" |
 | `CODEX_HOME`, `CODEX_CLI_PATH` | Codex config directory, and the `codex` binary used for hook trust |
+| `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses) |
 | `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
 | `SIDEPULSE_NOTARY_PROFILE` | notarytool keychain profile for `scripts/release.sh` (default: `notary`) |
 
@@ -538,9 +551,13 @@ success. Each handler also gets a 10 s timeout.
   If Codex is not found, or you pass `--no-trust`, approve the hooks with
   `/hooks` in Codex. With `hooks = false`, trust is skipped. Doctor, the menu
   and Settings report hooks without trust entries.
+- **OpenCode.** OpenCode has no hook settings, so the installer writes a
+  plugin that calls the same command. See
+  [The OpenCode plugin](#the-opencode-plugin).
 - **Identification.** SidePulse finds its own hooks, current and Python-era,
   by command markers such as `hook-log --provider`. It never goes by log
-  paths, so your other hooks are never touched.
+  paths, so your other hooks are never touched. The OpenCode plugin is ours
+  only when it has the marker line `// sidepulse hook-log --provider opencode`.
 
 On every event, `sidepulse hook-log`:
 
@@ -567,6 +584,48 @@ On every event, `sidepulse hook-log`:
 Each step is independent, so a dead socket never loses the log line. The hook
 never writes to stdout and always exits 0. Python-era hook commands of the form
 `sidepulse agent-monitor hook-log …` are still accepted.
+
+### The OpenCode plugin
+
+OpenCode 2 loads every `.js` file in the `plugins/` folder of its config
+directory, so `sidepulse install opencode` writes
+`~/.config/opencode/plugins/sidepulse.js`. A running OpenCode loads or unloads
+the file within a few seconds, without a restart. The file starts with a
+`// Managed by SidePulse` comment and the marker line, and holds the hook CLI
+path as `const CLI = "…"`.
+
+The plugin has no dependencies. It reads OpenCode's event stream, which is
+buffered, so a slow hook never delays OpenCode, and it never throws or writes
+to stdout. For each event below it runs `<cli> hook-log --provider opencode`
+with a Claude-shaped record on stdin. It runs one CLI at a time, so the records
+keep their order.
+
+| OpenCode event | Record |
+| --- | --- |
+| `session.created` | `SessionStart` |
+| `session.execution.started` | `UserPromptSubmit`, with the prompt from `session.inbox.enqueued`. A prompt sent while the session is busy is reported at once |
+| `session.tool.called` | `PreToolUse`, with the tool name and, for `shell`, the command |
+| `session.tool.success` | `PostToolUse`, with the shell exit code. A non-zero exit shows Blocked / Error |
+| `session.tool.failed` (declined permission, Ctrl-C, dismissed question) | `PostToolUseFailure` |
+| `permission.asked`, `form.created` (the question tool) | `PermissionRequest` |
+| `session.compaction.started`, `session.compaction.ended` | `PreCompact`, `PostCompact` |
+| `session.execution.succeeded` | `Stop`, with the text of the turn's last assistant message, so markers and the question heuristic work |
+| `session.execution.failed` | `StopFailure`, with the error type and message |
+| `session.execution.interrupted` | `Interrupt` |
+| `session.deleted` | `SessionEnd`, only for a session the plugin has seen since OpenCode started, so deleting old sessions adds no rows |
+
+- **Subagents.** A subagent session reports under its parent session with its
+  own `agent_id` (`SubagentStart`, `SubagentStop`), like a Claude subagent.
+- **One copy per project.** OpenCode's background service loads the plugin
+  once per open project, and every copy sees every event. The copies share
+  their state, so each event is handled once.
+- **Origin.** Records carry `agent_origin: "OpenCode"`, so no origin detection
+  runs.
+- **Environment.** The plugin runs inside OpenCode's background service and
+  inherits its environment, so variables such as `SIDEPULSE_HOME` come from
+  whatever first started the service.
+- **Version.** It needs OpenCode 2.0 or later. OpenCode 1.x uses a different
+  plugin API; install and doctor report it.
 
 ### The runtime
 
@@ -606,6 +665,17 @@ old settings is still running after 2 s. When the app is not running,
   handler is removed as a whole on install and uninstall.
 - A failed tool call (any non-zero exit, for example `grep` with no match)
   briefly shows Blocked / Error. This is the same as the Python version.
+- OpenCode: `opencode run --standalone` exits right after its last event, so a
+  record still queued at that moment can be lost. For example, the final
+  `Interrupt` after an auto-rejected permission can go missing, and the row
+  stays Blocked until the next event or the idle timeout. The background
+  service that the TUI and a plain `opencode run` use keeps running, so it is
+  not affected.
+- OpenCode: `opencode run` wraps a multi-word prompt in literal quotes, so rows
+  started with `run` show them in their title.
+- OpenCode: an approved shell command stays Ask until it finishes, as with
+  Claude, although OpenCode reports the approval. A subagent whose session
+  started before the plugin loaded shows as a session of its own.
 
 ## Development
 
@@ -627,7 +697,7 @@ links into a `SidePulse.app` (or `$SIDEPULSE_CLI_PATH` is set), never with the
 sibling `.build` CLI.
 
 The tests use temporary homes and `SIDEPULSE_HOME`. They never modify your real
-`~/.claude`, `~/.codex`, `~/Library/LaunchAgents` or data directory (a few
+`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/Library/LaunchAgents` or data directory (a few
 legacy-hook tests read copies of your agent configs).
 `PowerKeepAwakeAssertionTests` always run and hold a real power assertion in the
 test process for a moment.
@@ -642,6 +712,7 @@ Opt-in and environment-dependent tests:
 | `SIDEPULSE_REGENERATE_BUILTINS=1` | `LEDBuiltInProgramsSourceTests` | Regenerates `Sources/SidePulseCore/LED/BuiltInPrograms.swift` from the Python checkout |
 | `SIDEPULSE_STATUS_DIFF_DIR=<dir>` | `StatusDifferentialTests` | Scans copies of the provider logs in `<dir>/logs/` and writes `swift.json` for comparison with the Python collector. `SIDEPULSE_STATUS_DIFF_MAX_LINES` sets the scan depth (default 5000) |
 | `SIDEPULSE_SKIP_CODEX_TESTS=1` | `HookInstallRealCodexTests` | Skips the trust check against a real `codex` binary, which otherwise runs whenever Codex is installed |
+| `bun` or `node` on `PATH` | `HookInstallOpenCodeTests.testPluginTurnsOpenCodeEventsIntoHookRecords` | Runs the generated OpenCode plugin on recorded event shapes with a fake CLI. Skipped when neither is installed |
 
 ### Releasing
 
@@ -702,7 +773,7 @@ scripts/uninstall.sh --app-dir DIR   # only if neither the CLI link nor the Laun
    `sidepulse.previous`.
 3. Keeps settings and logs unless you pass `--purge`.
 
-To remove only parts of the install, use `sidepulse uninstall [claude|codex]`
+To remove only parts of the install, use `sidepulse uninstall [claude|codex|opencode]`
 for the hooks, and `sidepulse app uninstall` for launch at login.
 
 ## License

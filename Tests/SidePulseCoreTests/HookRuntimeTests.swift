@@ -394,6 +394,7 @@ final class HookRuntimeRunTests: XCTestCase {
     func testProviderArgumentParsing() {
         XCTAssertEqual(HookRuntime.providerArgument(["--provider", "claude"]), .claude)
         XCTAssertEqual(HookRuntime.providerArgument(["--provider=codex"]), .codex)
+        XCTAssertEqual(HookRuntime.providerArgument(["hook-log", "--provider", "opencode"]), .opencode)
         XCTAssertEqual(HookRuntime.providerArgument(["--provider", "CODEX"]), .codex)
         XCTAssertEqual(HookRuntime.providerArgument(["hook-log", "--provider", "claude", "--log", "/tmp/x.jsonl", "--event", "Stop"]), .claude)
         XCTAssertEqual(HookRuntime.providerArgument(["--unknown", "--provider", "codex", "--verbose"]), .codex)
@@ -457,6 +458,19 @@ final class HookRuntimeRunTests: XCTestCase {
         let lines = logLines(paths.logFile(for: "codex"))
         XCTAssertEqual(lines.count, 1)
         XCTAssertEqual(try JSONValue.parse(lines[0])["agent_origin"], .string("Codex in VS Code"))
+        XCTAssertTrue(logLines().isEmpty)
+    }
+
+    func testOpenCodeGoesToItsOwnLogWithThePluginOrigin() throws {
+        let payload = #"{"hook_event_name":"PostToolUse","session_id":"ses_1","cwd":"/tmp/p","tool_name":"shell","#
+            + #""tool_input":{"command":"false"},"tool_response":{"exit_code":1},"agent_origin":"OpenCode","#
+            + #""agent_origin_kind":"opencode","agent_origin_source":"plugin","agent_origin_confidence":"explicit"}"#
+        XCTAssertEqual(runHook(payload, arguments: ["hook-log", "--provider", "opencode"]), 0)
+        let lines = logLines(paths.logFile(for: "opencode"))
+        XCTAssertEqual(lines, [#"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"ses_1","#
+            + #""cwd":"/tmp/p","tool_name":"shell","tool_input":{"command":"false"},"tool_response":{"exit_code":1},"#
+            + #""tool_response_failed":true,"agent_origin":"OpenCode","agent_origin_kind":"opencode","#
+            + #""agent_origin_source":"plugin","agent_origin_confidence":"explicit"}"#])
         XCTAssertTrue(logLines().isEmpty)
     }
 

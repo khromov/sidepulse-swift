@@ -63,7 +63,7 @@ final class CLISetupCommandTests: XCTestCase {
         XCTAssertTrue(harness.stdout.text.hasPrefix("hooks: skipped. No Claude Code"))
         XCTAssertFalse(harness.stdout.text.contains("app:"))
         XCTAssertTrue(harness.stdout.text.hasSuffix("\nSidePulse is not set up yet: no agent hooks were installed. "
-            + "Install Claude Code or Codex, then run 'sidepulse setup' again (or name the agent: 'sidepulse setup claude').\n"))
+            + "Install Claude Code, Codex or OpenCode, then run 'sidepulse setup' again (or name the agent: 'sidepulse setup claude').\n"))
         XCTAssertFalse(harness.stdout.text.contains("SidePulse is set up"))
     }
 

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Never touches the real ~/.claude, ~/.codex or ~/Library.
+/// Never touches the real ~/.claude, ~/.codex, ~/.config/opencode or ~/Library.
 final class HookInstallSandbox {
     let root: URL
     let home: URL
@@ -16,7 +16,7 @@ final class HookInstallSandbox {
         var env = ["SIDEPULSE_HOME": root.appendingPathComponent("state").path, "HOME": home.path]
         for (k, v) in extraEnvironment { env[k] = v }
         paths = SidePulsePaths(environment: env, home: home)
-        precondition(paths.claudeSettingsFile.path.hasPrefix(root.path) && paths.codexConfigFile.path.hasPrefix(root.path))
+        precondition(HookProvider.allCases.allSatisfy { $0.configFile(paths).path.hasPrefix(root.path) })
     }
 
     func write(_ text: String, to url: URL) throws {

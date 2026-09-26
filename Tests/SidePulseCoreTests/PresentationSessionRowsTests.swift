@@ -271,7 +271,8 @@ final class PresentationSessionRowsTests: XCTestCase {
     func testMenuProviderLabel() {
         XCTAssertEqual(SessionRows.menuProviderLabel("claude"), "Claude Code")
         XCTAssertEqual(SessionRows.menuProviderLabel("Codex"), "Codex")
-        XCTAssertEqual(SessionRows.menuProviderLabel("opencode"), "Opencode")
+        XCTAssertEqual(SessionRows.menuProviderLabel("opencode"), "OpenCode")
+        XCTAssertEqual(SessionRows.menuProviderLabel("cursor"), "Cursor")
         XCTAssertEqual(SessionRows.menuProviderLabel(""), "Agent")
     }
 

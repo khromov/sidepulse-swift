@@ -270,6 +270,7 @@ final class StatusPersistenceTests: XCTestCase {
         XCTAssertEqual(LogScanner.defaultSources(paths: paths), [
             SourceInfo(provider: "codex", path: paths.logFile(for: "codex").path),
             SourceInfo(provider: "claude", path: paths.logFile(for: "claude").path),
+            SourceInfo(provider: "opencode", path: paths.logFile(for: "opencode").path),
         ])
         try FileManager.default.createDirectory(at: paths.logsDir, withIntermediateDirectories: true)
         try Data().write(to: paths.logsDir.appendingPathComponent("claude.jsonl.1"))
@@ -277,6 +278,7 @@ final class StatusPersistenceTests: XCTestCase {
             paths.logFile(for: "codex").path,
             paths.logsDir.appendingPathComponent("claude.jsonl.1").path,
             paths.logFile(for: "claude").path,
+            paths.logFile(for: "opencode").path,
         ])
     }
 

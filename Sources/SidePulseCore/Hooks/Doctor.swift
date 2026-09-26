@@ -5,7 +5,7 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var configPath: URL
     public var configExists: Bool
     public var agentDetected: Bool
-    /// Codex: `[features] hooks = true`; Claude: always true when the file parses.
+    /// Codex: `[features] hooks = true`; Claude: always true when the file parses; OpenCode: always true.
     public var hooksEnabled: Bool
     public var installedEvents: [String]
     public var missingEvents: [String]
@@ -15,7 +15,7 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var error: String?
     public var hookCLIPaths: [String]
     public var hookCLIProblems: [String]
-    /// Codex skips these hooks until they are approved; always empty for Claude.
+    /// Codex skips these hooks until they are approved; always empty for the other providers.
     public var untrustedEvents: [String]
 
     public var fullyInstalled: Bool {
@@ -37,16 +37,16 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
 
 public enum HookDoctor {
     /// `runningExecutable` lets a hook CLI outside an app bundle count as ours when it is this very CLI.
+    /// `checkVersions` runs the agent binary, so the app's menu, which inspects on the main thread, leaves it off.
     public static func inspect(paths: SidePulsePaths, provider: HookProvider,
-                               runningExecutable: String = SidePulsePaths.currentExecutablePath) -> ProviderDoctorInfo {
+                               runningExecutable: String = SidePulsePaths.currentExecutablePath,
+                               checkVersions: Bool = false) -> ProviderDoctorInfo {
         let fm = FileManager.default
         let config = provider.configFile(paths)
         let log = paths.logFile(for: provider.rawValue)
-        var isDir: ObjCBool = false
-        let detected = fm.fileExists(atPath: provider.configDir(paths).path, isDirectory: &isDir) && isDir.boolValue
         var info = ProviderDoctorInfo(
             provider: provider, configPath: config, configExists: fm.fileExists(atPath: config.path),
-            agentDetected: detected, hooksEnabled: provider == .claude, installedEvents: [],
+            agentDetected: provider.isDetected(paths), hooksEnabled: provider != .codex, installedEvents: [],
             missingEvents: provider.events, legacyHooks: 0, logPath: log, logExists: fm.fileExists(atPath: log.path))
         guard info.configExists else { return info }
         guard let text = FileUtil.readText(config) else {
@@ -78,6 +78,18 @@ public enum HookDoctor {
             info.legacyHooks = CodexHookInstaller.legacyBlockCount(in: text)
             info.hookCLIPaths = CodexHookInstaller.hookCLIPaths(in: text)
             info.untrustedEvents = CodexHookInstaller.untrustedEvents(in: text, configPath: config.path)
+        case .opencode:
+            guard OpenCodePluginInstaller.isSidePulsePlugin(text) else {
+                info.error = "not written by SidePulse; move it away, then run 'sidepulse install opencode'"
+                return info
+            }
+            info.installedEvents = OpenCodePluginInstaller.installedEvents(in: text)
+            let cli = OpenCodePluginInstaller.cliPath(in: text)
+            info.hookCLIPaths = cli.map { [$0] } ?? []
+            if checkVersions { info.error = OpenCodePluginInstaller.versionProblem(paths: paths) }
+            if info.error == nil, cli.map({ text != OpenCodePluginInstaller.source(cliPath: $0) }) ?? true {
+                info.error = OpenCodePluginInstaller.outdatedProblem
+            }
         }
         info.missingEvents = provider.events.filter { !info.installedEvents.contains($0) }
         // `install` writes an explicit $SIDEPULSE_CLI_PATH as is, so only its existence is checked.
@@ -92,8 +104,11 @@ public enum HookDoctor {
     }
 
     public static func inspectAll(paths: SidePulsePaths,
-                                  runningExecutable: String = SidePulsePaths.currentExecutablePath) -> [ProviderDoctorInfo] {
-        HookProvider.allCases.map { inspect(paths: paths, provider: $0, runningExecutable: runningExecutable) }
+                                  runningExecutable: String = SidePulsePaths.currentExecutablePath,
+                                  checkVersions: Bool = false) -> [ProviderDoctorInfo] {
+        HookProvider.allCases.map {
+            inspect(paths: paths, provider: $0, runningExecutable: runningExecutable, checkVersions: checkVersions)
+        }
     }
 
     public static func renderText(_ infos: [ProviderDoctorInfo]) -> String {
@@ -128,7 +143,7 @@ public enum HookDoctor {
             if info.provider == .codex && info.configExists && info.error == nil && !info.hooksEnabled {
                 lines.append("  hooks feature: disabled ([features] hooks is not true, so Codex runs no hooks)")
             }
-            lines.append("  legacy python hooks: \(info.legacyHooks)")
+            if info.provider != .opencode { lines.append("  legacy python hooks: \(info.legacyHooks)") }
             lines.append("  log: \(info.logPath.path) (\(info.logExists ? "found" : "missing"))")
         }
         return lines.joined(separator: "\n")

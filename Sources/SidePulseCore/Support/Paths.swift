@@ -11,8 +11,8 @@ public enum SidePulseConstants {
     public static let recoveryMaxLines = 2000
 }
 
-/// Never reads XDG variables, so the hook process, CLI and LaunchAgent-started app
-/// always agree on paths.
+/// Never reads XDG variables for SidePulse's own paths, so the hook process, CLI and
+/// LaunchAgent-started app always agree on them.
 public struct SidePulsePaths: Sendable, Equatable {
     public var home: URL
     public var root: URL
@@ -65,6 +65,21 @@ public struct SidePulsePaths: Sendable, Equatable {
         return home.appendingPathComponent(".codex", isDirectory: true)
     }
     public var codexConfigFile: URL { codexDir.appendingPathComponent("config.toml") }
+
+    /// Follows OpenCode's own lookup (`OPENCODE_CONFIG_DIR`, then `XDG_CONFIG_HOME`), with the same
+    /// LaunchAgent caveat as `CODEX_HOME`.
+    public var openCodeConfigDir: URL {
+        func expanded(_ path: String) -> URL {
+            URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
+        }
+        if let override = environment["OPENCODE_CONFIG_DIR"], !override.isEmpty { return expanded(override) }
+        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
+            return expanded(xdg).appendingPathComponent("opencode", isDirectory: true)
+        }
+        return home.appendingPathComponent(".config/opencode", isDirectory: true)
+    }
+    /// OpenCode loads every `.js` file in `plugins/` without a config entry.
+    public var openCodePluginFile: URL { openCodeConfigDir.appendingPathComponent("plugins/sidepulse.js") }
 
     public var launchAgentsDir: URL { home.appendingPathComponent("Library/LaunchAgents", isDirectory: true) }
     public func launchAgentPlist(label: String = SidePulseConstants.launchAgentLabel) -> URL {

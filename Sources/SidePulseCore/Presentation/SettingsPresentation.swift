@@ -202,6 +202,11 @@ public enum HookPresentation {
         "\(provider.label) hooks failed: \(error)"
     }
 
+    public static func uninstallConfirmation(provider: HookProvider, configPath: String) -> String {
+        let effect = provider == .opencode ? "SidePulse deletes \(configPath)." : "A backup of \(configPath) is kept."
+        return "SidePulse will stop receiving \(provider.label) status updates. \(effect)"
+    }
+
     public static func detailLines(notes: [String], backupPath: String?, configPath: String) -> [String] {
         var lines = notes.filter { !$0.isEmpty }
         if let backupPath { lines.append("Backup: \(backupPath)") }

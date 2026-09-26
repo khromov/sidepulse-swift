@@ -1,15 +1,17 @@
 import Foundation
 import SidePulseCore
 
-/// Without a provider only agents whose config directory exists get hooks, so we never create
-/// configs for agents that aren't installed.
+/// Without a provider only agents that look installed get hooks, so we never create configs for agents
+/// that aren't installed.
 enum InstallCommand: CLICommand {
     static let spec = CommandSpec(
         name: "install",
-        synopsis: "[claude|codex|all]... [--dry-run] [--no-trust]",
-        summary: "Install agent hooks (Claude Code, Codex)",
-        details: "Without a provider, installs hooks for each agent whose config directory exists\n"
-            + "(~/.claude, ~/.codex). Python-era SidePulse hooks are replaced.",
+        synopsis: "[claude|codex|opencode|all]... [--dry-run] [--no-trust]",
+        summary: "Install agent hooks (Claude Code, Codex, OpenCode)",
+        details: "Without a provider, installs hooks for each agent that looks installed\n"
+            + "(~/.claude, ~/.codex, ~/.config/opencode or an opencode binary).\n"
+            + "Python-era SidePulse hooks are replaced. OpenCode gets the SidePulse plugin\n"
+            + "~/.config/opencode/plugins/sidepulse.js.",
         positionals: ProviderSelection.positionals,
         options: [
             OptionSpec("dry-run", help: "show what would change without writing"),
@@ -63,17 +65,17 @@ enum InstallCommand: CLICommand {
 }
 
 enum ProviderSelection {
-    static let positionals = PositionalSpec(name: "provider", maxCount: 3, choices: ["claude", "codex", "all"])
+    static let positionals = PositionalSpec(name: "provider", maxCount: HookProvider.allCases.count + 1,
+                                            choices: HookProvider.allCases.map(\.rawValue) + ["all"])
 
-    static let noAgentsMessage = "No Claude Code (~/.claude) or Codex (~/.codex) config found, so no hooks were installed. "
-        + "Install an agent first, or name it explicitly (sidepulse install claude)."
+    static let noAgentsMessage = "No Claude Code (~/.claude), Codex (~/.codex) or OpenCode (~/.config/opencode) found, "
+        + "so no hooks were installed. Install an agent first, or name it explicitly (sidepulse install claude)."
 
-    static func resolve(_ names: [String], paths: SidePulsePaths, defaultToDetected: Bool,
-                        directoryExists: (URL) -> Bool = directoryExists) -> [HookProvider] {
+    static func resolve(_ names: [String], paths: SidePulsePaths, defaultToDetected: Bool) -> [HookProvider] {
         if names.contains("all") { return HookProvider.allCases }
         if !names.isEmpty { return HookProvider.allCases.filter { names.contains($0.rawValue) } }
         guard defaultToDetected else { return HookProvider.allCases }
-        return HookProvider.allCases.filter { directoryExists($0.configDir(paths)) }
+        return HookProvider.allCases.filter { $0.isDetected(paths) }
     }
 
     static func directoryExists(_ url: URL) -> Bool {

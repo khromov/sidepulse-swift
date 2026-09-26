@@ -12,6 +12,7 @@ public enum DisplayNames {
         switch provider {
         case "codex": return "Codex"
         case "claude": return "Claude"
+        case "opencode": return "OpenCode"
         default: return pythonTitle(provider)
         }
     }

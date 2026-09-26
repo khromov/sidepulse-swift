@@ -137,7 +137,7 @@ final class RuntimeEventTests: XCTestCase {
         XCTAssertEqual(snapshot.aggregate.mode, .waitingForInput)
         XCTAssertEqual(snapshot.aggregate.activeCount, 2)
         XCTAssertEqual(Set(snapshot.statuses.map(\.agentID)), ["claude:session:alpha", "codex:session:beta"])
-        XCTAssertEqual(snapshot.sources.map(\.provider), ["claude", "codex"])
+        XCTAssertEqual(snapshot.sources.map(\.provider), ["claude", "codex", "opencode"])
         XCTAssertEqual(snapshot.sources.first?.path, world.paths.logFile(for: "claude").path)
         let local = runtime.snapshot(now: snapshot.collectedAt)
         XCTAssertEqual(snapshot.statuses.map(\.agentID), local.statuses.map(\.agentID))
