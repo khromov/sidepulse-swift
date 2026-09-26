@@ -637,7 +637,8 @@ same runtime without UI. The runtime does the following, per
   start if another process already listens there. It then applies
   `settings.json`, loads `latest.json`, and reconciles the rows with the tail
   of the provider logs (the last 2000 lines of each). Finally it starts a 15 s
-  status refresh and a 2 s device poll, and syncs the LEDs.
+  status refresh and a 2 s device poll. The first device discovery runs in the
+  background, and the LEDs are synced as soon as it finds them.
 - **Event order.** Connections are read in parallel, but events are applied in
   the order the connections were accepted, so a hook's `PreToolUse` is never
   applied after its `PostToolUse`. A message waits at most 0.25 s behind an
@@ -646,8 +647,8 @@ same runtime without UI. The runtime does the following, per
   LED sync, so the latest mode is never dropped. Each Agent-mode device is
   rewritten only when its state, brightness or animation changes, or when its
   `LEDS.LED` no longer holds the last program.
-- **Settings.** It re-reads settings on a `reload-settings` socket command, or
-  when the file's modification time changes.
+- **Settings.** It re-reads `settings.json` on a `reload-settings` socket
+  command and on every 15 s refresh.
 - **Stop.** It flushes `latest.json` and releases the keep-awake assertion. The
   LEDs keep their last program.
 

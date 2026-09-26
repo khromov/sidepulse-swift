@@ -405,6 +405,7 @@ final class RuntimeLifecycleTests: XCTestCase {
             finished.append(url.path)
         }
         let runtime = try world.startRuntime(options)
+        runtime.waitUntilIdle()
         runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
         runtime.stop()
         XCTAssertEqual(finished.items, [world.mounts.appendingPathComponent("SidePulsePro/keepalive").path])
@@ -443,7 +444,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         let calls = RuntimeInbox<Bool>()
         let mounts = world.mounts
         var options = world.options()
-        options.startupDiscoveryTimeout = 0.2
         options.deviceDiscovery = { roots in
             calls.append(true)
             if calls.count == 1 { release.wait() }
@@ -452,7 +452,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         defer { release.signal() }
         let started = Date()
         let runtime = try world.startRuntime(options)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 1.5, "start() did not wait for the hung discovery")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1, "start() did not wait for the hung discovery")
         runtime.ingest(provider: "claude", line: RuntimeRecords.permission())
         XCTAssertEqual(runtime.snapshot().aggregate.mode, .waitingForInput, "events flow meanwhile")
         XCTAssertEqual(world.program("PulseDot"), "boot")

@@ -48,8 +48,6 @@ public struct RuntimeOptions: Sendable {
     var deviceDiscovery: (@Sendable ([URL]?) -> [DeviceCandidate])? = nil
     var keepaliveTouch: (@Sendable (URL) throws -> Void)? = nil
     var afterBind: (@Sendable () -> Void)? = nil
-    /// Bounded so a hung volume under /Volumes cannot stall app launch.
-    var startupDiscoveryTimeout: TimeInterval = 2
 
     public init() {}
 
@@ -95,13 +93,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private let engine: StatusEngine
     private let sources: [SourceInfo]
     private var applied: SidePulseSettings
-    private var settingsModified: Date?
-    /// Set after our own saves, whose date is read after the store's lock is released
-    /// and so may belong to another process's save that must not be missed.
-    private var settingsRecheck = false
-    /// Lets the second half of a `start()` tell that a `stop()` (and maybe another
-    /// `start()`) got in between.
-    private var startGeneration = 0
     private var policy: KeepAwakePolicy
     private var battery: (state: BatteryState, readAt: Date)?
     private var safeguardActive = false
@@ -156,15 +147,12 @@ public final class SidePulseRuntime: @unchecked Sendable {
     /// Binds the socket before writing anything (settings, latest.json, LEDs), so a
     /// second instance fails with `EventSocketError.alreadyRunning` without side effects.
     public func start() throws {
-        let generation: Int? = try onState {
-            guard !running else { return nil }
+        let started: Bool = try onState {
+            guard !running else { return false }
             // The socket already serves, so `status` must wait for the rows below
             // instead of answering with an empty snapshot.
             shared.write { $0.starting = true }
             defer { shared.write { $0.starting = false } }
-            // Date first: an edit landing between the two reads is picked up later.
-            settingsModified = settingsStore.modificationDate
-            settingsRecheck = false
             let settings = settingsStore.load()
             if options.serveSocket {
                 let server = EventSocketServer(path: paths.socketPath) { [weak self] message in
@@ -199,45 +187,17 @@ public final class SidePulseRuntime: @unchecked Sendable {
             battery = nil
             safeguardActive = false
             running = true
-            startGeneration += 1
             setOutputsOpen(true)
-            publishStatuses(now: now)
             saveLatest(now: now)
+            startTimers()
+            refreshLocked(now: now, checkSettings: false)
             DiagnosticsLog.shared.log("runtime: started (\(engine.statuses.count) statuses"
                 + "\(reconciled ? ", recovered from logs" : "")\(options.serveSocket ? ", socket \(paths.socketPath)" : "")"
                 + "\(options.dryRun ? ", dry run" : ""))")
-            return startGeneration
+            return true
         }
-        guard let generation else { return }
-        pollDevicesAtStart(generation: generation)
-        onState {
-            // A stop() (and maybe another start()) got in between: that one owns the timers.
-            guard running, startGeneration == generation else { return }
-            rememberConnectedDevices()
-            startTimers()
-            refreshLocked(now: Date(), checkSettings: false)
-        }
-    }
-
-    /// Waits (bounded) for the first discovery so the first sync reaches every mounted volume.
-    private func pollDevicesAtStart(generation: Int) {
-        let poll = StartupPoll()
-        deviceQueue.async { [weak self] in
-            guard let self else { return }
-            self.leds.pollDevices()
-            guard poll.finish() else { return }
-            // start() gave up waiting: finish its job now.
-            self.stateQueue.async { [weak self] in
-                guard let self, self.running, self.startGeneration == generation else { return }
-                DiagnosticsLog.shared.log("devices: first discovery finished")
-                self.rememberConnectedDevices()
-                self.refreshLocked(now: Date(), checkSettings: false)
-            }
-        }
-        let timeout = RuntimeOptions.clamped(options.startupDiscoveryTimeout, to: 0...60, fallback: 2)
-        if !poll.wait(timeout: timeout) {
-            DiagnosticsLog.shared.log("devices: discovery is slow (a hung volume?); continuing in the background")
-        }
+        // Discovery can hang on a dead mount, so the first LED write follows it instead of holding up start().
+        if started { deviceQueue.async { [weak self] in self?.pollDevicesTick() } }
     }
 
     /// Waits (bounded) for queued LED work and keepalive touches, so nothing is
@@ -419,7 +379,9 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Test support
 
+    /// Includes the first device discovery, which `start()` leaves running.
     func waitUntilIdle(timeout: TimeInterval = 5) {
+        deviceQueue.sync {}
         onState {}
         leds.waitUntilIdle(timeout: timeout)
         persistQueue.sync {}
@@ -454,7 +416,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
             var saved: SidePulseSettings
             do {
                 saved = try settingsStore.update(body)
-                noteOwnSettingsSave()
             } catch {
                 DiagnosticsLog.shared.log("settings: save failed: \(error.localizedDescription)")
                 saved = old
@@ -494,16 +455,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
         return new != old
     }
 
-    @discardableResult
-    private func reloadSettingsLocked() -> Bool {
-        // Date first: an edit landing between the two reads changes the date again,
-        // so the next refresh reloads instead of missing it.
-        settingsModified = settingsStore.modificationDate
-        settingsRecheck = false
-        let loaded = settingsStore.load()
-        let changed = applySettings(loaded)
-        if changed { DiagnosticsLog.shared.log("settings: reloaded \(paths.settingsFile.path)") }
-        return changed
+    private func reloadSettingsLocked() {
+        if applySettings(settingsStore.load()) { DiagnosticsLog.shared.log("settings: reloaded \(paths.settingsFile.path)") }
     }
 
     private func rememberConnectedDevices() {
@@ -514,22 +467,15 @@ public final class SidePulseRuntime: @unchecked Sendable {
             let saved = try settingsStore.update { settings in
                 for device in connected { settings.remember(device) }
             }
-            noteOwnSettingsSave()
             applySettings(saved)
         } catch {
             DiagnosticsLog.shared.log("settings: could not remember devices: \(error.localizedDescription)")
         }
     }
 
-    private func noteOwnSettingsSave() {
-        settingsModified = settingsStore.modificationDate
-        settingsRecheck = true
-    }
-
+    /// `checkSettings` re-reads the file (about 1 KB) outright, which picks up hand edits without tracking its date.
     private func refreshLocked(now: Date, checkSettings: Bool) {
-        if checkSettings, settingsRecheck || settingsStore.modificationDate != settingsModified {
-            reloadSettingsLocked()
-        }
+        if checkSettings { reloadSettingsLocked() }
         let before = engine.statuses.count
         engine.prune(now: now)
         if running, engine.statuses.count != before { markLatestDirty() }
@@ -688,33 +634,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
             }
             callback?(self.snapshot())
         }
-    }
-}
-
-private final class StartupPoll: @unchecked Sendable {
-    private let lock = NSLock()
-    private let done = DispatchSemaphore(value: 0)
-    private var finished = false
-    private var abandoned = false
-
-    /// Returns true when the waiter already gave up, so the caller must finish the
-    /// start-up work itself.
-    func finish() -> Bool {
-        lock.lock()
-        finished = true
-        let abandoned = self.abandoned
-        lock.unlock()
-        done.signal()
-        return abandoned
-    }
-
-    func wait(timeout: TimeInterval) -> Bool {
-        if done.wait(timeout: .now() + timeout) == .success { return true }
-        lock.lock()
-        defer { lock.unlock() }
-        if finished { return true }
-        abandoned = true
-        return false
     }
 }
 

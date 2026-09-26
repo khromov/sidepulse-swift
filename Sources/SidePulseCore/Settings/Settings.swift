@@ -270,11 +270,6 @@ public final class SettingsStore: @unchecked Sendable {
         }
     }
 
-    /// Used to detect external edits.
-    public var modificationDate: Date? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
-    }
-
     private enum FileState { case missing, valid, unreadable }
 
     private func read() -> (settings: SidePulseSettings, state: FileState) {

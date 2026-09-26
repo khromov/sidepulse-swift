@@ -215,9 +215,9 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(runtime.settings.animationID(for: .idleReady), "purple-idle")
     }
 
-    /// Regression: the runtime read settings.json's date after releasing the store's lock, so an external
-    /// save in between looked already known and was never loaded.
-    func testExternalSaveRacingOurOwnSaveIsNotMissed() throws {
+    /// Regression: when the runtime tracked settings.json's date, an external save with our own save's date
+    /// looked already known and was never loaded.
+    func testExternalSaveWithOurOwnSaveDateIsNotMissed() throws {
         world.addDevice("PulseDot")
         let runtime = try world.startRuntime(world.options(serveSocket: false))
         runtime.updateSettings { $0.sleepPolicy = .never }
@@ -225,13 +225,11 @@ final class RuntimeSettingsTests: XCTestCase {
         let url = world.paths.settingsFile
         var info = stat()
         XCTAssertEqual(stat(url.path, &info), 0)
-        let ownSaveDate = world.settingsStore.modificationDate
 
         // Giving the external save our own save's exact date reproduces that window.
         world.updateSettings { $0.setAnimation("ember-tide", for: .idleReady) }
         var times = [info.st_atimespec, info.st_mtimespec]
         XCTAssertEqual(utimensat(AT_FDCWD, url.path, &times, 0), 0)
-        XCTAssertEqual(world.settingsStore.modificationDate, ownSaveDate, "the race is reproduced")
 
         runtime.refresh()
         waitForProgram("PulseDot", RuntimePrograms.program("ember-tide", ledCount: 2))

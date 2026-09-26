@@ -311,11 +311,14 @@ final class SettingsModelTests: XCTestCase {
 }
 
 final class SettingsStoreTests: XCTestCase {
+    private func modificationDate(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
     func testMissingAndCorruptFilesLoadDefaults() throws {
         let dir = try makeTempDirectory(self)
         let store = SettingsStore(url: dir.appendingPathComponent("settings.json"))
         XCTAssertEqual(store.load(), SidePulseSettings())
-        XCTAssertNil(store.modificationDate)
 
         for corrupt in ["{", "", "[1,2]", "{\"devices\": [}"] {
             try Data(corrupt.utf8).write(to: store.url)
@@ -337,7 +340,6 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("{\n  \"agent_animations\": {\n    \"long_task_progress\": \"ember-tide\","), text)
         XCTAssertTrue(text.hasSuffix("    \"policy\": \"agents\"\n  }\n}\n"), text)
         XCTAssertEqual(store.load(), settings)
-        XCTAssertNotNil(store.modificationDate)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.settingsFile.path + ".lock"))
         XCTAssertEqual(store.lockURL.path, paths.settingsFile.path + ".lock")
     }
@@ -367,12 +369,12 @@ final class SettingsStoreTests: XCTestCase {
         let old = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 3600).rounded(.down))
         try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: store.url.path)
         try store.update { $0.setAnimation("nope", for: .completed) }
-        XCTAssertEqual(store.modificationDate, old, "unchanged settings are not rewritten")
+        XCTAssertEqual(modificationDate(store.url), old, "unchanged settings are not rewritten")
 
         let updated = try store.update { $0.sleepPolicy = .never }
         XCTAssertEqual(updated.sleepPolicy, .never)
         XCTAssertEqual(store.load().sleepPolicy, .never)
-        XCTAssertNotEqual(store.modificationDate, old)
+        XCTAssertNotEqual(modificationDate(store.url), old)
     }
 
     func testProfilesAndDevicesRoundTripThroughTheStore() throws {

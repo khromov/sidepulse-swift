@@ -103,8 +103,8 @@ serial state queue. Callers rely on these rules:
   the snapshot current at delivery time.
 - LED writes run on `LedSyncService`'s serial I/O queue and `latest.json` writes
   on their own queue. Device discovery runs on a device queue, so a hung mount
-  never stalls events; `start()` waits at most `startupDiscoveryTimeout` (2 s)
-  for the first discovery and lets a slow one finish in the background.
+  never stalls events; `start()` does not wait for the first discovery, so the
+  first LED write lands a few milliseconds after it returns.
 - `LedSyncService` keeps the device list and errors behind a lock. `requestSync`
   is coalesced but never drops the latest mode (the Python version could).
   Controller resets are applied on the I/O queue right before the next sync.
