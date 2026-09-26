@@ -30,7 +30,7 @@ public final class LedSyncService: @unchecked Sendable {
     private struct Shared {
         var devices: [DeviceCandidate] = []
         var signatures: [String: String] = [:]
-        var resetAll = false
+        /// Hot-plugged volumes, whose new card plays INIT.LED while LEDS.LED may still match.
         var resetIDs: Set<String> = []
         var latestMode: AgentMode?
         var syncScheduled = false
@@ -266,18 +266,6 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Forces the next sync to rewrite; applied on the I/O queue right before that sync,
-    /// so a reset never races a write.
-    public func resetControllers(deviceID: String? = nil) {
-        locked { state in
-            if let deviceID {
-                state.resetIDs.insert(deviceID)
-            } else {
-                state.resetAll = true
-            }
-        }
-    }
-
     public func touchKeepalive(now: Date = Date()) {
         touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now)
     }
@@ -305,7 +293,6 @@ public final class LedSyncService: @unchecked Sendable {
                 let active = state.previewUntil != nil
                 state.previewToken += 1
                 state.previewUntil = nil
-                if active { state.resetAll = true }
                 return (active, state.latestMode)
             }
             if active, let mode { _ = performSync(mode: mode) }
@@ -329,15 +316,14 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     private func performSync(mode: AgentMode) -> [String: LedSyncResult] {
-        let (devices, resetAll, resetIDs) = locked { state -> ([DeviceCandidate], Bool, Set<String>) in
+        // Resets are applied here, right before the sync, so a reset never races a write.
+        let (devices, resetIDs) = locked { state -> ([DeviceCandidate], Set<String>) in
             defer {
-                state.resetAll = false
                 state.resetIDs = []
                 state.syncPasses += 1
             }
-            return (state.devices, state.resetAll, state.resetIDs)
+            return (state.devices, state.resetIDs)
         }
-        if resetAll { controllers.removeAll() }
         for id in resetIDs { controllers[id] = nil }
         // Forget devices that are gone (their controllers were reset by the poll).
         if lastDisplay.count > devices.count {
@@ -417,7 +403,6 @@ public final class LedSyncService: @unchecked Sendable {
         let (current, mode) = locked { state -> (Bool, AgentMode?) in
             guard state.previewToken == token else { return (false, nil) }
             state.previewUntil = nil
-            state.resetAll = true
             return (true, state.latestMode)
         }
         guard current, let mode else { return }

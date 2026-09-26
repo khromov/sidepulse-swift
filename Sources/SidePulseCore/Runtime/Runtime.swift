@@ -273,7 +273,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         let device = leds.connectedDevices.first { $0.id == deviceID }
         let name = device?.displayName
         let path = device?.root.path
-        // applySettings resets the device's controller (its display changed).
         mutateSettings({ $0.setDisplay(display, forDevice: deviceID, name: name, path: path) }) { [self] old, _ in
             let label = device?.displayName ?? deviceID
             DiagnosticsLog.shared.log("devices: \(label) set to \(display.label)")
@@ -296,7 +295,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         let device = leds.connectedDevices.first { $0.id == deviceID }
         let name = device?.displayName
         let path = device?.root.path
-        // applySettings resets the device's controller (its brightness changed).
         mutateSettings({ $0.setBrightness(value, forDevice: deviceID, name: name, path: path) }) { _, _ in }
     }
 
@@ -432,20 +430,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private func applySettings(_ new: SidePulseSettings) -> Bool {
         let old = applied
         applied = new
-        if new != old {
-            engine.config = new.monitorConfig
-            // Flag resets before the LEDs can see the new settings.
-            if new.animationSelection != old.animationSelection {
-                leds.resetControllers()
-            } else {
-                var ids = Set(new.devices.map(\.id)).union(old.devices.map(\.id))
-                ids.formUnion(leds.connectedDevices.map(\.id))
-                for id in ids.sorted() where old.display(forDevice: id) != new.display(forDevice: id)
-                    || old.brightness(forDevice: id) != new.brightness(forDevice: id) {
-                    leds.resetControllers(deviceID: id)
-                }
-            }
-        }
+        // The LED controllers notice brightness and animation changes themselves.
+        if new != old { engine.config = new.monitorConfig }
         let config = engine.config
         shared.write { cache in
             cache.ledSettings = new

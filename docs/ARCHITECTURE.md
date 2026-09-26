@@ -107,7 +107,8 @@ serial state queue. Callers rely on these rules:
   first LED write lands a few milliseconds after it returns.
 - `LedSyncService` keeps the device list and errors behind a lock. `requestSync`
   is coalesced but never drops the latest mode (the Python version could).
-  Controller resets are applied on the I/O queue right before the next sync.
+  The only controller reset, for a hot-plugged volume, is applied on the I/O
+  queue right before the next sync.
   Normal syncs wait while a preview plays.
 - `stop()` ends a playing preview and waits (bounded) for queued LED writes and
   keepalive touches, so nothing is written after it returns. The LEDs keep
