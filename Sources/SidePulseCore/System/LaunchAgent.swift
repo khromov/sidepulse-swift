@@ -73,6 +73,10 @@ public struct LaunchAgentManager: Sendable {
         if start {
             _ = runner(["bootout", serviceTarget])
             waitUntilUnloaded()
+            // bootstrap() accepts a job that is already loaded, which here would be the old one.
+            if isLoaded {
+                throw LaunchAgentError("\(label) is still loaded after bootout; the new plist applies at next login")
+            }
             try bootstrap()
             try kickstart(restart: false)
         }

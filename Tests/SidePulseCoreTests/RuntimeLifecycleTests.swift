@@ -263,6 +263,38 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertEqual(holder.calls.last, false)
     }
 
+    /// Regression: Waiting and Blocked outrank Working in the aggregate, so one agent waiting started the
+    /// grace period while another still worked, and the Mac slept mid-build.
+    func testKeepAwakeHoldsWhileAnyAgentWorksEvenIfAnotherWaits() throws {
+        let holder = FakeKeepAwake()
+        var options = world.options(serveSocket: false)
+        options.keepAwake = true
+        options.keepAwakeHolder = holder
+        options.batteryReader = { .unknown }
+        options.keepAwakeGrace = 0.4
+        let runtime = try world.startRuntime(options)
+
+        runtime.ingest(provider: "claude", line: RuntimeRecords.prompt("a"))
+        runtime.ingest(provider: "claude", line: RuntimeRecords.permission("b"))
+        runtime.waitUntilIdle()
+        XCTAssertEqual(runtime.snapshot().aggregate.mode, .waitingForInput)
+        XCTAssertTrue(runtime.keepAwakeActive)
+        runtimeSpin(0.5)
+        runtime.refresh()
+        runtime.waitUntilIdle()
+        XCTAssertTrue(runtime.keepAwakeActive, "a is still working")
+        XCTAssertTrue(holder.isHeld)
+
+        runtime.ingest(provider: "claude", line: RuntimeRecords.stop("a"))
+        runtime.waitUntilIdle()
+        XCTAssertTrue(runtime.keepAwakeActive, "the grace period starts now")
+        runtimeSpin(0.5)
+        runtime.refresh()
+        runtime.waitUntilIdle()
+        XCTAssertFalse(runtime.keepAwakeActive)
+        XCTAssertFalse(holder.isHeld)
+    }
+
     func testBatteryReadingsAreCached() throws {
         let battery = FakeBattery()
         var options = world.options(serveSocket: false)
@@ -393,6 +425,37 @@ final class RuntimeLifecycleTests: XCTestCase {
             XCTAssertEqual(world.program("PulseDot"), live)
             XCTAssertFalse(runtime.leds.isPreviewing)
         }
+    }
+
+    /// Regression: when stop()'s bounded wait gave up on a write stuck in open(), that write and the
+    /// syncs queued behind it landed after stop() returned.
+    func testWriteStuckInOpenNeverLandsAfterStop() throws {
+        world.addDevice("PulseDot")
+        let gate = LedWriteGate()
+        defer { gate.release() }
+        var options = world.options()
+        options.ledWriter = gate.writer
+        let runtime = try world.startRuntime(options)
+        runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
+        let working = RuntimePrograms.expected(.working, ledCount: 2)
+        waitForProgram("PulseDot", working)
+        runtime.waitUntilIdle()
+
+        gate.arm(.inOpen)
+        runtime.ingest(provider: "claude", line: RuntimeRecords.permission())
+        XCTAssertTrue(gate.waitForHeldWrite())
+        runtime.ingest(provider: "claude", line: RuntimeRecords.stop())
+        let started = Date()
+        runtime.stop()
+        XCTAssertGreaterThan(Date().timeIntervalSince(started), 1.5, "stop() waited for the LED queue first")
+
+        gate.release()
+        XCTAssertTrue(runtime.leds.waitUntilIdle())
+        runtimeSpin(0.2)
+        XCTAssertEqual(world.program("PulseDot"), working)
+
+        try runtime.start()
+        waitForProgram("PulseDot", RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
     /// Regression: stop() returned while keepalive touches were still running.

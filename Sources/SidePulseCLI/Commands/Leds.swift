@@ -47,7 +47,7 @@ enum LedsCommand: CLICommand {
                 env.stdout.line(LedsText.errorLine(state: state, message: ErrorText.describe(error)))
                 return ExitCode.usage
             }
-            let id = WriteCommand.deviceID(forTarget: target)
+            let id = WriteCommand.discoveredDevice(forTarget: target, env: env)?.id ?? WriteCommand.deviceID(forTarget: target)
             let controller = AgentLedController(target: target, brightness: settings.brightness(forDevice: id),
                                                 dryRun: dryRun)
             let result = controller.sync(mode: mode, animationID: settings.animationID(for: mode))

@@ -48,6 +48,7 @@ public struct RuntimeOptions: Sendable {
 
     var deviceDiscovery: (@Sendable ([URL]?) -> [DeviceCandidate])? = nil
     var keepaliveTouch: (@Sendable (URL) throws -> Void)? = nil
+    var ledWriter: LedSyncService.FileWriter? = nil
     var afterBind: (@Sendable () -> Void)? = nil
 
     public init() {}
@@ -121,7 +122,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
         self.leds = LedSyncService(settings: { shared.read { $0.ledSettings } }, roots: options.mountRoots,
                                    dryRun: options.dryRun, log: { DiagnosticsLog.shared.log($0) },
                                    keepalive: options.keepaliveTouch.map { KeepaliveToucher(touch: $0) } ?? KeepaliveToucher(),
-                                   discover: options.deviceDiscovery ?? { DeviceDiscovery.discover(roots: $0) })
+                                   discover: options.deviceDiscovery ?? { DeviceDiscovery.discover(roots: $0) },
+                                   writeFile: options.ledWriter ?? LedSyncService.fileWriter)
         let index = CodexSessionIndex(paths: paths)
         self.codexIndex = index
         self.engine = StatusEngine(config: settings.monitorConfig, codexTitle: { index.title(forSession: $0) })
@@ -185,6 +187,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
             policy = KeepAwakePolicy(grace: options.keepAwakeGrace)
             battery = nil
             safeguardActive = false
+            leds.reopen()
             running = true
             setOutputsOpen(true)
             saveLatest(now: now)
@@ -199,11 +202,11 @@ public final class SidePulseRuntime: @unchecked Sendable {
         if started { deviceQueue.async { [weak self] in self?.pollDevicesTick() } }
     }
 
-    /// Waits (bounded) for queued LED work and keepalive touches, so nothing is
-    /// written after it returns.
+    /// Waits (bounded) for queued LED work and keepalive touches, then drops whatever LED work is
+    /// still queued or blocked, so no LED write lands after it returns.
     public func stop() {
-        let stopped: Bool = onState {
-            guard running else { return false }
+        let generation: Int? = onState {
+            guard running else { return nil }
             running = false
             setOutputsOpen(false)
             refreshTimer?.cancel()
@@ -222,12 +225,14 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 return cache.keepAwakeActive
             }
             if wasHeld { DiagnosticsLog.shared.log("keep-awake: released") }
-            return true
+            return leds.currentGeneration
         }
-        guard stopped else { return }
+        guard let generation else { return }
         persistQueue.sync {}
         leds.finishPreviewNow()
         leds.waitUntilIdle(timeout: 2)
+        // Closed only now so the preview's restore above still writes; a start() since then keeps its own generation.
+        leds.close(generation: generation)
         leds.waitForKeepaliveTouches(timeout: 1)
         DiagnosticsLog.shared.log("runtime: stopped")
     }
@@ -279,11 +284,14 @@ public final class SidePulseRuntime: @unchecked Sendable {
             // stop() drains the LED queue, or not at all.
             guard running, display == .manual, old.display(forDevice: deviceID) != .manual,
                   leds.connectedDevices.contains(where: { $0.id == deviceID }) else { return }
-            leds.writeOnceAsync(program: "off", deviceID: deviceID) { error in
-                if let error {
-                    DiagnosticsLog.shared.log("devices: \(label): Manual, clear failed: \(error.localizedDescription)")
-                } else {
+            leds.clearManualDevice(deviceID: deviceID) { result in
+                switch result {
+                case .success(true):
                     DiagnosticsLog.shared.log("devices: \(label): Manual, LEDs cleared")
+                case .success(false):
+                    DiagnosticsLog.shared.log("devices: \(label): Manual, LEDs left as they are")
+                case .failure(let error):
+                    DiagnosticsLog.shared.log("devices: \(label): Manual, clear failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -313,7 +321,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
             if running { markLatestDirty() }
             let now = Date()
             let snapshot = publishStatuses(now: now)
-            driveOutputs(mode: snapshot.aggregate.mode, now: now)
+            driveOutputs(snapshot, now: now)
             scheduleNotify()
         }
     }
@@ -345,7 +353,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         case .event(let provider, let line):
             ingest(provider: provider, line: line)
             return nil
-        case .command(let name, _):
+        case .command(let name, let args):
             switch name {
             case "ping":
                 return IPCReply.ping(kind: onOpenSettings == nil ? .headless : .app)
@@ -361,9 +369,10 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 return IPCReply.ok
             case "reload-settings":
                 reloadSettings()
-                // A write already past its settings check may still land, so wait for
-                // it before `sidepulse write --manual` writes its own program.
-                guard leds.waitForWrites(timeout: 2) else { return IPCReply.error("LED write in progress") }
+                // A write already past its settings check may still land, so wait for it before
+                // `sidepulse write --manual` writes its own program; older CLIs name no device.
+                let device = args["device"]?.stringValue
+                guard leds.waitForWrites(deviceID: device, timeout: 2) else { return IPCReply.error("LED write in progress") }
                 return IPCReply.ok
             default:
                 return IPCReply.unknownCommand
@@ -462,7 +471,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         engine.prune(now: now)
         if running, engine.statuses.count != before { markLatestDirty() }
         let snapshot = publishStatuses(now: now)
-        driveOutputs(mode: snapshot.aggregate.mode, now: now)
+        driveOutputs(snapshot, now: now)
         scheduleNotify()
     }
 
@@ -477,11 +486,13 @@ public final class SidePulseRuntime: @unchecked Sendable {
         return SnapshotBuilder.build(statuses: statuses, config: config, now: now, sources: sources)
     }
 
-    private func driveOutputs(mode: AgentMode, now: Date) {
+    private func driveOutputs(_ snapshot: MonitorSnapshot, now: Date) {
         guard running else { return }
-        leds.requestSync(mode: mode)
+        leds.requestSync(mode: snapshot.aggregate.mode)
         leds.touchKeepalive(now: now)
-        updateKeepAwake(mode: mode, now: now)
+        // Waiting and Blocked outrank Working in the aggregate, yet one agent still working must keep the Mac awake.
+        let working = snapshot.statuses.contains { AgentMode.workingGroup.contains($0.mode) }
+        updateKeepAwake(mode: working ? .working : snapshot.aggregate.mode, now: now)
     }
 
     private func startTimers() {

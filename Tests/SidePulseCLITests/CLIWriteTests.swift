@@ -52,13 +52,33 @@ final class CLIWriteInputTests: XCTestCase {
         XCTAssertEqual(harness.stdout.text + harness.stderr.text, "")
     }
 
+    private static let pulseDot = DeviceCandidate(root: URL(fileURLWithPath: "/Volumes/PulseDot"),
+                                                  target: URL(fileURLWithPath: "/Volumes/PulseDot/LEDS.LED"),
+                                                  reason: "contains LEDS.LED")
+
+    /// Records each request's arguments, which `CLIFakeApp` drops.
+    private func recordRequests(_ harness: CLIHarness, reply: Data?) -> RequestLog {
+        let log = RequestLog()
+        harness.env.app = AppConnection(isRunning: { true }, request: { command, args, _ in
+            log.append(command, args)
+            return reply
+        })
+        return log
+    }
+
+    private final class RequestLog {
+        private(set) var items: [(command: String, args: JSONObject)] = []
+        func append(_ command: String, _ args: JSONObject) { items.append((command, args)) }
+    }
+
     func testManualWarnsWhenTheAppIsStillWriting() throws {
         let harness = CLIHarness()
-        harness.app.running = true
-        harness.app.replies["reload-settings"] = Data(#"{"ok":false,"error":"LED write in progress"}"#.utf8)
+        let requests = recordRequests(harness, reply: Data(#"{"ok":false,"error":"LED write in progress"}"#.utf8))
         WriteCommand.coordinateWithApp(target: URL(fileURLWithPath: "/Volumes/PulseDot/LEDS.LED"), manual: true,
-                                       dryRun: false, env: harness.env, volumeExists: { _ in true })
-        XCTAssertEqual(harness.app.requests, ["reload-settings"])
+                                       dryRun: false, env: harness.env, volumeExists: { _ in true },
+                                       resolveDevice: { _ in Self.pulseDot })
+        XCTAssertEqual(requests.items.map(\.command), ["reload-settings"])
+        XCTAssertEqual(requests.items.first?.args, ["device": .string("/Volumes/PulseDot")], "only that device's writes count")
         XCTAssertTrue(harness.stdout.text.contains("to Manual"))
         XCTAssertTrue(harness.stderr.text.contains("still writing"), harness.stderr.text)
         XCTAssertEqual(SettingsStore(url: harness.paths.settingsFile).load().display(forDevice: "/Volumes/PulseDot"), .manual)
@@ -69,8 +89,57 @@ final class CLIWriteInputTests: XCTestCase {
         harness.app.running = true
         harness.app.replies["reload-settings"] = Data("ok".utf8)
         WriteCommand.coordinateWithApp(target: URL(fileURLWithPath: "/Volumes/PulseDot/LEDS.LED"), manual: true,
-                                       dryRun: false, env: harness.env, volumeExists: { _ in true })
+                                       dryRun: false, env: harness.env, volumeExists: { _ in true },
+                                       resolveDevice: { _ in Self.pulseDot })
         XCTAssertEqual(harness.stderr.text, "")
+    }
+
+    /// Regression: `--device /volumes/pulsedot --manual` saved Manual for that spelling, so the real
+    /// device stayed in Agent mode and a phantom device appeared in settings.
+    func testManualResolvesACaseVariantOrSymlinkedPathToTheDiscoveredDevice() throws {
+        let probe = CLIHarness()
+        defer { withExtendedLifetime(probe) {} }
+        let mounts = probe.root.appendingPathComponent("mounts", isDirectory: true)
+        let dot = mounts.appendingPathComponent("PulseDot", isDirectory: true)
+        try FileManager.default.createDirectory(at: dot, withIntermediateDirectories: true)
+        let link = probe.root.appendingPathComponent("dot-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dot)
+        var typed = [link, link.appendingPathComponent("LEDS.LED")]
+        let variant = mounts.appendingPathComponent("pulsedot")
+        if FileManager.default.fileExists(atPath: variant.path) { typed.append(variant) }
+
+        for path in typed {
+            let harness = CLIHarness(variables: ["SIDEPULSE_MOUNT_ROOTS": mounts.path])
+            let requests = recordRequests(harness, reply: Data("ok".utf8))
+            let target = DeviceDiscovery.target(forDevicePath: path)
+            WriteCommand.coordinateWithApp(target: target, manual: true, dryRun: false, env: harness.env)
+            let settings = SettingsStore(url: harness.paths.settingsFile).load()
+            XCTAssertEqual(settings.devices.map(\.id), [dot.path], path.path)
+            XCTAssertEqual(settings.display(forDevice: dot.path), .manual, path.path)
+            XCTAssertEqual(requests.items.first?.args, ["device": .string(dot.path)], path.path)
+            XCTAssertEqual(harness.stdout.text, "Set SidePulse Dot (\(dot.path)) to Manual: SidePulse will not overwrite it "
+                + "(switch back under Devices in the menu bar).\n", path.path)
+            XCTAssertEqual(harness.stderr.text, "", path.path)
+        }
+    }
+
+    func testManualForAPathThatIsNoDiscoveredDeviceWarnsAndSavesNothing() throws {
+        let harness = CLIHarness()
+        let mounts = harness.root.appendingPathComponent("mounts", isDirectory: true)
+        try FileManager.default.createDirectory(at: mounts.appendingPathComponent("PulseDot"), withIntermediateDirectories: true)
+        let elsewhere = harness.root.appendingPathComponent("Elsewhere", isDirectory: true)
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        harness.env.variables["SIDEPULSE_MOUNT_ROOTS"] = mounts.path
+        let requests = recordRequests(harness, reply: Data("ok".utf8))
+
+        WriteCommand.coordinateWithApp(target: elsewhere.appendingPathComponent("LEDS.LED"), manual: true, dryRun: false,
+                                       env: harness.env)
+
+        XCTAssertEqual(harness.stderr.text, "sidepulse write: warning: --manual ignored: \(elsewhere.path) is not a "
+            + "SidePulse device the app drives, so nothing was switched to Manual.\n")
+        XCTAssertEqual(harness.stdout.text, "")
+        XCTAssertTrue(requests.items.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: harness.paths.settingsFile.path))
     }
 
     func testDeviceIDIsTheVolumeRoot() {

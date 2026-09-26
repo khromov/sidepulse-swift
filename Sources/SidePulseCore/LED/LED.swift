@@ -6,7 +6,7 @@ public enum LedError: Error, LocalizedError, Equatable {
     case multipleDevices([String])
     case invalidProgram(String)
     case writeFailed(String)
-    /// open() was refused (EPERM/EACCES), typically by the macOS removable-volume privacy permission.
+    /// open() was refused with EPERM, typically by the macOS removable-volume privacy permission.
     case accessDenied(String)
     case unknownAnimation(String)
 
@@ -115,13 +115,21 @@ public enum DeviceDiscovery {
             .map { URL(fileURLWithPath: expandTilde($0, home: environment["HOME"]), isDirectory: true) }
     }
 
-    /// Network mounts under a root are skipped unexamined because a stat on a dead one blocks until
-    /// its client gives up.
-    public static func discover(roots: [URL]? = nil, fileName: String = DeviceDiscovery.fileName) -> [DeviceCandidate] {
-        discover(roots: roots, fileName: fileName, skipping: nonLocalMountPoints())
+    struct Mount: Equatable {
+        var local: Bool
+        var fileSystem: String
     }
 
-    static func discover(roots: [URL]?, fileName: String, skipping skipped: Set<String>) -> [DeviceCandidate] {
+    static let deviceFileSystems: Set<String> = ["msdos", "exfat"]
+
+    /// A child that is itself a mount point is skipped unexamined unless it is a local FAT volume,
+    /// because a stat on a dead network mount blocks until its client gives up and other
+    /// filesystems (disk images, say) are never SidePulse devices.
+    public static func discover(roots: [URL]? = nil, fileName: String = DeviceDiscovery.fileName) -> [DeviceCandidate] {
+        discover(roots: roots, fileName: fileName, mounts: mountTable())
+    }
+
+    static func discover(roots: [URL]?, fileName: String, mounts: [String: Mount]) -> [DeviceCandidate] {
         let fm = FileManager.default
         var seen = Set<String>()
         var candidates: [DeviceCandidate] = []
@@ -130,14 +138,17 @@ public enum DeviceDiscovery {
             let volumeNames = names
                 .filter { name in
                     let child = root.appendingPathComponent(name, isDirectory: false)
-                    return !ignoredVolumeNames.contains(name) && !skipped.contains(child.path) && isDirectory(child)
+                    if let mount = mounts[child.path], !(mount.local && deviceFileSystems.contains(mount.fileSystem)) {
+                        return false
+                    }
+                    return !ignoredVolumeNames.contains(name) && isDirectory(child)
                 }
                 .sorted { ($0.lowercased(), $0) < ($1.lowercased(), $1) }
             for name in volumeNames {
                 let volume = root.appendingPathComponent(name, isDirectory: true)
                 guard seen.insert(volume.path).inserted else { continue }
                 let target = self.target(forDevicePath: volume, fileName: fileName)
-                if fm.fileExists(atPath: target.path) {
+                if isRegularFile(target.path) {
                     candidates.append(DeviceCandidate(root: volume, target: target,
                                                       reason: "contains \(target.lastPathComponent)"))
                 } else if isDeviceName(name) {
@@ -149,19 +160,45 @@ public enum DeviceDiscovery {
     }
 
     /// `MNT_NOWAIT` reads the kernel's mount table without contacting the filesystems themselves.
-    static func nonLocalMountPoints() -> Set<String> {
+    static func mountTable() -> [String: Mount] {
         let capacity = Int(getfsstat(nil, 0, MNT_NOWAIT)) + 8
-        guard capacity > 8 else { return [] }
+        guard capacity > 8 else { return [:] }
         let buffer = UnsafeMutablePointer<statfs>.allocate(capacity: capacity)
         defer { buffer.deallocate() }
         buffer.initialize(repeating: statfs(), count: capacity)
         let count = Int(getfsstat(buffer, Int32(capacity * MemoryLayout<statfs>.stride), MNT_NOWAIT))
-        var points = Set<String>()
-        for index in 0..<max(0, count) where buffer[index].f_flags & UInt32(MNT_LOCAL) == 0 {
-            var name = buffer[index].f_mntonname
-            points.insert(withUnsafeBytes(of: &name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) })
+        var mounts: [String: Mount] = [:]
+        for index in 0..<max(0, count) {
+            var point = buffer[index].f_mntonname
+            var type = buffer[index].f_fstypename
+            let path = withUnsafeBytes(of: &point) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            let fileSystem = withUnsafeBytes(of: &type) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            mounts[path] = Mount(local: buffer[index].f_flags & UInt32(MNT_LOCAL) != 0, fileSystem: fileSystem)
         }
-        return points
+        return mounts
+    }
+
+    /// Compares the volume roots' (st_dev, st_ino), because a typed path can differ from the
+    /// discovered one in case or go through a symlink.
+    public static func candidate(forVolume volume: URL, among candidates: [DeviceCandidate]) -> DeviceCandidate? {
+        guard let identity = fileIdentity(volume.path) else { return nil }
+        return candidates.first { fileIdentity($0.root.path) == identity }
+    }
+
+    private struct FileIdentity: Equatable {
+        var device: dev_t
+        var inode: ino_t
+    }
+
+    private static func fileIdentity(_ path: String) -> FileIdentity? {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        return FileIdentity(device: info.st_dev, inode: info.st_ino)
+    }
+
+    static func isRegularFile(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
     }
 
     public static func isDeviceName(_ name: String) -> Bool {
@@ -224,23 +261,22 @@ public enum DeviceDiscovery {
 public enum LedWriter {
     /// `shouldWrite` is asked after open() and before truncating, because open() can block on a
     /// macOS permission prompt or a slow card and the caller may no longer want the write.
+    /// With `expected`, a file that no longer holds exactly that text (or is missing) is left alone.
     @discardableResult
-    public static func write(_ program: String, to target: URL, shouldWrite: () -> Bool = { true }) throws -> Bool {
+    public static func write(_ program: String, to target: URL, ifHolding expected: String? = nil,
+                             shouldWrite: () -> Bool = { true }) throws -> Bool {
         try LedText.validate(program)
         let path = target.path
         let isNew = !FileManager.default.fileExists(atPath: path)
 
         // No O_TRUNC: the file is truncated only after `shouldWrite` agreed.
-        let fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
-        guard fd >= 0 else {
-            if errno == EPERM || errno == EACCES { throw LedError.accessDenied(posixMessage("Could not open", path)) }
-            throw posixFailure("Could not open", path)
+        guard let fd = try openRegularFile(path, flags: expected == nil ? O_WRONLY | O_CREAT : O_RDWR) else {
+            return false
         }
-        guard shouldWrite() else {
+        guard shouldWrite(), expected.map({ holds(fd, $0) }) ?? true else {
             close(fd)
             return false
         }
-        // An empty file (or a FIFO) has nothing to truncate.
         var info = stat()
         if fstat(fd, &info) != 0 || info.st_size > 0, ftruncate(fd, 0) != 0 {
             let failure = posixFailure("Could not truncate", path)
@@ -265,8 +301,65 @@ public enum LedWriter {
         return true
     }
 
+    /// Runs on every unchanged sync, so it must not wait on a FIFO either.
     public static func read(_ target: URL) -> String? {
-        FileUtil.readText(target)
+        guard let fd = try? openRegularFile(target.path, flags: O_RDONLY) else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            return String(decoding: try handle.readToEnd() ?? Data(), as: UTF8.self)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Refuses anything but a regular file, so a symlink or FIFO planted on a volume can neither
+    /// redirect the write nor block it; a missing file opened without O_CREAT gives nil.
+    static func openRegularFile(_ path: String, flags: Int32) throws -> Int32? {
+        let fd = open(path, flags | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0o644)
+        guard fd >= 0 else {
+            let code = errno
+            if code == ENOENT && flags & O_CREAT == 0 { return nil }
+            var info = stat()
+            throw openError(path: path, code: code, info: lstat(path, &info) == 0 ? info : nil)
+        }
+        var info = stat()
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
+            close(fd)
+            throw LedError.writeFailed("\(path) is not a regular file")
+        }
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK)
+        return fd
+    }
+
+    /// Only EPERM can be the macOS privacy refusal: EACCES comes from the file's own mode, and a
+    /// Finder-locked file gives EPERM too.
+    static func openError(path: String, code: Int32, info: stat?) -> LedError {
+        if let info, info.st_mode & S_IFMT != S_IFREG {
+            return .writeFailed("\(path) is not a regular file")
+        }
+        let message = "Could not open \(path): \(String(cString: strerror(code)))"
+        guard code == EPERM else { return .writeFailed(message) }
+        if let info, info.st_flags & UInt32(UF_IMMUTABLE | SF_IMMUTABLE) != 0 {
+            return .writeFailed("\(path) is locked")
+        }
+        return .accessDenied(message)
+    }
+
+    private static func holds(_ fd: Int32, _ expected: String) -> Bool {
+        let wanted = Array(expected.utf8)
+        var buffer = [UInt8](repeating: 0, count: wanted.count + 1)
+        var count = 0
+        while count < buffer.count {
+            let got = buffer.withUnsafeMutableBytes { pread(fd, $0.baseAddress! + count, $0.count - count, off_t(count)) }
+            if got > 0 {
+                count += got
+            } else if got < 0 && errno == EINTR {
+                continue
+            } else {
+                break
+            }
+        }
+        return buffer.prefix(count).elementsEqual(wanted)
     }
 
     private static func syncDirectory(_ directory: URL) {
@@ -277,11 +370,7 @@ public enum LedWriter {
     }
 
     private static func posixFailure(_ action: String, _ path: String) -> LedError {
-        .writeFailed(posixMessage(action, path))
-    }
-
-    private static func posixMessage(_ action: String, _ path: String) -> String {
-        "\(action) \(path): \(String(cString: strerror(errno)))"
+        .writeFailed("\(action) \(path): \(String(cString: strerror(errno)))")
     }
 }
 
@@ -372,8 +461,7 @@ public final class KeepaliveToucher: Sendable {
     }
 
     public static func touchFile(_ url: URL) throws {
-        let fd = open(url.path, O_WRONLY | O_CREAT | O_CLOEXEC, 0o644)
-        guard fd >= 0 else { throw FileUtil.posixError("touch \(url.path)") }
+        guard let fd = try LedWriter.openRegularFile(url.path, flags: O_WRONLY | O_CREAT) else { return }
         defer { close(fd) }
         guard futimens(fd, nil) == 0 else { throw FileUtil.posixError("touch \(url.path)") }
     }

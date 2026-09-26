@@ -235,23 +235,67 @@ final class LEDDiscoveryTests: XCTestCase {
     }
 
     /// Regression: discovery stat'ed every child of /Volumes, so one dead network mount stalled
-    /// hot-plug detection.
-    func testSkippedMountPointsAreNeverLookedAt() throws {
+    /// hot-plug detection, and any local volume with a `LEDS.LED` (a disk image, say) was written.
+    func testOnlyLocalFATMountPointsAreLookedAt() throws {
         let root = try makeTempDirectory(self)
-        let share = try makeDirectory(root, "NAS SidePulseDot")
-        try writeFile(share.appendingPathComponent("LEDS.LED"), "off")
-        let dot = try makeDirectory(root, "PulseDot")
+        var mounts: [String: DeviceDiscovery.Mount] = [:]
+        for (name, local, fileSystem) in [("NAS SidePulseDot", false, "smbfs"), ("Some Installer", true, "apfs"),
+                                          ("PulseDot", true, "msdos"), ("Stick", true, "exfat")] {
+            let volume = try makeDirectory(root, name)
+            try writeFile(volume.appendingPathComponent("LEDS.LED"), "off")
+            mounts[volume.path] = DeviceDiscovery.Mount(local: local, fileSystem: fileSystem)
+        }
+        let plain = try makeDirectory(root, "Plain")
+        try writeFile(plain.appendingPathComponent("LEDS.LED"), "off")
 
-        let found = DeviceDiscovery.discover(roots: [root], fileName: DeviceDiscovery.fileName, skipping: [share.path])
+        let found = DeviceDiscovery.discover(roots: [root], fileName: DeviceDiscovery.fileName, mounts: mounts)
 
-        XCTAssertEqual(found.map(\.root.path), [dot.path])
-        XCTAssertEqual(DeviceDiscovery.discover(roots: [root]).count, 2, "plain folders under a test root are scanned")
+        XCTAssertEqual(found.map(\.root.lastPathComponent), ["Plain", "PulseDot", "Stick"],
+                       "folders that are not mount points are scanned, as under a test root")
+        XCTAssertEqual(DeviceDiscovery.discover(roots: [root]).count, 5, "none of them is a real mount point")
     }
 
-    func testNonLocalMountPointsComeFromTheMountTable() {
-        let points = DeviceDiscovery.nonLocalMountPoints()
-        XCTAssertFalse(points.contains("/"), "the boot volume is local")
-        XCTAssertFalse(points.contains("/dev"))
+    func testMountTableComesFromTheKernel() {
+        let mounts = DeviceDiscovery.mountTable()
+        XCTAssertEqual(mounts["/"]?.local, true, "the boot volume is local")
+        XCTAssertFalse(mounts["/"]?.fileSystem.isEmpty ?? true)
+        XCTAssertFalse(DeviceDiscovery.deviceFileSystems.contains(mounts["/"]?.fileSystem ?? ""))
+    }
+
+    /// Regression: a volume holding `LEDS.LED -> ~/.zshrc` was discovered, and the user's file was then
+    /// truncated and overwritten.
+    func testVolumeWhoseLedFileIsNotARegularFileIsNotDiscovered() throws {
+        let base = try makeTempDirectory(self)
+        let root = try makeDirectory(base, "Volumes")
+        let victim = base.appendingPathComponent("victim")
+        try writeFile(victim, "secret")
+        let linked = try makeDirectory(root, "Some Installer")
+        try FileManager.default.createSymbolicLink(at: linked.appendingPathComponent("LEDS.LED"), withDestinationURL: victim)
+        let piped = try makeDirectory(root, "Pipe")
+        XCTAssertEqual(mkfifo(piped.appendingPathComponent("LEDS.LED").path, 0o644), 0)
+        let nested = try makeDirectory(root, "Nested")
+        try makeDirectory(nested, "LEDS.LED")
+
+        XCTAssertEqual(DeviceDiscovery.discover(roots: [root]), [])
+    }
+
+    func testCandidateForVolumeMatchesACaseVariantOrSymlinkedPath() throws {
+        let base = try makeTempDirectory(self)
+        let root = try makeDirectory(base, "Volumes")
+        let dot = try makeDirectory(root, "PulseDot")
+        let link = base.appendingPathComponent("dot-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dot)
+        let candidates = DeviceDiscovery.discover(roots: [root])
+        XCTAssertEqual(candidates.map(\.root.path), [dot.path])
+
+        XCTAssertEqual(DeviceDiscovery.candidate(forVolume: dot, among: candidates)?.id, dot.path)
+        XCTAssertEqual(DeviceDiscovery.candidate(forVolume: link, among: candidates)?.id, dot.path)
+        let variant = root.appendingPathComponent("pulsedot")
+        if FileManager.default.fileExists(atPath: variant.path) {
+            XCTAssertEqual(DeviceDiscovery.candidate(forVolume: variant, among: candidates)?.id, dot.path)
+        }
+        XCTAssertNil(DeviceDiscovery.candidate(forVolume: root, among: candidates))
+        XCTAssertNil(DeviceDiscovery.candidate(forVolume: base.appendingPathComponent("missing"), among: candidates))
     }
 
     func testResolveExplicitDevicePath() throws {
@@ -377,7 +421,8 @@ final class LEDWriterTests: XCTestCase {
         XCTAssertEqual(try readFile(target), "off")
     }
 
-    func testRefusedOpenThrowsAccessDenied() throws {
+    /// Regression: EACCES from a read-only file was reported as the macOS privacy refusal.
+    func testReadOnlyFileIsAPlainWriteFailure() throws {
         let device = try makeDirectory(try makeTempDirectory(self), "SidePulseDot")
         let target = device.appendingPathComponent("LEDS.LED")
         try writeFile(target, "keep")
@@ -385,10 +430,111 @@ final class LEDWriterTests: XCTestCase {
         defer { chmod(target.path, 0o644) }
 
         XCTAssertThrowsError(try LedWriter.write("off", to: target)) { error in
-            XCTAssertEqual(error as? LedError, .accessDenied("Could not open \(target.path): Permission denied"))
-            XCTAssertEqual(error.localizedDescription, "Could not open \(target.path): Permission denied")
+            XCTAssertEqual(error as? LedError, .writeFailed("Could not open \(target.path): Permission denied"))
         }
         XCTAssertEqual(try readFile(target), "keep")
+    }
+
+    func testFinderLockedFileIsReportedAsLocked() throws {
+        let device = try makeDirectory(try makeTempDirectory(self), "SidePulseDot")
+        let target = device.appendingPathComponent("LEDS.LED")
+        try writeFile(target, "keep")
+        XCTAssertEqual(chflags(target.path, UInt32(UF_IMMUTABLE)), 0)
+        defer { chflags(target.path, 0) }
+
+        XCTAssertThrowsError(try LedWriter.write("off", to: target)) { error in
+            XCTAssertEqual(error as? LedError, .writeFailed("\(target.path) is locked"))
+        }
+        XCTAssertEqual(try readFile(target), "keep")
+    }
+
+    func testOpenErrorClassification() {
+        func info(_ type: mode_t, flags: Int32 = 0) -> stat {
+            var info = stat()
+            info.st_mode = type | 0o644
+            info.st_flags = UInt32(flags)
+            return info
+        }
+        let path = "/Volumes/PulseDot/LEDS.LED"
+        XCTAssertEqual(LedWriter.openError(path: path, code: EPERM, info: info(S_IFREG)),
+                       .accessDenied("Could not open \(path): Operation not permitted"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: EPERM, info: nil),
+                       .accessDenied("Could not open \(path): Operation not permitted"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: EPERM, info: info(S_IFREG, flags: UF_IMMUTABLE)),
+                       .writeFailed("\(path) is locked"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: EPERM, info: info(S_IFREG, flags: SF_IMMUTABLE)),
+                       .writeFailed("\(path) is locked"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: EACCES, info: info(S_IFREG)),
+                       .writeFailed("Could not open \(path): Permission denied"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: ELOOP, info: info(S_IFLNK)),
+                       .writeFailed("\(path) is not a regular file"))
+        XCTAssertEqual(LedWriter.openError(path: path, code: ENOENT, info: nil),
+                       .writeFailed("Could not open \(path): No such file or directory"))
+    }
+
+    /// Regression: `LEDS.LED` was opened through a symlink (truncating its target) and a FIFO blocked
+    /// open() forever.
+    func testRefusesASymlinkFIFOOrDirectoryAsTheTarget() throws {
+        let base = try makeTempDirectory(self)
+        let device = try makeDirectory(base, "SidePulseDot")
+        let target = device.appendingPathComponent("LEDS.LED")
+        let refused = LedError.writeFailed("\(target.path) is not a regular file")
+        var checked = false
+
+        let victim = base.appendingPathComponent("victim")
+        try writeFile(victim, "secret")
+        try FileManager.default.createSymbolicLink(at: target, withDestinationURL: victim)
+        XCTAssertThrowsError(try LedWriter.write("off", to: target, shouldWrite: { checked = true; return true })) { error in
+            XCTAssertEqual(error as? LedError, refused)
+        }
+        XCTAssertEqual(try readFile(victim), "secret")
+        try FileManager.default.removeItem(at: target)
+        let missing = base.appendingPathComponent("created-through-link")
+        try FileManager.default.createSymbolicLink(at: target, withDestinationURL: missing)
+        XCTAssertThrowsError(try LedWriter.write("off", to: target)) { XCTAssertEqual($0 as? LedError, refused) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        try FileManager.default.removeItem(at: target)
+
+        XCTAssertEqual(mkfifo(target.path, 0o644), 0)
+        let started = Date()
+        XCTAssertThrowsError(try LedWriter.write("off", to: target)) { XCTAssertEqual($0 as? LedError, refused) }
+        let reader = open(target.path, O_RDONLY | O_NONBLOCK)
+        XCTAssertGreaterThanOrEqual(reader, 0)
+        defer { close(reader) }
+        XCTAssertThrowsError(try LedWriter.write("off", to: target)) { XCTAssertEqual($0 as? LedError, refused) }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1, "never waits for a reader")
+        try FileManager.default.removeItem(at: target)
+
+        try makeDirectory(device, "LEDS.LED")
+        XCTAssertThrowsError(try LedWriter.write("off", to: target)) { XCTAssertEqual($0 as? LedError, refused) }
+        XCTAssertFalse(checked, "refused before the caller's check")
+    }
+
+    func testSymlinkedVolumeFolderStillWorks() throws {
+        let base = try makeTempDirectory(self)
+        let device = try makeDirectory(base, "SidePulseDot")
+        let link = base.appendingPathComponent("linked-dot")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: device)
+
+        try LedWriter.write("off", to: link.appendingPathComponent("LEDS.LED"))
+
+        XCTAssertEqual(try readFile(device.appendingPathComponent("LEDS.LED")), "off")
+    }
+
+    func testIfHoldingWritesOnlyOverTheExpectedProgram() throws {
+        let device = try makeDirectory(try makeTempDirectory(self), "SidePulseDot")
+        let target = device.appendingPathComponent("LEDS.LED")
+        XCTAssertFalse(try LedWriter.write("off", to: target, ifHolding: "idle"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path), "a missing file is not created")
+
+        try writeFile(target, "#FF00FF pulse")
+        XCTAssertFalse(try LedWriter.write("off", to: target, ifHolding: "#FF00FF"))
+        XCTAssertFalse(try LedWriter.write("off", to: target, ifHolding: "#FF00FF pulse\n"))
+        XCTAssertEqual(try readFile(target), "#FF00FF pulse")
+        XCTAssertFalse(try LedWriter.write("off", to: target, ifHolding: "#FF00FF pulse", shouldWrite: { false }))
+        XCTAssertEqual(try readFile(target), "#FF00FF pulse")
+        XCTAssertTrue(try LedWriter.write("off", to: target, ifHolding: "#FF00FF pulse"))
+        XCTAssertEqual(try readFile(target), "off")
     }
 
     func testReadIsLossyAndNilWhenMissing() throws {
@@ -399,6 +545,24 @@ final class LEDWriterTests: XCTestCase {
         try Data([0x6F, 0x66, 0x66, 0xFF]).write(to: target)
 
         XCTAssertEqual(LedWriter.read(target), "off\u{FFFD}")
+        try Data().write(to: target)
+        XCTAssertEqual(LedWriter.read(target), "")
+    }
+
+    /// The read-back runs on the LED queue, so a FIFO must not block it.
+    func testReadRefusesASymlinkOrFIFO() throws {
+        let dir = try makeTempDirectory(self)
+        let victim = dir.appendingPathComponent("victim")
+        try writeFile(victim, "secret")
+        let linked = dir.appendingPathComponent("LEDS.LED")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: victim)
+        XCTAssertNil(LedWriter.read(linked))
+
+        let pipe = dir.appendingPathComponent("PIPE.LED")
+        XCTAssertEqual(mkfifo(pipe.path, 0o644), 0)
+        let started = Date()
+        XCTAssertNil(LedWriter.read(pipe))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
     }
 }
 
@@ -535,5 +699,36 @@ final class LEDKeepaliveTests: XCTestCase {
     func testTouchFileFailsForMissingVolume() {
         XCTAssertThrowsError(try KeepaliveToucher.touchFile(
             URL(fileURLWithPath: "/nonexistent-sidepulse-volume/keepalive")))
+    }
+
+    /// Regression: a `keepalive` symlink got its target created or touched.
+    func testTouchRefusesASymlinkFIFOOrDirectory() throws {
+        let base = try makeTempDirectory(self)
+        let device = try makeDirectory(base, "SidePulsePro")
+        let keepalive = device.appendingPathComponent("keepalive")
+        let refused = LedError.writeFailed("\(keepalive.path) is not a regular file")
+
+        let victim = base.appendingPathComponent("victim")
+        try writeFile(victim, "secret")
+        let old = Date(timeIntervalSinceNow: -3600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: victim.path)
+        try FileManager.default.createSymbolicLink(at: keepalive, withDestinationURL: victim)
+        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
+        let modified = try FileManager.default.attributesOfItem(atPath: victim.path)[.modificationDate] as? Date
+        XCTAssertEqual(modified?.timeIntervalSince1970 ?? 0, old.timeIntervalSince1970, accuracy: 1)
+        try FileManager.default.removeItem(at: keepalive)
+
+        let missing = base.appendingPathComponent("created-through-link")
+        try FileManager.default.createSymbolicLink(at: keepalive, withDestinationURL: missing)
+        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        try FileManager.default.removeItem(at: keepalive)
+
+        XCTAssertEqual(mkfifo(keepalive.path, 0o644), 0)
+        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
+        try FileManager.default.removeItem(at: keepalive)
+
+        try makeDirectory(device, "keepalive")
+        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
     }
 }

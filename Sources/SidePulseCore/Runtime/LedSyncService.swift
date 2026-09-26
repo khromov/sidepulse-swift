@@ -11,6 +11,10 @@ public final class LedSyncService: @unchecked Sendable {
     static let accessDeniedMessage = "macOS denied access. Allow SidePulse in System Settings › Privacy & Security "
         + "› Files and Folders (Removable Volumes)"
 
+    /// Program, target, the text the file must still hold (if any), and the check made once open() returns.
+    typealias FileWriter = @Sendable (String, URL, String?, () -> Bool) throws -> Bool
+    static let fileWriter: FileWriter = { try LedWriter.write($0, to: $1, ifHolding: $2, shouldWrite: $3) }
+
     public let dryRun: Bool
 
     private let settingsProvider: @Sendable () -> SidePulseSettings
@@ -19,11 +23,11 @@ public final class LedSyncService: @unchecked Sendable {
     private let keepalive: KeepaliveToucher
     private let clock: @Sendable () -> TimeInterval
     private let discover: @Sendable ([URL]?) -> [DeviceCandidate]
+    private let writeFile: FileWriter
     /// Seconds after which a running write or keepalive touch counts as stuck.
     let stallNotice: TimeInterval
 
     let ioQueue = DispatchQueue(label: "sidepulse.leds.io", qos: .utility)
-    private let writesInProgress = DispatchGroup()
 
     private let shared = Mutex(Shared())
 
@@ -38,15 +42,23 @@ public final class LedSyncService: @unchecked Sendable {
         /// Cleared by the preview's restore rather than by comparing it with the clock.
         var previewUntil: TimeInterval?
         var errors: [String: String] = [:]
+        /// Kept apart from `errors`, which every sync clears for a non-Agent device.
+        var clearErrors: [String: String] = [:]
         var writesStarted: [String: TimeInterval] = [:]
+        /// Per device, so waiting on one device's write never waits on another's.
+        var writeGroups: [String: DispatchGroup] = [:]
         var reportedErrors: [String: String] = [:]
         var syncPasses = 0
         var keepaliveError: String?
+        /// Work runs only while open and in the generation it was queued in.
+        var outputOpen = true
+        var generation = 0
     }
 
     // I/O-queue-only state.
     private var controllers: [String: AgentLedController] = [:]
     private var lastDisplay: [String: LedDisplay] = [:]
+    private var lastWritten: [String: String] = [:]
 
     public convenience init(settings: @escaping @Sendable () -> SidePulseSettings,
                             roots: [URL]? = nil,
@@ -62,6 +74,7 @@ public final class LedSyncService: @unchecked Sendable {
          keepalive: KeepaliveToucher,
          clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          discover: @escaping @Sendable ([URL]?) -> [DeviceCandidate] = { DeviceDiscovery.discover(roots: $0) },
+         writeFile: @escaping FileWriter = LedSyncService.fileWriter,
          stallNotice: TimeInterval = 2) {
         self.settingsProvider = settings
         self.roots = roots
@@ -70,6 +83,7 @@ public final class LedSyncService: @unchecked Sendable {
         self.keepalive = keepalive
         self.clock = clock
         self.discover = discover
+        self.writeFile = writeFile
         self.stallNotice = stallNotice
     }
 
@@ -90,7 +104,10 @@ public final class LedSyncService: @unchecked Sendable {
                 state.resetIDs.insert(id)
             }
             let removed = previous.keys.filter { signatures[$0] == nil }.sorted()
-            for id in removed { state.errors[id] = nil }
+            for id in removed {
+                state.errors[id] = nil
+                state.clearErrors[id] = nil
+            }
             state.signatures = signatures
             return (found.filter { previous[$0.id] == nil }, removed, true)
         }
@@ -140,7 +157,7 @@ public final class LedSyncService: @unchecked Sendable {
         let stalledTouches = keepalive.stalledFiles(after: stallNotice)
         let now = clock()
         return shared.withLock { state in
-            var errors = state.errors
+            var errors = state.clearErrors.merging(state.errors) { $1 }
             for device in state.devices {
                 let writeStalled = state.writesStarted[device.id].map { now - $0 > stallNotice } ?? false
                 if writeStalled || stalledTouches.contains(KeepaliveToucher.keepaliveFile(for: device.target).path) {
@@ -206,23 +223,24 @@ public final class LedSyncService: @unchecked Sendable {
 
     /// Coalesced without ever dropping the latest mode, which the Python version could.
     public func requestSync(mode: AgentMode) {
-        let schedule = shared.withLock { state -> Bool in
+        let (schedule, generation) = shared.withLock { state -> (Bool, Int) in
             state.latestMode = mode
-            guard !state.syncScheduled else { return false }
+            guard !state.syncScheduled else { return (false, state.generation) }
             state.syncScheduled = true
-            return true
+            return (true, state.generation)
         }
         if schedule {
-            ioQueue.async { [self] in runScheduledSync() }
+            ioQueue.async { [self] in runScheduledSync(generation: generation) }
         }
     }
 
     /// Unlike `requestSync`, runs even while a preview plays.
     @discardableResult
     public func syncNow(mode: AgentMode) -> [String: LedSyncResult] {
-        ioQueue.sync {
+        let generation = currentGeneration
+        return ioQueue.sync {
             shared.withLock { $0.latestMode = mode }
-            return performSync(mode: mode)
+            return performSync(mode: mode, generation: generation)
         }
     }
 
@@ -234,34 +252,31 @@ public final class LedSyncService: @unchecked Sendable {
             return
         }
         let duration = seconds.isFinite ? min(max(0, seconds), 600) : 3
-        let token = shared.withLock { state -> Int in
+        let (token, generation) = shared.withLock { state -> (Int, Int) in
             state.previewToken += 1
             state.previewUntil = clock() + duration
-            return state.previewToken
+            return (state.previewToken, state.generation)
         }
         ioQueue.async { [self] in
             guard shared.withLock({ $0.previewToken }) == token else { return }
-            writePreview(animationID)
+            writePreview(animationID, generation: generation)
         }
         ioQueue.asyncAfter(deadline: .now() + duration) { [self] in
-            restoreAfterPreview(token: token)
+            restoreAfterPreview(token: token, generation: generation)
         }
     }
 
-    /// `completion` runs on the I/O queue.
-    func writeOnceAsync(program: String, deviceID: String, completion: @escaping @Sendable (Error?) -> Void) {
+    /// Writes `off` only while the device is still Manual and its `LEDS.LED` still holds what SidePulse
+    /// last wrote there, so a program written meanwhile survives; `completion` runs on the I/O queue.
+    func clearManualDevice(deviceID: String, completion: @escaping @Sendable (Result<Bool, Error>) -> Void) {
+        let generation = currentGeneration
         ioQueue.async { [self] in
-            do {
-                try writeOnceOnQueue(program: program, deviceID: deviceID)
-                completion(nil)
-            } catch {
-                completion(error)
-            }
+            completion(Result { try clearOnQueue(deviceID: deviceID, generation: generation) })
         }
     }
 
     public func touchKeepalive(now: Date = Date()) {
-        touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now)
+        touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now, generation: currentGeneration)
     }
 
     @discardableResult
@@ -272,8 +287,13 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     /// Skips writes still blocked in open(), which re-check the settings once it returns.
-    func waitForWrites(timeout: TimeInterval) -> Bool {
-        writesInProgress.wait(timeout: .now() + timeout) == .success
+    func waitForWrites(deviceID: String? = nil, timeout: TimeInterval) -> Bool {
+        let deadline = DispatchTime.now() + timeout
+        let groups = shared.withLock { state -> [DispatchGroup] in
+            guard let deviceID else { return Array(state.writeGroups.values) }
+            return state.writeGroups[deviceID].map { [$0] } ?? []
+        }
+        return groups.allSatisfy { $0.wait(timeout: deadline) == .success }
     }
 
     @discardableResult
@@ -282,6 +302,7 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     func finishPreviewNow() {
+        let generation = currentGeneration
         ioQueue.async { [self] in
             let (active, mode) = shared.withLock { state -> (Bool, AgentMode?) in
                 let active = state.previewUntil != nil
@@ -289,7 +310,26 @@ public final class LedSyncService: @unchecked Sendable {
                 state.previewUntil = nil
                 return (active, state.latestMode)
             }
-            if active, let mode { _ = performSync(mode: mode) }
+            if active, let mode { _ = performSync(mode: mode, generation: generation) }
+        }
+    }
+
+    var currentGeneration: Int { shared.withLock { $0.generation } }
+
+    /// Work queued in `generation`, including a write still blocked in open(), never lands
+    /// afterwards; a keepalive touch already inside open() cannot be recalled.
+    func close(generation: Int) {
+        shared.withLock { state in
+            if state.generation == generation { state.outputOpen = false }
+        }
+    }
+
+    /// A sync still queued from the old generation will skip, so a new one may be scheduled.
+    func reopen() {
+        shared.withLock { state in
+            state.generation += 1
+            state.outputOpen = true
+            state.syncScheduled = false
         }
     }
 
@@ -299,17 +339,22 @@ public final class LedSyncService: @unchecked Sendable {
 
     // MARK: I/O queue
 
-    private func runScheduledSync() {
+    private func isCurrent(_ generation: Int) -> Bool {
+        shared.withLock { $0.outputOpen && $0.generation == generation }
+    }
+
+    private func runScheduledSync(generation: Int) {
         let (mode, previewing) = shared.withLock { state -> (AgentMode?, Bool) in
             state.syncScheduled = false
             return (state.latestMode, state.previewUntil != nil)
         }
         // A playing preview restores the latest mode itself when it ends.
         guard let mode, !previewing else { return }
-        _ = performSync(mode: mode)
+        _ = performSync(mode: mode, generation: generation)
     }
 
-    private func performSync(mode: AgentMode) -> [String: LedSyncResult] {
+    private func performSync(mode: AgentMode, generation: Int) -> [String: LedSyncResult] {
+        guard isCurrent(generation) else { return [:] }
         // Resets are applied here, right before the sync, so a reset never races a write.
         let (devices, resetIDs) = shared.withLock { state -> ([DeviceCandidate], Set<String>) in
             defer {
@@ -320,10 +365,9 @@ public final class LedSyncService: @unchecked Sendable {
         }
         for id in resetIDs { controllers[id] = nil }
         // Forget devices that are gone (their controllers were reset by the poll).
-        if lastDisplay.count > devices.count {
-            let ids = Set(devices.map(\.id))
-            lastDisplay = lastDisplay.filter { ids.contains($0.key) }
-        }
+        let ids = Set(devices.map(\.id))
+        lastDisplay = lastDisplay.filter { ids.contains($0.key) }
+        lastWritten = lastWritten.filter { ids.contains($0.key) }
 
         let settings = settingsProvider()
         let animationID = settings.animationID(for: mode)
@@ -338,10 +382,11 @@ public final class LedSyncService: @unchecked Sendable {
                 record(error: nil, for: device)
                 continue
             }
+            shared.withLock { $0.clearErrors[device.id] = nil }
             let controller = controller(for: device)
             controller.brightness = settings.brightness(forDevice: device.id)
             let result = controller.sync(mode: mode, animationID: animationID) { [self] program in
-                try write(program, to: device, agentOnly: true)
+                try write(program, to: device, display: .agent, generation: generation)
             }
             results[device.id] = result
             if result.changed {
@@ -350,7 +395,7 @@ public final class LedSyncService: @unchecked Sendable {
             }
             record(error: result.error, for: device)
         }
-        touchKeepalive(devices: devices, settings: settings, now: Date())
+        touchKeepalive(devices: devices, settings: settings, now: Date(), generation: generation)
         return results
     }
 
@@ -375,7 +420,8 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    private func writePreview(_ animationID: String) {
+    private func writePreview(_ animationID: String, generation: Int) {
+        guard isCurrent(generation) else { return }
         let settings = settingsProvider()
         for device in connectedDevices where settings.display(forDevice: device.id) == .agent {
             do {
@@ -383,7 +429,7 @@ public final class LedSyncService: @unchecked Sendable {
                                                      brightness: settings.brightness(forDevice: device.id))
                 if dryRun {
                     try LedText.validate(program)
-                } else if try !write(program, to: device, agentOnly: true) {
+                } else if try !write(program, to: device, display: .agent, generation: generation) {
                     continue
                 }
                 log("leds: preview \(animationID) on \(device.displayName) at \(device.target.path)")
@@ -393,59 +439,74 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    private func restoreAfterPreview(token: Int) {
+    private func restoreAfterPreview(token: Int, generation: Int) {
         let (current, mode) = shared.withLock { state -> (Bool, AgentMode?) in
             guard state.previewToken == token else { return (false, nil) }
             state.previewUntil = nil
             return (true, state.latestMode)
         }
         guard current, let mode else { return }
-        _ = performSync(mode: mode)
+        _ = performSync(mode: mode, generation: generation)
     }
 
-    private func writeOnceOnQueue(program: String, deviceID: String) throws {
+    private func clearOnQueue(deviceID: String, generation: Int) throws -> Bool {
+        guard isCurrent(generation) else { return false }
         guard let device = connectedDevices.first(where: { $0.id == deviceID }) else {
             throw LedError.writeFailed("\(deviceID) is not connected.")
         }
-        try LedText.validate(program)
         controllers[deviceID] = nil
+        guard !dryRun, let expected = lastWritten[deviceID] else { return false }
         do {
-            if !dryRun { _ = try write(program, to: device, agentOnly: false) }
-            record(error: nil, for: device)
+            let written = try write("off", to: device, display: .manual, generation: generation, ifHolding: expected)
+            shared.withLock { $0.clearErrors[deviceID] = nil }
+            return written
         } catch {
-            record(error: error.localizedDescription, for: device)
+            shared.withLock { $0.clearErrors[deviceID] = error.localizedDescription }
             throw error
         }
     }
 
-    /// An `agentOnly` write returns false without writing if the device left Agent mode
-    /// while open() was blocked.
-    private func write(_ program: String, to device: DeviceCandidate, agentOnly: Bool) throws -> Bool {
+    /// Returns false without writing if, once open() returns, the device is no longer in
+    /// `display` mode or this work's generation is over (open() can wait on a permission prompt).
+    private func write(_ program: String, to device: DeviceCandidate, display: LedDisplay, generation: Int,
+                       ifHolding expected: String? = nil) throws -> Bool {
+        let group = writeGroup(for: device.id)
         shared.withLock { $0.writesStarted[device.id] = clock() }
         var entered = false
         defer {
-            if entered { writesInProgress.leave() }
+            if entered { group.leave() }
             shared.withLock { $0.writesStarted[device.id] = nil }
         }
         do {
-            return try LedWriter.write(program, to: device.target) {
+            let written = try writeFile(program, device.target, expected) {
                 // Entered before the check: a settings change made before
                 // `waitForWrites` is either seen here or waited for there.
-                writesInProgress.enter()
+                group.enter()
                 entered = true
-                guard agentOnly else { return true }
-                let settings = settingsProvider()
-                return settings.display(forDevice: device.id) == .agent
+                return isCurrent(generation) && settingsProvider().display(forDevice: device.id) == display
             }
-        } catch LedError.accessDenied {
+            if written { lastWritten[device.id] = program }
+            return written
+        } catch LedError.accessDenied(let detail) {
+            let shown = shared.withLock { $0.errors[device.id] ?? $0.clearErrors[device.id] }
+            if shown != Self.accessDeniedMessage { log("leds: \(device.displayName) (\(device.root.path)): \(detail)") }
             throw LedError.writeFailed(Self.accessDeniedMessage)
         }
     }
 
-    private func touchKeepalive(devices: [DeviceCandidate], settings: SidePulseSettings, now: Date) {
+    private func writeGroup(for id: String) -> DispatchGroup {
+        shared.withLock { state in
+            if let group = state.writeGroups[id] { return group }
+            let group = DispatchGroup()
+            state.writeGroups[id] = group
+            return group
+        }
+    }
+
+    private func touchKeepalive(devices: [DeviceCandidate], settings: SidePulseSettings, now: Date, generation: Int) {
         // Only the MacBook SD reader powers down an idle card: Dots (USB) are skipped.
         let targets = devices.filter { $0.ledCount == 8 }.map(\.target)
-        guard !dryRun, !targets.isEmpty else { return }
+        guard !dryRun, !targets.isEmpty, isCurrent(generation) else { return }
         keepalive.poke(targets: targets, now: now)
         let error = keepalive.lastError
         let previous = shared.withLock { state -> String? in

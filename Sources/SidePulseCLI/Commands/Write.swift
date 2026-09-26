@@ -89,15 +89,31 @@ enum WriteCommand: CLICommand {
         target.deletingLastPathComponent().standardized.path
     }
 
-    /// Skips unmounted volumes because the write is about to fail and a Manual entry would leave a
-    /// phantom device in settings.
+    /// Settings match device ids exactly, so a typed path is matched to the device the app discovers.
+    static func discoveredDevice(forTarget target: URL, env: CLIEnvironment) -> DeviceCandidate? {
+        let volume = URL(fileURLWithPath: deviceID(forTarget: target), isDirectory: true)
+        guard ProviderSelection.directoryExists(volume) else { return nil }
+        return DeviceDiscovery.candidate(forVolume: volume, among: DeviceDiscovery.discover(roots: env.mountRoots))
+    }
+
+    /// Skips unmounted volumes because the write is about to fail, and never saves Manual for a
+    /// volume that is not a discovered device, which would leave a phantom device in settings.
     static func coordinateWithApp(target: URL, manual: Bool, dryRun: Bool, env: CLIEnvironment,
-                                  volumeExists: (String) -> Bool = { ProviderSelection.directoryExists(URL(fileURLWithPath: $0)) }) {
-        let id = deviceID(forTarget: target)
-        guard volumeExists(id) else { return }
+                                  volumeExists: (String) -> Bool = { ProviderSelection.directoryExists(URL(fileURLWithPath: $0)) },
+                                  resolveDevice: ((URL) -> DeviceCandidate?)? = nil) {
+        let volume = deviceID(forTarget: target)
+        guard volumeExists(volume) else { return }
+        guard let device = resolveDevice.map({ $0(target) }) ?? discoveredDevice(forTarget: target, env: env) else {
+            if manual {
+                env.stderr.line("\(prefix): warning: --manual ignored: \(volume) is not a SidePulse device the app "
+                    + "drives, so nothing was switched to Manual.")
+            }
+            return
+        }
+        let id = device.id
         let store = SettingsStore(url: env.paths.settingsFile)
         guard store.load().display(forDevice: id) == .agent else { return }
-        let name = DeviceDiscovery.displayName(forVolumeName: URL(fileURLWithPath: id).lastPathComponent)
+        let name = device.displayName
 
         guard manual else {
             if env.app.isRunning() {
@@ -116,9 +132,9 @@ enum WriteCommand: CLICommand {
             env.stderr.line("\(prefix): could not switch \(name) to Manual: \(ErrorText.describe(error))")
             return
         }
-        // The app waits up to 2 s for an LED write started with the old settings, so allow 3 s for
-        // the reload.
-        let reply = env.app.request("reload-settings", JSONObject(), 3)
+        // The app waits up to 2 s for an LED write to this device started with the old settings, so
+        // allow 3 s for the reload.
+        let reply = env.app.request("reload-settings", ["device": .string(id)], 3)
         env.stdout.line("Set \(name) (\(id)) to Manual: SidePulse will not overwrite it "
             + "(switch back under Devices in the menu bar).")
         if !AppConnection.isOK(reply), reply != nil || env.app.isRunning() {

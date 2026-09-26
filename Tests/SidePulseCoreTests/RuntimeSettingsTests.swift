@@ -95,10 +95,15 @@ final class RuntimeSettingsTests: XCTestCase {
     /// showed nothing, and after `sidepulse write --manual` it landed on the
     /// Manual device once the prompt was answered.
     func testWriteWaitingForPermissionShowsAndNeverOverwritesADeviceMadeManual() throws {
-        world.addDevice("PulseDot", content: nil)
-        XCTAssertEqual(mkfifo(world.target("PulseDot").path, 0o644), 0) // open() blocks until a reader comes
+        world.addDevice("PulseDot")
         let dot = world.deviceID("PulseDot")
-        let runtime = try world.startRuntime()
+        let gate = LedWriteGate()
+        gate.arm(.inOpen)
+        defer { gate.release() }
+        var options = world.options()
+        options.ledWriter = gate.writer
+        let runtime = try world.startRuntime(options)
+        XCTAssertTrue(gate.waitForHeldWrite())
         let updates = RuntimeInbox<Bool>()
         runtime.onUpdate = { _ in updates.append(true) }
 
@@ -116,13 +121,10 @@ final class RuntimeSettingsTests: XCTestCase {
         runtimeSpin(0.2)
         let notified = updates.count
 
-        // Opening a reader stands in for answering the prompt.
-        let reader = open(world.target("PulseDot").path, O_RDONLY | O_NONBLOCK)
-        XCTAssertGreaterThanOrEqual(reader, 0)
-        defer { close(reader) }
+        // Releasing the gate stands in for answering the prompt.
+        gate.release()
         runtime.waitUntilIdle()
-        var buffer = [UInt8](repeating: 0, count: 1024)
-        XCTAssertEqual(read(reader, &buffer, buffer.count), 0, "nothing written to the Manual device")
+        XCTAssertEqual(world.program("PulseDot"), "boot", "nothing written to the Manual device")
         XCTAssertTrue(runtimeWait { runtime.deviceInfos().first?.lastError == nil })
         XCTAssertTrue(runtimeWait { updates.count > notified }, "the notice going away refreshes the menu too")
     }
@@ -130,40 +132,109 @@ final class RuntimeSettingsTests: XCTestCase {
     /// Regression: reload-settings replied ok while a write that had passed its settings check was still
     /// writing, so it landed on top of `sidepulse write --manual`'s program.
     func testReloadSettingsReportsAWriteThatIsStillWriting() throws {
-        world.addDevice("PulseDot", content: nil)
-        let target = world.target("PulseDot").path
-        XCTAssertEqual(mkfifo(target, 0o644), 0)
-        // A reader that does not read and a full pipe: the app's open() returns and
-        // its write() blocks, like a card that stops answering mid-write.
-        let reader = open(target, O_RDONLY | O_NONBLOCK)
-        let filler = open(target, O_WRONLY | O_NONBLOCK)
-        XCTAssertGreaterThanOrEqual(reader, 0)
-        XCTAssertGreaterThanOrEqual(filler, 0)
-        var chunk = [UInt8](repeating: 0x20, count: 1024)
-        while write(filler, &chunk, chunk.count) > 0 {}
+        world.addDevice("PulseDot")
         let dot = world.deviceID("PulseDot")
-        let runtime = try world.startRuntime()
-        func drain() -> Bool {
-            var buffer = [UInt8](repeating: 0, count: 16_384)
-            return runtimeWait {
-                _ = read(reader, &buffer, buffer.count)
-                return runtime.leds.waitForWrites(timeout: 0)
-            }
-        }
-        // The blocked write must finish before the reader goes away (SIGPIPE).
-        defer { _ = drain(); close(filler); close(reader) }
-        XCTAssertTrue(runtimeWait { !runtime.leds.waitForWrites(timeout: 0) }, "the write passed its check")
+        let gate = LedWriteGate()
+        gate.arm(.afterCheck)
+        defer { gate.release() }
+        var options = world.options()
+        options.ledWriter = gate.writer
+        let runtime = try world.startRuntime(options)
+        XCTAssertTrue(gate.waitForHeldWrite(), "the write passed its check")
 
         world.updateSettings { $0.setDisplay(.manual, forDevice: dot, name: "SidePulse Dot", path: dot) }
-        let asked = Date()
-        let reply = try JSONValue.parse(XCTUnwrap(world.request("reload-settings")))
-        XCTAssertEqual(reply["ok"], .bool(false))
-        XCTAssertEqual(reply["error"]?.stringValue, "LED write in progress")
-        XCTAssertGreaterThan(Date().timeIntervalSince(asked), 1.5, "waited for the write first")
+        for args: JSONObject in [[:], ["device": .string(dot)]] {
+            let asked = Date()
+            let reply = try JSONValue.parse(XCTUnwrap(world.request("reload-settings", args)))
+            XCTAssertEqual(reply["ok"], .bool(false))
+            XCTAssertEqual(reply["error"]?.stringValue, "LED write in progress")
+            XCTAssertGreaterThan(Date().timeIntervalSince(asked), 1.5, "waited for the write first")
+        }
 
-        XCTAssertTrue(drain())
+        gate.release()
         runtime.waitUntilIdle()
         XCTAssertEqual(world.requestText("reload-settings"), "ok")
+        XCTAssertEqual(world.requestText("reload-settings", ["device": .string(dot)]), "ok")
+    }
+
+    /// Regression: a slow write to one device made `write --manual` for another warn that the app was
+    /// still writing to it, and held hook delivery for 2 s.
+    func testReloadSettingsForOneDeviceIgnoresAWriteToAnother() throws {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        let pro = world.deviceID("SidePulsePro")
+        let gate = LedWriteGate()
+        gate.arm(.afterCheck)
+        defer { gate.release() }
+        var options = world.options()
+        options.ledWriter = gate.writer
+        let runtime = try world.startRuntime(options)
+        // Devices are synced in name order, so the Dot's write is the one held.
+        XCTAssertTrue(gate.waitForHeldWrite())
+
+        world.updateSettings { $0.setDisplay(.manual, forDevice: pro, name: "SidePulse Pro", path: pro) }
+        let asked = Date()
+        XCTAssertEqual(world.requestText("reload-settings", ["device": .string(pro)]), "ok")
+        XCTAssertLessThan(Date().timeIntervalSince(asked), 1)
+        XCTAssertEqual(runtime.settings.display(forDevice: pro), .manual)
+
+        gate.release()
+        runtime.waitUntilIdle()
+        XCTAssertEqual(world.program("SidePulsePro"), "boot", "the Pro became Manual before its write")
+    }
+
+    /// Regression: the Manual clear was queued behind a write stuck on the permission prompt and then
+    /// overwrote the program `sidepulse write` had put there meanwhile.
+    func testManualClearNeverOverwritesAProgramWrittenWhileItWaited() throws {
+        world.addDevice("PulseDot")
+        let dot = world.deviceID("PulseDot")
+        let gate = LedWriteGate()
+        defer { gate.release() }
+        var options = world.options()
+        options.ledWriter = gate.writer
+        let runtime = try world.startRuntime(options)
+        waitForProgram("PulseDot", RuntimePrograms.expected(.idleReady, ledCount: 2))
+        runtime.waitUntilIdle()
+
+        gate.arm(.inOpen)
+        runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
+        XCTAssertTrue(gate.waitForHeldWrite())
+        runtime.setDeviceDisplay(.manual, deviceID: dot)
+        XCTAssertTrue(runtimeWait { self.world.settingsStore.load().display(forDevice: dot) == .manual })
+        world.overwrite("PulseDot", with: "#FF00FF pulse")
+
+        gate.release()
+        runtime.waitUntilIdle()
+        XCTAssertEqual(world.program("PulseDot"), "#FF00FF pulse")
+    }
+
+    /// Regression: the next sync cleared the error of every non-Agent device, so a failed Manual clear
+    /// never showed.
+    func testFailedManualClearStaysVisibleUntilTheDeviceIsSyncedAgain() throws {
+        world.addDevice("PulseDot")
+        let dot = world.deviceID("PulseDot")
+        let target = world.target("PulseDot").path
+        let runtime = try world.startRuntime()
+        runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
+        let working = RuntimePrograms.expected(.working, ledCount: 2)
+        waitForProgram("PulseDot", working)
+        runtime.waitUntilIdle()
+
+        chmod(target, 0o444)
+        defer { chmod(target, 0o644) }
+        runtime.setDeviceDisplay(.manual, deviceID: dot)
+        runtime.waitUntilIdle()
+        let error = "Could not open \(target): Permission denied"
+        XCTAssertEqual(runtime.deviceInfos().first?.lastError, error)
+        runtime.refresh()
+        runtime.waitUntilIdle()
+        XCTAssertEqual(runtime.deviceInfos().first?.lastError, error, "a Manual sync keeps it")
+        XCTAssertEqual(world.program("PulseDot"), working)
+
+        chmod(target, 0o644)
+        runtime.setDeviceDisplay(.agent, deviceID: dot)
+        runtime.waitUntilIdle()
+        XCTAssertNil(runtime.deviceInfos().first?.lastError)
     }
 
     // MARK: Brightness and LED output

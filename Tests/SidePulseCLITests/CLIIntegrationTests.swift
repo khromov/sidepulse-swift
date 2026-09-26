@@ -88,6 +88,7 @@ final class CLIIntegrationTests: XCTestCase {
 
     func testWriteExplicitDeviceAndStdin() throws {
         let h = makeHarness()
+        useTempMounts(h)
         let volume = h.root.appendingPathComponent("elsewhere/SidePulseDot", isDirectory: true)
         try FileManager.default.createDirectory(at: volume, withIntermediateDirectories: true)
         h.env.stdin = .data(Data("#00FF66 320ms cosine\\nrepeat".utf8))
@@ -95,6 +96,7 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(read(volume.appendingPathComponent("LEDS.LED")), "#00FF66 320ms cosine\nrepeat")
 
         let custom = makeHarness()
+        useTempMounts(custom)
         XCTAssertEqual(custom.run(["write", "off", "--device", volume.path, "--file-name", "TEST.LED"]), 0)
         XCTAssertEqual(read(volume.appendingPathComponent("TEST.LED")), "off")
     }
@@ -389,6 +391,7 @@ final class CLIIntegrationTests: XCTestCase {
 
     func testLedsOnceWithExplicitDevice() throws {
         let h = makeHarness()
+        useTempMounts(h)
         let volume = try makeDevice(h)
         let target = volume.appendingPathComponent("LEDS.LED")
         try writeLog(h, provider: "claude", records: [record("UserPromptSubmit", session: "s1", secondsAgo: 5)])
@@ -401,8 +404,17 @@ final class CLIIntegrationTests: XCTestCase {
         try SettingsStore(url: h.paths.settingsFile).update {
             $0.setBrightness(128, forDevice: volume.path)
         }
+        // The brightness is looked up under the discovered device, whatever path was typed.
+        let linked = makeHarness(["SIDEPULSE_MOUNT_ROOTS": volume.deletingLastPathComponent().path])
+        linked.env.paths = h.paths
+        let link = h.root.appendingPathComponent("dot-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: volume)
+        XCTAssertEqual(linked.run(["leds", "--once", "--device", link.path]), 0, linked.stdout.text)
+        XCTAssertTrue(read(target)?.hasPrefix("brightness 128\n") == true, read(target) ?? "nil")
+
         let write = makeHarness()
         write.env.paths = h.paths
+        useTempMounts(write)
         XCTAssertEqual(write.run(["leds", "--once", "--device", volume.path]), 0, write.stdout.text)
         XCTAssertEqual(write.stdout.text, "LEDs: wrote Working to \(target.path) (aggregate=Working, active=1)\n")
         let expected = try LedProgram.program(animationID: SidePulseSettings().animationID(for: .working), ledCount: 2,

@@ -152,15 +152,20 @@ sidepulse doctor        # hooks, app, socket and CLI path check
 Programs are limited to 512 bytes and 20 lines, the controller's limits.
 Without `--device`, `write` auto-discovers the SidePulse volume in `/Volumes`.
 A volume counts if it contains `LEDS.LED` or its name matches SidePulse Pro,
-SidePulse Dot or PulseDot. If several are mounted, pass `--device`.
+SidePulse Dot or PulseDot. If several are mounted, pass `--device`. A
+`LEDS.LED` that is a symlink, FIFO or folder is refused, even with `--device`,
+so a crafted volume cannot redirect the write to another file.
 
 The app shows agent status on every device in Agent mode, so it overwrites a
 manual write at its next update. Pass `--manual` to switch that device to
 Manual first. The device then stays yours until you switch it back under
-**Devices** in the menu. With the app running, `--manual` asks it to reload its
-settings and waits up to 3 s for the reply. If the app is still writing to the
-device, `write` prints a warning that the app may overwrite the program, then
-writes anyway.
+**Devices** in the menu. `--manual` finds the device the way the app does and
+matches it by the volume itself, so a differently cased or symlinked `--device`
+path still switches the right device. A path that is not a discovered device
+gets a warning, and nothing is switched. With the app running, `--manual` asks
+it to reload its settings and waits up to 3 s for the reply. If the app is
+still writing to that device, `write` prints a warning that the app may
+overwrite the program, then writes anyway.
 
 ## CLI reference
 
@@ -206,9 +211,11 @@ argument is given.
 - `--device PATH`: device volume or its `LEDS.LED` (default: auto-discover).
 - `--file-name NAME`: file to write on the volume (default `LEDS.LED`).
 - `--dry-run`: validate and print the program without writing.
-- `--manual`: switch the device to Manual so the app leaves it alone. A running
-  app is asked to reload its settings (up to 3 s); if it is still writing to
-  the device, a warning is printed and the write goes ahead.
+- `--manual`: switch the device to Manual so the app leaves it alone. The
+  device is matched by its volume, not by the path as typed; a path that is not
+  a discovered device prints a warning and switches nothing. A running app is
+  asked to reload its settings (up to 3 s); if it is still writing to the
+  device, a warning is printed and the write goes ahead.
 
 **`sidepulse leds [--once] [--dry-run] [--device PATH] [--interval SECONDS]`**
 Without `--once`, runs the SidePulse runtime in the foreground until Ctrl-C.
@@ -446,25 +453,34 @@ Animations that depend on the LED layout have separate 2-LED and 8-LED
 variants.
 
 - **Devices.** The app polls `/Volumes` every 2 seconds, so devices can be
-  plugged in and out at any time. Network filesystems mounted under `/Volumes`
-  are skipped without being accessed. Dot and PulseDot volume names get the
-  2-LED programs, and everything else gets the 8-LED ones. The app touches
+  plugged in and out at any time. Only local FAT (`msdos`) and exFAT volumes
+  count: other mounts under `/Volumes`, such as network shares and disk
+  images, are skipped without being accessed. A `LEDS.LED` or `keepalive` that
+  is not a regular file (a symlink, FIFO or folder) is never written. Dot and
+  PulseDot volume names get the 2-LED programs, and everything else gets the
+  8-LED ones. The app touches
   `keepalive` on each connected 8-LED volume (SidePulse Pro, including Manual
   ones) at most once a minute, which stops the MacBook SD reader from powering
   it off. Dots (USB) are never touched. A device that has
   never been seen before starts in Agent mode.
 - **Manual mode.** In Manual mode, SidePulse never writes `LEDS.LED` on that
   device (a Pro still gets keepalive touches). Switching a connected device to
-  Manual writes `off` once. `sidepulse write --manual` switches a device to
-  Manual from the CLI.
+  Manual writes `off` once, but only while `LEDS.LED` still holds the program
+  SidePulse last wrote there: a program written in the meantime is kept, and a
+  device SidePulse has not written to since it started is left as it is. If
+  that `off` fails, the error stays on the device until it is synced in Agent
+  mode again. `sidepulse write --manual` switches a device to Manual from the
+  CLI.
 - **Permission.** A device whose write or keepalive touch has been stuck for
   over 2 s, normally on the macOS removable-volume prompt, shows
   `Error: Waiting for macOS permission to access this device — check for a
-  system prompt`. If macOS refuses to open `LEDS.LED`, it shows
-  `Error: macOS denied access. Allow SidePulse in System Settings › Privacy &
-  Security › Files and Folders (Removable Volumes)`. The Settings window's
-  Devices tab shows the same text. A write that was waiting is skipped if the
-  device became Manual in the meantime.
+  system prompt`. If macOS refuses to open `LEDS.LED` (`Operation not
+  permitted`), it shows `Error: macOS denied access. Allow SidePulse in System
+  Settings › Privacy & Security › Files and Folders (Removable Volumes)`, and
+  the original error goes to `app.log`. A read-only `LEDS.LED` shows `Could not
+  open <path>: Permission denied` instead, and a Finder-locked one `<path> is
+  locked`. The Settings window's Devices tab shows the same text. A write that
+  was waiting is skipped if the device became Manual in the meantime.
 - **Brightness.** Each device has its own brightness, 0 to 255 (shown as a
   percentage). Below full brightness it adds a `brightness N` line in front of
   the animation; the built-in animations never set their own.
@@ -475,7 +491,8 @@ variants.
   for it:
   - **Always**: while the app runs.
   - **When Agents Work**: while any agent is Working, Tool Running or Long Task
-    Progress, plus 5 minutes after a Completed, Ask or Blocked state.
+    Progress, even if another one waits or is blocked, plus 5 minutes after a
+    Completed, Ask or Blocked state.
   - **Never**: off.
   - **Low-battery safeguard**: on battery below the threshold (default 20 %),
     the Mac is always allowed to sleep.
@@ -703,7 +720,9 @@ same runtime without UI. The runtime does the following, per
   `LEDS.LED` no longer holds the last program.
 - **Settings.** It re-reads `settings.json` on a `reload-settings` socket
   command and on every 15 s refresh.
-- **Stop.** It flushes `latest.json` and releases the keep-awake assertion. The
+- **Stop.** It flushes `latest.json` and releases the keep-awake assertion. It
+  waits up to 2 s for queued LED writes, then drops any that are still queued
+  or waiting on the permission prompt, so no LED write lands after it. The
   LEDs keep their last program.
 
 The socket answers `ping`, `status`, `open-settings` and `reload-settings`, all
@@ -712,7 +731,8 @@ used by the CLI. `ping` replies
 from `sidepulse run`/`leds`; a reply without `kind` (older builds) counts as the
 app. `reload-settings` replies
 `{"ok":false,"error":"LED write in progress"}` if a write that started with the
-old settings is still running after 2 s. When the app is not running,
+old settings is still running after 2 s. `sidepulse write --manual` names its
+device, so only a write to that device counts. When the app is not running,
 `sidepulse status` rebuilds the status from the logs.
 
 ## Known limitations

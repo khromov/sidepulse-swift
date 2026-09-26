@@ -192,6 +192,23 @@ final class LaunchAgentManagerTests: XCTestCase {
         XCTAssertThrowsError(try manager.stop())
     }
 
+    /// Regression: bootstrap() took the old job, still loaded after an ineffective bootout, for
+    /// success, so the rewritten plist never loaded and the old binary kept running.
+    func testInstallFailsWhenTheOldJobNeverUnloads() throws {
+        let box = try HookInstallSandbox()
+        let fake = LaunchAgentFakeLaunchd()
+        var manager = LaunchAgentManager(paths: box.paths, runner: fake.runner)
+        manager.unloadTimeout = 0.2
+        try manager.install(programArguments: ["/bin/app"], start: true)
+        fake.bootoutIsIneffective = true
+        XCTAssertThrowsError(try manager.install(programArguments: ["/bin/app2"], start: true)) { error in
+            XCTAssertEqual(error as? LaunchAgentError,
+                           LaunchAgentError("io.sidepulse.swift is still loaded after bootout; the new plist applies at next login"))
+        }
+        XCTAssertEqual(manager.installedProgramArguments(), ["/bin/app2"], "the plist itself is written")
+        XCTAssertEqual(fake.verbs().filter { $0 == "bootstrap" }.count, 1)
+    }
+
     func testParsePID() {
         XCTAssertEqual(LaunchAgentManager.parsePID("gui/501/x = {\n\tstate = running\n\n\tpid = 4242\n\timmediate reason = x\n}"), 4242)
         XCTAssertNil(LaunchAgentManager.parsePID("gui/501/x = {\n\tstate = not running\n}"))

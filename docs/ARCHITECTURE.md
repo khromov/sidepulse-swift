@@ -94,9 +94,10 @@ hook's `PreToolUse` is not applied after its `PostToolUse`. The socket commands
 are `ping`, `status`, `open-settings` and `reload-settings`. `ping` answers
 `{"ok","pid","version","kind"}`: `kind` is `headless` when the runtime has no
 `onOpenSettings` handler (`sidepulse run`/`leds`), else `app`, and the CLI reads
-a missing `kind` as `app`. `reload-settings` waits up to 2 s for an
-LED write that started with the old settings; if it is still running, the reply
-is `{"ok":false,"error":"LED write in progress"}`.
+a missing `kind` as `app`. `reload-settings` takes an optional `device` id (the
+CLI sends it; without one, every device counts) and waits up to 2 s for an LED
+write to that device that already passed its settings check; if it is still
+running, the reply is `{"ok":false,"error":"LED write in progress"}`.
 
 ## Runtime threading
 
@@ -126,9 +127,13 @@ serial state queue. Callers rely on these rules:
   The only controller reset, for a hot-plugged volume, is applied on the I/O
   queue right before the next sync.
   Normal syncs wait while a preview plays.
-- `stop()` ends a playing preview and waits (bounded) for queued LED writes and
-  keepalive touches, so nothing is written after it returns. The LEDs keep
-  their last program.
+- `stop()` ends a playing preview and waits (bounded, 2 s) for queued LED
+  writes, then closes `LedSyncService`'s current generation, and waits (1 s)
+  for keepalive touches. LED work captures its generation when queued and
+  re-checks it before writing and after `open()`, so a write still queued or
+  stuck in `open()` is dropped and no LED write lands after `stop()` returns;
+  only a keepalive touch already inside `open()` cannot be recalled. `start()`
+  opens a new generation. The LEDs keep their last program.
 
 ## Paths
 
@@ -233,10 +238,22 @@ fast.
   install.
 - `LEDS.LED` is the exception: it is written in place (`LedWriter`), and is
   truncated only after the caller re-checks, once `open()` returns, that it
-  still wants the write. The runtime checks there that the device is still in
-  Agent mode with LED output on, because `open()` can wait on the macOS
-  removable-volume prompt. An `open()` refused with EPERM/EACCES throws
-  `LedError.accessDenied`, shown on the device as a permission notice.
+  still wants the write, because `open()` can wait on the macOS
+  removable-volume prompt. The runtime checks there that its generation is
+  still open and that the device is still in the mode the write was made for:
+  Agent for syncs and previews, Manual for the one-time `off` clear. The clear
+  also goes ahead only if the file still holds exactly what the app last wrote
+  to that device, so it never overwrites a program written meanwhile.
+- `LedWriter` (the write and the read-back) and the keepalive touch open with
+  `O_NOFOLLOW | O_NONBLOCK` and accept only a regular file, so a symlink or
+  FIFO planted on a volume can neither redirect nor block them. Discovery
+  examines a mount point under a root only if it is a local `msdos` or `exfat`
+  volume, and counts a `LEDS.LED` only if it is a regular file. Only an `open()` refused with EPERM
+  (and not a Finder-locked file) throws `LedError.accessDenied`, shown on the
+  device as the privacy notice; EACCES is a plain write error.
+- Writes from separate processes (the app and `sidepulse write`) are not locked
+  against each other, so their truncate-then-write can interleave; Agent mode's
+  read-back rewrites a garbled file at the next sync.
 - The diagnostics log (`DiagnosticsLog`, `app.log`) uses plain POSIX writes.
 - Writes to third-party configs make a backup (`<file>.bak.<stamp>`) when they
   change an existing file. The OpenCode plugin is SidePulse's own file: install

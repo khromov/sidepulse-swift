@@ -43,38 +43,24 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
     }
 
     private func makeService(dryRun: Bool = false, keepalive: KeepaliveToucher = KeepaliveToucher(),
+                             writer: @escaping LedSyncService.FileWriter = LedSyncService.fileWriter,
                              stallNotice: TimeInterval = 2) -> LedSyncService {
         let box = self.box!
         let logs = self.logs!
         return LedSyncService(settings: { box.value }, roots: [world.mounts], dryRun: dryRun,
-                              log: { logs.append($0) }, keepalive: keepalive, stallNotice: stallNotice)
+                              log: { logs.append($0) }, keepalive: keepalive, writeFile: writer, stallNotice: stallNotice)
     }
 
-    private func writeOnce(_ service: LedSyncService, _ program: String, to deviceID: String) throws {
-        let failure = RuntimeInbox<Error?>()
-        service.writeOnceAsync(program: program, deviceID: deviceID) { failure.append($0) }
+    /// Returns whether the Manual clear wrote.
+    private func clear(_ service: LedSyncService, _ deviceID: String) throws -> Bool {
+        let outcome = RuntimeInbox<Result<Bool, Error>>()
+        service.clearManualDevice(deviceID: deviceID) { outcome.append($0) }
         XCTAssertTrue(service.waitUntilIdle())
-        if let error = failure.items.first ?? nil { throw error }
+        return try XCTUnwrap(outcome.items.first).get()
     }
 
     private func deviceInfos(_ service: LedSyncService) -> [DeviceInfo] {
         service.deviceInfos(settings: box.value)
-    }
-
-    /// A FIFO's open() blocks until a reader shows up, like open() waiting on the macOS permission prompt.
-    private func makeBlockingTarget(_ name: String) {
-        world.addDevice(name, content: nil)
-        XCTAssertEqual(mkfifo(world.target(name).path, 0o644), 0)
-    }
-
-    private func unblock(_ name: String, _ service: LedSyncService) -> String {
-        let fd = open(world.target(name).path, O_RDONLY | O_NONBLOCK)
-        XCTAssertGreaterThanOrEqual(fd, 0)
-        defer { close(fd) }
-        XCTAssertTrue(service.waitUntilIdle())
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let count = read(fd, &buffer, buffer.count)
-        return String(decoding: buffer.prefix(max(0, count)), as: UTF8.self)
     }
 
     // MARK: syncNow
@@ -134,7 +120,9 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         let result = service.syncNow(mode: .working)[world.deviceID("PulseDot")]
         XCTAssertEqual(result?.changed, true)
         XCTAssertEqual(result?.program, RuntimePrograms.expected(.working, ledCount: 2))
-        XCTAssertNoThrow(try writeOnce(service, "off", to: world.deviceID("PulseDot")))
+        box.update { $0.setDisplay(.manual, forDevice: world.deviceID("PulseDot")) }
+        XCTAssertEqual(try clear(service, world.deviceID("PulseDot")), false)
+        box.update { $0.setDisplay(.agent, forDevice: world.deviceID("PulseDot")) }
         service.preview(animationID: "kitt", seconds: 0)
         service.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), "boot")
@@ -305,12 +293,26 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.syncNow(mode: .working)
         XCTAssertEqual(logs.items.filter { $0.hasPrefix("leds: error") }.count, 1, "\(logs.items)")
 
-        XCTAssertThrowsError(try writeOnce(service, "off", to: "/nope"))
-        XCTAssertThrowsError(try writeOnce(service, "", to: world.deviceID("PulseDot")))
+        XCTAssertThrowsError(try clear(service, "/nope"))
     }
 
     /// Regression: a denied macOS permission showed only a raw EPERM.
-    func testRefusedOpenNamesTheMacOSPrivacySetting() throws {
+    func testRefusedOpenNamesTheMacOSPrivacySettingAndLogsTheOriginalError() throws {
+        world.addDevice("PulseDot")
+        let refusal = "Could not open \(world.target("PulseDot").path): Operation not permitted"
+        let service = makeService(writer: { _, _, _, _ in throw LedError.accessDenied(refusal) })
+        service.pollDevices()
+
+        let result = service.syncNow(mode: .working)[world.deviceID("PulseDot")]
+        XCTAssertEqual(result?.error, LedSyncService.accessDeniedMessage)
+        XCTAssertEqual(deviceInfos(service).first?.lastError, LedSyncService.accessDeniedMessage)
+        service.syncNow(mode: .completed)
+        XCTAssertEqual(logs.items.filter { $0.hasSuffix(refusal) }.count, 1, "\(logs.items)")
+        XCTAssertEqual(world.program("PulseDot"), "boot")
+    }
+
+    /// Regression: a plain EACCES (a read-only file) also sent the user to the Privacy settings.
+    func testReadOnlyFileIsAPlainWriteError() throws {
         world.addDevice("PulseDot")
         chmod(world.target("PulseDot").path, 0o444)
         defer { chmod(world.target("PulseDot").path, 0o644) }
@@ -318,24 +320,24 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.pollDevices()
 
         let result = service.syncNow(mode: .working)[world.deviceID("PulseDot")]
-        XCTAssertEqual(result?.error, LedSyncService.accessDeniedMessage)
-        XCTAssertEqual(deviceInfos(service).first?.lastError, LedSyncService.accessDeniedMessage)
-        XCTAssertThrowsError(try writeOnce(service, "off", to: world.deviceID("PulseDot"))) { error in
-            XCTAssertEqual(error.localizedDescription, LedSyncService.accessDeniedMessage)
-        }
+        XCTAssertEqual(result?.error, "Could not open \(world.target("PulseDot").path): Permission denied")
+        XCTAssertEqual(deviceInfos(service).first?.lastError, result?.error)
         XCTAssertEqual(world.program("PulseDot"), "boot")
     }
 
     /// Regression: while open() waited on the macOS permission prompt nothing
     /// showed, and the stale write then overwrote a device switched to Manual.
     func testWriteWaitingInOpenShowsAsWaitingAndSkipsADeviceThatBecameManual() {
-        makeBlockingTarget("PulseDot")
+        world.addDevice("PulseDot")
         let dot = world.deviceID("PulseDot")
-        let service = makeService(stallNotice: 0.2)
+        let gate = LedWriteGate()
+        let service = makeService(writer: gate.writer, stallNotice: 0.2)
         service.pollDevices()
         XCTAssertFalse(service.checkDeviceStatus())
 
+        gate.arm(.inOpen)
         service.requestSync(mode: .working)
+        XCTAssertTrue(gate.waitForHeldWrite())
         XCTAssertTrue(runtimeWait { self.deviceInfos(service).first?.lastError == LedSyncService.waitingForPermissionMessage })
         XCTAssertTrue(service.checkDeviceStatus(), "the UI is told once")
         XCTAssertFalse(service.checkDeviceStatus())
@@ -344,14 +346,97 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         // A write still blocked in open() is not waited for; it re-checks the settings once open() returns.
         box.update { $0.setDisplay(.manual, forDevice: dot) }
         XCTAssertTrue(service.waitForWrites(timeout: 0.1))
-        XCTAssertEqual(unblock("PulseDot", service), "")
+        gate.release()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), "boot")
         XCTAssertNil(deviceInfos(service).first?.lastError)
         XCTAssertTrue(service.checkDeviceStatus(), "the notice goes away")
 
         // Back to Agent: the declined write was not remembered, so it is written now.
         box.update { $0.setDisplay(.agent, forDevice: dot) }
         service.requestSync(mode: .working)
-        XCTAssertEqual(unblock("PulseDot", service), RuntimePrograms.expected(.working, ledCount: 2))
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
+    }
+
+    /// Regression: `reload-settings` for one device waited for a slow write to any other.
+    func testWaitForWritesOnlyWaitsForTheNamedDevice() {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        let gate = LedWriteGate()
+        let service = makeService(writer: gate.writer)
+        service.pollDevices()
+        gate.arm(.afterCheck)
+        service.requestSync(mode: .working)
+        XCTAssertTrue(gate.waitForHeldWrite())
+        defer { gate.release() }
+
+        // Devices are synced in name order, so the Dot's write is the one held.
+        XCTAssertFalse(service.waitForWrites(deviceID: world.deviceID("PulseDot"), timeout: 0.2))
+        XCTAssertFalse(service.waitForWrites(timeout: 0.2), "no device named: every device")
+        let started = Date()
+        XCTAssertTrue(service.waitForWrites(deviceID: world.deviceID("SidePulsePro"), timeout: 2))
+        XCTAssertTrue(service.waitForWrites(deviceID: "/Volumes/Never Seen", timeout: 2))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5)
+    }
+
+    /// Regression: the Manual clear was written unconditionally, so once a stuck open() returned it
+    /// could overwrite a program the user wrote meanwhile.
+    func testManualClearWritesOffOnlyOverWhatSidePulseLastWrote() throws {
+        world.addDevice("PulseDot")
+        let dot = world.deviceID("PulseDot")
+        let service = makeService()
+        service.pollDevices()
+
+        box.update { $0.setDisplay(.manual, forDevice: dot) }
+        XCTAssertEqual(try clear(service, dot), false, "SidePulse never wrote to it")
+        XCTAssertEqual(world.program("PulseDot"), "boot")
+
+        box.update { $0.setDisplay(.agent, forDevice: dot) }
+        service.syncNow(mode: .working)
+        let working = RuntimePrograms.expected(.working, ledCount: 2)
+        XCTAssertEqual(try clear(service, dot), false, "not Manual")
+        XCTAssertEqual(world.program("PulseDot"), working)
+
+        box.update { $0.setDisplay(.manual, forDevice: dot) }
+        XCTAssertEqual(try clear(service, dot), true)
+        XCTAssertEqual(world.program("PulseDot"), "off")
+
+        box.update { $0.setDisplay(.agent, forDevice: dot) }
+        XCTAssertEqual(service.syncNow(mode: .working)[dot]?.changed, true)
+        XCTAssertEqual(world.program("PulseDot"), working)
+        box.update { $0.setDisplay(.manual, forDevice: dot) }
+        world.overwrite("PulseDot", with: "#FF00FF pulse")
+        XCTAssertEqual(try clear(service, dot), false)
+        XCTAssertEqual(world.program("PulseDot"), "#FF00FF pulse")
+    }
+
+    /// Regression: after a bounded stop() gave up, a write stuck in open() and the syncs queued behind it
+    /// landed once open() returned.
+    func testClosedServiceDropsQueuedAndBlockedWritesUntilReopened() {
+        world.addDevice("PulseDot")
+        let gate = LedWriteGate()
+        let service = makeService(writer: gate.writer)
+        service.pollDevices()
+        service.syncNow(mode: .idleReady)
+        let idle = RuntimePrograms.expected(.idleReady, ledCount: 2)
+
+        gate.arm(.inOpen)
+        service.requestSync(mode: .working)
+        XCTAssertTrue(gate.waitForHeldWrite())
+        service.requestSync(mode: .waitingForInput)
+        service.preview(animationID: "kitt", seconds: 0)
+        service.close(generation: service.currentGeneration)
+        gate.release()
+        XCTAssertTrue(service.waitUntilIdle())
+        runtimeSpin(0.1)
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), idle)
+
+        service.reopen()
+        service.requestSync(mode: .completed)
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
     func testWaitForWritesWaitsForAWriteThatPassedItsCheck() {
@@ -464,14 +549,4 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertFalse(service.isPreviewing)
     }
 
-    func testWriteOnceWritesToAConnectedDevice() throws {
-        world.addDevice("PulseDot")
-        let service = makeService()
-        service.pollDevices()
-        service.syncNow(mode: .working)
-        try writeOnce(service, "off", to: world.deviceID("PulseDot"))
-        XCTAssertEqual(world.program("PulseDot"), "off")
-        // The controller was reset, so the next Agent sync rewrites.
-        XCTAssertEqual(service.syncNow(mode: .working)[world.deviceID("PulseDot")]?.changed, true)
-    }
 }
