@@ -6,7 +6,10 @@ macOS-native CLI and app with support for Claude Code, Codex and OpenCode for Si
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
 
-Under 100MB in memory usage vs >1GB for the official implementation.
+## Features
+
+- Under 100MB in memory usage vs >1GB for the official implementation.
+- 9MB app size
 
 ## Spec
 
@@ -448,12 +451,12 @@ variants.
 - **Permission.** A device whose write or keepalive touch has been stuck for
   over 2 s, normally on the macOS removable-volume prompt, shows
   `Error: Waiting for macOS permission to access this device — check for a
-  system prompt`. If macOS refuses to open `LEDS.LED` (`Operation not
-  permitted`), it shows `Error: macOS denied access. Allow SidePulse in System
-  Settings › Privacy & Security › Files and Folders (Removable Volumes)`, and
+system prompt`. If macOS refuses to open `LEDS.LED` (`Operation not
+permitted`), it shows `Error: macOS denied access. Allow SidePulse in System
+Settings › Privacy & Security › Files and Folders (Removable Volumes)`, and
   the original error goes to `app.log`. A read-only `LEDS.LED` shows `Could not
-  open <path>: Permission denied` instead, and a Finder-locked one `<path> is
-  locked`. The Settings window's Devices tab shows the same text. A write that
+open <path>: Permission denied` instead, and a Finder-locked one `<path> is
+locked`. The Settings window's Devices tab shows the same text. A write that
   was waiting is skipped if the device became Manual in the meantime.
 - **Brightness.** Each device has its own brightness, 0 to 255 (shown as a
   percentage). Below full brightness it adds a `brightness N` line in front of
