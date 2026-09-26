@@ -1,96 +1,12 @@
 import Foundation
 
 public enum TimeFormat {
-    /// Accepts what Python `datetime.fromisoformat` does once a trailing `Z` becomes
-    /// `+00:00`, treating naive times as UTC.
+    private static let fractional = Date.ISO8601FormatStyle(timeZoneSeparator: .colon, includingFractionalSeconds: true)
+    private static let whole = Date.ISO8601FormatStyle(timeZoneSeparator: .colon)
+
+    /// Each style rejects the other's shape, so stamps with and without a fraction need both.
     public static func parse(_ string: String) -> Date? {
-        var s = Array(string.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
-        guard !s.isEmpty else { return nil }
-        if let last = s.last, last == UInt8(ascii: "Z") || last == UInt8(ascii: "z") {
-            s.removeLast()
-            s.append(contentsOf: Array("+00:00".utf8))
-        }
-        var i = 0
-        func digits(_ n: Int) -> Int? {
-            guard i + n <= s.count else { return nil }
-            var v = 0
-            for k in 0..<n {
-                let c = s[i + k]
-                guard c >= 48 && c <= 57 else { return nil }
-                v = v * 10 + Int(c - 48)
-            }
-            i += n
-            return v
-        }
-        func peek(_ c: Character) -> Bool { i < s.count && s[i] == c.asciiValue! }
-        guard let year = digits(4) else { return nil }
-        let month: Int, day: Int
-        if peek("-") {
-            i += 1
-            guard let m = digits(2), peek("-") else { return nil }
-            i += 1
-            guard let d = digits(2) else { return nil }
-            month = m; day = d
-        } else {
-            guard let m = digits(2), let d = digits(2) else { return nil }
-            month = m; day = d
-        }
-        guard (1...12).contains(month), (1...31).contains(day) else { return nil }
-        var hour = 0, minute = 0, second = 0
-        var fraction = 0.0
-        var offsetSeconds = 0
-        if i < s.count {
-            guard peek("T") || peek("t") || peek(" ") else { return nil }
-            i += 1
-            guard let h = digits(2) else { return nil }
-            hour = h
-            if peek(":") { i += 1 }
-            if let m = digits(2) {
-                minute = m
-                if peek(":") { i += 1 }
-                if let sec = digits(2) {
-                    second = sec
-                    if peek(".") || peek(",") {
-                        i += 1
-                        var scale = 0.1
-                        var any = false
-                        while i < s.count, s[i] >= 48, s[i] <= 57 {
-                            fraction += Double(s[i] - 48) * scale
-                            scale /= 10
-                            i += 1
-                            any = true
-                        }
-                        guard any else { return nil }
-                    }
-                }
-            }
-            guard hour <= 24, minute <= 59, second <= 60 else { return nil }
-            if i < s.count {
-                guard peek("+") || peek("-") else { return nil }
-                let sign = peek("-") ? -1 : 1
-                i += 1
-                guard let oh = digits(2) else { return nil }
-                var om = 0, os = 0
-                if peek(":") { i += 1 }
-                if let m = digits(2) {
-                    om = m
-                    if peek(":") { i += 1 }
-                    if let sec = digits(2) { os = sec }
-                }
-                offsetSeconds = sign * (oh * 3600 + om * 60 + os)
-            }
-            guard i == s.count else { return nil }
-        }
-        // days_from_civil (Howard Hinnant)
-        let y = month <= 2 ? year - 1 : year
-        let era = (y >= 0 ? y : y - 399) / 400
-        let yoe = y - era * 400
-        let mp = (month + 9) % 12
-        let doy = (153 * mp + 2) / 5 + day - 1
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-        let days = era * 146097 + doe - 719468
-        let epoch = Double(days * 86400 + hour * 3600 + minute * 60 + second - offsetSeconds) + fraction
-        return Date(timeIntervalSince1970: epoch)
+        (try? fractional.parse(string)) ?? (try? whole.parse(string))
     }
 
     public static func parseOrNow(_ value: JSONValue?, now: Date = Date()) -> Date {
@@ -145,38 +61,14 @@ public enum FileUtil {
     /// Never use this for LEDS.LED, which must be written in place (see LedWriter).
     public static func atomicWrite(_ data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Replace the real file behind any symlink chain so dotfile links survive.
-        let target = try ensureWritable(url)
-        let tmp = target.deletingLastPathComponent()
-            .appendingPathComponent(".\(target.lastPathComponent).tmp.\(getpid()).\(UInt32.random(in: 0...UInt32.max))")
-        let fd = open(tmp.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-        guard fd >= 0 else { throw posixError("open \(tmp.path)") }
-        var ok = false
-        defer { if !ok { unlink(tmp.path) } }
-        var st = stat()
-        if stat(target.path, &st) == 0 { fchmod(fd, st.st_mode & 0o7777) }
-        let written = data.withUnsafeBytes { buf -> Int in
-            guard let base = buf.baseAddress else { return 0 }
-            var off = 0
-            while off < buf.count {
-                let n = Darwin.write(fd, base + off, buf.count - off)
-                if n < 0 { if errno == EINTR { continue }; return -1 }
-                off += n
-            }
-            return off
-        }
-        if written != data.count { close(fd); throw posixError("write \(tmp.path)") }
-        fsync(fd)
-        close(fd)
-        guard rename(tmp.path, target.path) == 0 else { throw posixError("rename \(target.path)") }
-        ok = true
+        try data.write(to: ensureWritable(url), options: .atomic)
     }
 
-    /// Refuses read-only files explicitly because rename(2) would bypass the protection;
+    /// Refuses read-only files explicitly because an atomic replace would bypass the protection;
     /// call it before taking a backup so a refused write leaves nothing behind.
     @discardableResult
     public static func ensureWritable(_ url: URL) throws -> URL {
-        let target = try resolvedWriteTarget(url)
+        let target = writeTarget(url)
         if access(target.path, F_OK) == 0, access(target.path, W_OK) != 0 {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES),
                           userInfo: [NSLocalizedDescriptionKey: "\(target.path) is read-only; make it writable and try again"])
@@ -184,31 +76,20 @@ public enum FileUtil {
         return target
     }
 
-    /// Follows dangling symlinks by hand because they point at the file a write should create.
-    static func resolvedWriteTarget(_ url: URL) throws -> URL {
-        if let real = realpath(url.path, nil) {
-            defer { free(real) }
-            return URL(fileURLWithPath: String(cString: real))
-        }
-        var current = url
-        for _ in 0..<32 {
-            let parent = current.deletingLastPathComponent()
-            guard let realParent = realpath(parent.path, nil) else {
-                // A missing directory means nothing exists to protect or follow yet;
-                // atomicWrite creates it.
-                if errno == ENOENT { return current }
-                throw posixError("resolve \(parent.path)")
-            }
-            let dir = URL(fileURLWithPath: String(cString: realParent), isDirectory: true)
-            free(realParent)
-            let candidate = dir.appendingPathComponent(current.lastPathComponent)
-            guard let link = try? FileManager.default.destinationOfSymbolicLink(atPath: candidate.path) else {
-                return candidate
-            }
-            current = link.hasPrefix("/") ? URL(fileURLWithPath: link) : dir.appendingPathComponent(link)
-        }
-        throw NSError(domain: NSPOSIXErrorDomain, code: Int(ELOOP),
-                      userInfo: [NSLocalizedDescriptionKey: "Too many symlinks resolving \(url.path)"])
+    /// An atomic write replaces a symlink with a regular file, so dotfile links are resolved first;
+    /// a dangling link is followed one hop because it names the file the write should create.
+    static func writeTarget(_ url: URL) -> URL {
+        if let real = realPath(url.path) { return URL(fileURLWithPath: real) }
+        guard let link = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else { return url }
+        // The kernel resolves a relative link from the link's real directory, not the path we were given.
+        let dir = realPath(url.deletingLastPathComponent().path) ?? url.deletingLastPathComponent().path
+        return URL(fileURLWithPath: link, relativeTo: URL(fileURLWithPath: dir, isDirectory: true)).standardizedFileURL
+    }
+
+    private static func realPath(_ path: String) -> String? {
+        guard let real = realpath(path, nil) else { return nil }
+        defer { free(real) }
+        return String(cString: real)
     }
 
     static func posixError(_ what: String) -> NSError {
@@ -233,7 +114,7 @@ public enum FileUtil {
             n += 1
         }
         let dest = URL(fileURLWithPath: candidate)
-        try fm.copyItem(at: url.resolvingSymlinksInPath(), to: dest)
+        try fm.copyItem(at: writeTarget(url), to: dest)
         return dest
     }
 

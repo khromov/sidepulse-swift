@@ -190,7 +190,6 @@ final class FakeKeepAwake: KeepAwakeHolding, @unchecked Sendable {
     var failToHold = false
 
     var isHeld: Bool { lock.lock(); defer { lock.unlock() }; return held }
-    var lastError: String? { lock.lock(); defer { lock.unlock() }; return failToHold ? "spawn failed" : nil }
     var calls: [Bool] { lock.lock(); defer { lock.unlock() }; return requests }
 
     func setHeld(_ value: Bool) {
@@ -205,7 +204,7 @@ final class FakeBattery: @unchecked Sendable {
     private var current: BatteryState
     private var readCount = 0
 
-    init(_ state: BatteryState = BatteryState(present: true, percent: 80, onACPower: true, charging: false)) {
+    init(_ state: BatteryState = BatteryState(present: true, percent: 80, onACPower: true)) {
         current = state
     }
 

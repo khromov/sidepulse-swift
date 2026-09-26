@@ -1,6 +1,5 @@
 import Foundation
 import IOKit.ps
-import IOKit.pwr_mgt
 
 // MARK: - Battery
 
@@ -8,13 +7,12 @@ public struct BatteryState: Sendable, Equatable {
     public var present: Bool
     public var percent: Double?
     public var onACPower: Bool
-    public var charging: Bool
 
-    public init(present: Bool, percent: Double?, onACPower: Bool, charging: Bool) {
-        self.present = present; self.percent = percent; self.onACPower = onACPower; self.charging = charging
+    public init(present: Bool, percent: Double?, onACPower: Bool) {
+        self.present = present; self.percent = percent; self.onACPower = onACPower
     }
 
-    public static let unknown = BatteryState(present: false, percent: nil, onACPower: true, charging: false)
+    public static let unknown = BatteryState(present: false, percent: nil, onACPower: true)
 
     public static func read() -> BatteryState {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return .unknown }
@@ -26,7 +24,7 @@ public struct BatteryState: Sendable, Equatable {
                   let state = from(powerSourceDescription: description, providingAC: providingAC) else { continue }
             return state
         }
-        return BatteryState(present: false, percent: nil, onACPower: providingAC, charging: false)
+        return BatteryState(present: false, percent: nil, onACPower: providingAC)
     }
 
     /// IOPS capacities are normally already percentages, but dividing by the max keeps the value
@@ -40,8 +38,7 @@ public struct BatteryState: Sendable, Equatable {
             percent = min(100, max(0, current * 100 / maximum))
         }
         let onAC = (description[kIOPSPowerSourceStateKey] as? String).map { $0 == kIOPSACPowerValue } ?? providingAC
-        let charging = (description[kIOPSIsChargingKey] as? Bool) ?? false
-        return BatteryState(present: present, percent: present ? percent : nil, onACPower: onAC, charging: charging)
+        return BatteryState(present: present, percent: present ? percent : nil, onACPower: onAC)
     }
 }
 
@@ -102,43 +99,28 @@ public struct KeepAwakePolicy: Sendable {
 public final class KeepAwakeAssertion: @unchecked Sendable {
     public let reason: String
     private let lock = NSLock()
-    private var assertion: IOPMAssertionID?
-    private var error: String?
+    private var activity: NSObjectProtocol?
 
     public init(reason: String = "SidePulse keep awake") {
         self.reason = reason
     }
 
     deinit {
-        if let assertion { IOPMAssertionRelease(assertion) }
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
     }
 
     public var isHeld: Bool {
         lock.lock(); defer { lock.unlock() }
-        return assertion != nil
-    }
-
-    public var lastError: String? {
-        lock.lock(); defer { lock.unlock() }
-        return error
+        return activity != nil
     }
 
     public func setHeld(_ held: Bool) {
         lock.lock(); defer { lock.unlock() }
-        if held {
-            guard assertion == nil else { return }
-            var id = IOPMAssertionID(0)
-            let result = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
-                                                     IOPMAssertionLevel(kIOPMAssertionLevelOn), reason as CFString, &id)
-            if result == kIOReturnSuccess {
-                assertion = id
-                error = nil
-            } else {
-                error = "IOPMAssertionCreateWithName failed (IOReturn \(result))"
-            }
-        } else if let id = assertion {
-            assertion = nil
-            IOPMAssertionRelease(id)
+        if held, activity == nil {
+            activity = ProcessInfo.processInfo.beginActivity(options: .idleSystemSleepDisabled, reason: reason)
+        } else if !held, let current = activity {
+            activity = nil
+            ProcessInfo.processInfo.endActivity(current)
         }
     }
 }

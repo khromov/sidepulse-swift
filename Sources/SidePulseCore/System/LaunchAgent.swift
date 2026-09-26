@@ -49,49 +49,24 @@ public struct LaunchAgentManager: Sendable {
     }
 
     /// KeepAlive with SuccessfulExit false restarts the app after a crash but lets it stay quit after Quit.
-    public func plistContents(programArguments: [String]) -> String {
-        func string(_ s: String) -> String { "<string>\(Self.xmlEscape(s))</string>" }
-        var lines = [
-            #"<?xml version="1.0" encoding="UTF-8"?>"#,
-            #"<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#,
-            #"<plist version="1.0">"#,
-            "<dict>",
-            "\t<key>Label</key>",
-            "\t\(string(label))",
-            "\t<key>ProgramArguments</key>",
-            "\t<array>",
+    public func plistContents(programArguments: [String]) throws -> Data {
+        let plist: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": programArguments,
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "ProcessType": "Interactive",
+            "EnvironmentVariables": ["PATH": launchPath],
+            "StandardOutPath": paths.root.appendingPathComponent("app.out.log").path,
+            "StandardErrorPath": paths.root.appendingPathComponent("app.err.log").path,
         ]
-        lines += programArguments.map { "\t\t\(string($0))" }
-        lines += [
-            "\t</array>",
-            "\t<key>RunAtLoad</key>",
-            "\t<true/>",
-            "\t<key>KeepAlive</key>",
-            "\t<dict>",
-            "\t\t<key>SuccessfulExit</key>",
-            "\t\t<false/>",
-            "\t</dict>",
-            "\t<key>ProcessType</key>",
-            "\t<string>Interactive</string>",
-            "\t<key>EnvironmentVariables</key>",
-            "\t<dict>",
-            "\t\t<key>PATH</key>",
-            "\t\t\(string(launchPath))",
-            "\t</dict>",
-            "\t<key>StandardOutPath</key>",
-            "\t\(string(paths.root.appendingPathComponent("app.out.log").path))",
-            "\t<key>StandardErrorPath</key>",
-            "\t\(string(paths.root.appendingPathComponent("app.err.log").path))",
-            "</dict>",
-            "</plist>",
-        ]
-        return lines.joined(separator: "\n") + "\n"
+        return try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
     }
 
     @discardableResult
     public func install(programArguments: [String], start: Bool) throws -> Bool {
-        let contents = plistContents(programArguments: programArguments)
-        let changed = FileUtil.readText(plistURL) != contents
+        let contents = try plistContents(programArguments: programArguments)
+        let changed = (try? Data(contentsOf: plistURL)) != contents
         if changed { try FileUtil.atomicWrite(contents, to: plistURL) }
         // launchd opens the log files but does not create their directory.
         try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
@@ -218,21 +193,6 @@ public struct LaunchAgentManager: Sendable {
             return Int(trimmed.dropFirst("pid = ".count))
         }
         return nil
-    }
-
-    static func xmlEscape(_ s: String) -> String {
-        var out = ""
-        for c in s {
-            switch c {
-            case "&": out += "&amp;"
-            case "<": out += "&lt;"
-            case ">": out += "&gt;"
-            case "\"": out += "&quot;"
-            case "'": out += "&apos;"
-            default: out.append(c)
-            }
-        }
-        return out
     }
 
     static func clean(_ output: String) -> String {

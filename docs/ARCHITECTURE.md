@@ -25,7 +25,7 @@ In scope:
   - per-device Agent/Manual mode and brightness;
   - keepalive touches (8-LED/SD devices only);
   - hot-plug.
-- Keep-awake while agents work: an IOKit power assertion (PreventUserIdleSystemSleep) with the Never / When Agents Work / Always policy, plus a low-battery safeguard.
+- Keep-awake while agents work: a `ProcessInfo` activity (`.idleSystemSleepDisabled`, which holds PreventUserIdleSystemSleep) with the Never / When Agents Work / Always policy, plus a low-battery safeguard.
 - Menu-bar app:
   - status icon;
   - recent sessions;
@@ -61,7 +61,7 @@ SidePulse.app (menu bar)  = SidePulseRuntime + AppKit UI
    EventSocketServer ─▶ StatusEngine ─▶ latest.json (debounced)
                               │
                               ├─▶ LedSyncService ─▶ /Volumes/<device>/LEDS.LED (+ keepalive)
-                              ├─▶ KeepAwake (IOKit power assertion)
+                              ├─▶ KeepAwake (ProcessInfo activity)
                               └─▶ UI (icon, menu, settings)
 
 sidepulse status     ─▶ asks the app over the socket ({"command":"status"}),
@@ -174,7 +174,7 @@ and zips it to `dist/SidePulse-VERSION.zip`.
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
-| System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and power assertion (`KeepAwakeAssertion`), launchd, legacy Python cleanup |
+| System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, legacy Python cleanup |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
@@ -193,8 +193,8 @@ fast.
   `SidePulsePaths(environment: [...], home: tmp)` and `SIDEPULSE_HOME`.
 - The hook path never writes to stdout and always exits 0.
 - Writes to user config and state files are atomic (`FileUtil.atomicWrite`).
-  It resolves symlink chains the way the kernel does, so a dotfiles link stays
-  and the real file is replaced. It refuses to rewrite a read-only file
+  It resolves symlinks with `realpath` (following one hop for a dangling link),
+  so a dotfiles link stays and the real file is replaced. It refuses to rewrite a read-only file
   (`<path> is read-only; make it writable and try again`), which is what a
   read-only `~/.claude/settings.json` or `~/.codex/config.toml` gives on
   install.

@@ -57,9 +57,9 @@ final class LaunchAgentManagerTests: XCTestCase {
         let box = try HookInstallSandbox()
         let manager = LaunchAgentManager(paths: box.paths)
         let args = ["/Applications/SidePulse & Co.app/Contents/MacOS/SidePulseApp", "--flag=<\"quoted\">'s"]
-        let xml = manager.plistContents(programArguments: args)
+        let xml = try manager.plistContents(programArguments: args)
         let file = box.root.appendingPathComponent("test.plist")
-        try box.write(xml, to: file)
+        try xml.write(to: file)
 
         let lint = Process()
         lint.executableURL = URL(fileURLWithPath: "/usr/bin/plutil")
@@ -69,7 +69,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         lint.waitUntilExit()
         XCTAssertEqual(lint.terminationStatus, 0, "plutil -lint")
 
-        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(xml.utf8), format: nil) as? [String: Any])
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: xml, format: nil) as? [String: Any])
         XCTAssertEqual(plist["Label"] as? String, "io.sidepulse.swift")
         XCTAssertEqual(plist["ProgramArguments"] as? [String], args)
         XCTAssertEqual(plist["RunAtLoad"] as? Bool, true)
@@ -80,10 +80,7 @@ final class LaunchAgentManagerTests: XCTestCase {
         XCTAssertEqual((plist["EnvironmentVariables"] as? [String: String])?["PATH"],
                        "/usr/bin:/bin:/usr/sbin:/sbin:\(box.home.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin")
         XCTAssertEqual(plist.count, 8)
-        let order = ["Label", "ProgramArguments", "RunAtLoad", "KeepAlive", "ProcessType", "EnvironmentVariables",
-                     "StandardOutPath", "StandardErrorPath"]
-            .map { xml.range(of: "<key>\($0)</key>")!.lowerBound }
-        XCTAssertEqual(order, order.sorted())
+        XCTAssertEqual(try manager.plistContents(programArguments: args), xml, "stable bytes, so unchanged installs skip the write")
         XCTAssertEqual(manager.plistURL, box.home.appendingPathComponent("Library/LaunchAgents/io.sidepulse.swift.plist"))
     }
 
@@ -214,7 +211,7 @@ final class LaunchAgentMigrationTests: XCTestCase {
         var out: [String: URL] = [:]
         for label in labels {
             let url = box.paths.launchAgentsDir.appendingPathComponent("\(label).plist")
-            try box.write(LaunchAgentManager(paths: box.paths, label: label).plistContents(programArguments: ["/bin/true"]), to: url)
+            try FileUtil.atomicWrite(LaunchAgentManager(paths: box.paths, label: label).plistContents(programArguments: ["/bin/true"]), to: url)
             out[label] = url
         }
         return out

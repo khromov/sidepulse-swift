@@ -242,11 +242,11 @@ final class RuntimeLifecycleTests: XCTestCase {
         XCTAssertFalse(runtime.keepAwakeActive)
         XCTAssertFalse(holder.isHeld)
 
-        battery.state = BatteryState(present: true, percent: 10, onACPower: false, charging: false)
+        battery.state = BatteryState(present: true, percent: 10, onACPower: false)
         runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
         runtime.waitUntilIdle()
         XCTAssertFalse(runtime.keepAwakeActive)
-        battery.state = BatteryState(present: true, percent: 10, onACPower: true, charging: true)
+        battery.state = BatteryState(present: true, percent: 10, onACPower: true)
         runtime.refresh()
         runtime.waitUntilIdle()
         XCTAssertTrue(runtime.keepAwakeActive)

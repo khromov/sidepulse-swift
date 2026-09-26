@@ -72,7 +72,7 @@ final class PowerKeepAwakePolicyTests: XCTestCase {
     // MARK: Battery safeguard
 
     private func battery(_ percent: Double?, plugged: Bool, present: Bool = true) -> BatteryState {
-        BatteryState(present: present, percent: percent, onACPower: plugged, charging: false)
+        BatteryState(present: present, percent: percent, onACPower: plugged)
     }
 
     func testSafeguardActivatesOnlyOnBattery() {
@@ -114,11 +114,10 @@ final class PowerKeepAwakePolicyTests: XCTestCase {
 final class PowerBatteryTests: XCTestCase {
     func testReadSmoke() {
         let state = BatteryState.read()
-        print("Power battery: present=\(state.present) percent=\(state.percent.map { String($0) } ?? "nil") ac=\(state.onACPower) charging=\(state.charging)")
+        print("Power battery: present=\(state.present) percent=\(state.percent.map { String($0) } ?? "nil") ac=\(state.onACPower)")
         if state.present {
             let percent = try? XCTUnwrap(state.percent)
             XCTAssertTrue(percent.map { (0...100).contains($0) } ?? false)
-            if state.charging { XCTAssertTrue(state.onACPower, "charging implies external power") }
         } else {
             XCTAssertNil(state.percent)
         }
@@ -137,24 +136,23 @@ final class PowerBatteryTests: XCTestCase {
         let base: [String: Any] = [
             kIOPSTypeKey: kIOPSInternalBatteryType, kIOPSIsPresentKey: true,
             kIOPSCurrentCapacityKey: 57, kIOPSMaxCapacityKey: 100,
-            kIOPSPowerSourceStateKey: kIOPSBatteryPowerValue, kIOPSIsChargingKey: false,
+            kIOPSPowerSourceStateKey: kIOPSBatteryPowerValue,
         ]
         XCTAssertEqual(BatteryState.from(powerSourceDescription: base, providingAC: false),
-                       BatteryState(present: true, percent: 57, onACPower: false, charging: false))
+                       BatteryState(present: true, percent: 57, onACPower: false))
 
-        var charging = base
-        charging[kIOPSPowerSourceStateKey] = kIOPSACPowerValue
-        charging[kIOPSIsChargingKey] = true
-        charging[kIOPSCurrentCapacityKey] = 50
-        charging[kIOPSMaxCapacityKey] = 200
-        XCTAssertEqual(BatteryState.from(powerSourceDescription: charging, providingAC: false),
-                       BatteryState(present: true, percent: 25, onACPower: true, charging: true))
+        var plugged = base
+        plugged[kIOPSPowerSourceStateKey] = kIOPSACPowerValue
+        plugged[kIOPSCurrentCapacityKey] = 50
+        plugged[kIOPSMaxCapacityKey] = 200
+        XCTAssertEqual(BatteryState.from(powerSourceDescription: plugged, providingAC: false),
+                       BatteryState(present: true, percent: 25, onACPower: true))
 
         var noState = base
         noState.removeValue(forKey: kIOPSPowerSourceStateKey)
         noState[kIOPSMaxCapacityKey] = 0
         XCTAssertEqual(BatteryState.from(powerSourceDescription: noState, providingAC: true),
-                       BatteryState(present: true, percent: nil, onACPower: true, charging: false))
+                       BatteryState(present: true, percent: nil, onACPower: true))
 
         var over = base
         over[kIOPSCurrentCapacityKey] = 120
@@ -191,7 +189,6 @@ final class PowerKeepAwakeAssertionTests: XCTestCase {
         assertion.setHeld(true)
         assertion.setHeld(true)
         XCTAssertTrue(assertion.isHeld)
-        XCTAssertNil(assertion.lastError)
         XCTAssertEqual(heldAssertionNames().filter { $0 == reason }.count, 1, "holding again keeps one assertion")
 
         assertion.setHeld(false)

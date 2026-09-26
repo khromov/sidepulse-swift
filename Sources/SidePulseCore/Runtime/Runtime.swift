@@ -22,7 +22,6 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
 
 public protocol KeepAwakeHolding: AnyObject, Sendable {
     var isHeld: Bool { get }
-    var lastError: String? { get }
     func setHeld(_ held: Bool)
 }
 
@@ -114,7 +113,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private var deviceTimer: DispatchSourceTimer?
     private let keepAwakeHolder: (any KeepAwakeHolding)?
     private let readBattery: @Sendable () -> BatteryState
-    private var loggedHolderError: String?
     /// Only touched on the persist queue.
     private var latestSaveFailing = false
     /// Mirrors `running` behind a lock so `preview` can check it without waiting for
@@ -651,7 +649,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
         let hold = KeepAwakePolicy.shouldHold(policy: applied.sleepPolicy, agentsActive: agentsActive,
                                               battery: battery, minBatteryPercent: applied.minBatteryPercent)
-        // Called every time, so a failed hold is retried.
         holder.setHeld(hold)
         let held = holder.isHeld
         let previous = shared.write { cache -> Bool in
@@ -661,11 +658,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         if previous != held {
             DiagnosticsLog.shared.log("keep-awake: \(held ? "active" : "released") (policy \(applied.sleepPolicy.rawValue))")
             scheduleNotify()
-        }
-        let error = hold && !held ? holder.lastError : nil
-        if error != loggedHolderError {
-            loggedHolderError = error
-            if let error { DiagnosticsLog.shared.log("keep-awake: error: \(error)") }
         }
     }
 
