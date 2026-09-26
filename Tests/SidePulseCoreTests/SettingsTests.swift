@@ -27,6 +27,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.sessionRetentionSeconds, 172_800)
         XCTAssertEqual(settings.sleepPolicy, .agents)
         XCTAssertEqual(settings.minBatteryPercent, 20)
+        XCTAssertTrue(settings.sdEjectGuard)
         XCTAssertEqual(settings.matchingProfile?.id, "profile:signal")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
         XCTAssertEqual(LedDisplay.manual.label, "Manual")
@@ -42,6 +43,9 @@ final class SettingsModelTests: XCTestCase {
             "recent_session_retention_seconds": 172800
           },
           "devices": [],
+          "sd_eject_guard": {
+            "enabled": true
+          },
           "sleep_prevention": {
             "min_battery_percent": 20,
             "policy": "agents"
@@ -59,7 +63,7 @@ final class SettingsModelTests: XCTestCase {
     func testGarbageTypesFallBackFieldByField() throws {
         let loaded = try settings(fromJSON: """
         {"devices": "x", "default_display": 5, "agent_animations": [], "agent_list": "x",
-         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}}
+         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}, "sd_eject_guard": {"enabled": "no"}}
         """)
         XCTAssertEqual(loaded, SidePulseSettings())
 
@@ -153,10 +157,18 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(mixed.animationID(for: .idleReady), "solid-blue")
     }
 
+    func testSDEjectGuardCanBeTurnedOff() throws {
+        let off = try settings(fromJSON: #"{"sd_eject_guard": {"enabled": false}}"#)
+        XCTAssertFalse(off.sdEjectGuard)
+        XCTAssertEqual(off.toJSON()["sd_eject_guard"]?.serialized(), #"{"enabled":false}"#)
+        XCTAssertEqual(SidePulseSettings.fromJSON(off.toJSON()), off)
+    }
+
     func testUnknownKeysAreDroppedOnSave() throws {
         let loaded = try settings(fromJSON: #"{"future": {"a": 1}, "default_display": "manual", "leds_enabled": false}"#)
         XCTAssertEqual(loaded, SidePulseSettings())
-        XCTAssertEqual(loaded.toJSON().objectValue?.keys, ["agent_animations", "agent_list", "devices", "sleep_prevention"])
+        XCTAssertEqual(loaded.toJSON().objectValue?.keys,
+                       ["agent_animations", "agent_list", "devices", "sd_eject_guard", "sleep_prevention"])
     }
 
     func testJSONRoundTrip() {

@@ -43,6 +43,7 @@ public struct SidePulseSettings: Sendable, Equatable {
     public var sessionRetentionSeconds: Double = 172_800
     public var sleepPolicy: SleepPolicy = .agents
     public var minBatteryPercent: Double = 20
+    public var sdEjectGuard = true
 
     public init() {}
 
@@ -71,6 +72,9 @@ public struct SidePulseSettings: Sendable, Equatable {
         }
         if let percent = finiteNumber(sleep["min_battery_percent"]) {
             settings.minBatteryPercent = min(100, max(0, percent))
+        }
+        if let enabled = root["sd_eject_guard"]?.objectValue?["enabled"]?.boolValue {
+            settings.sdEjectGuard = enabled
         }
         return settings
     }
@@ -102,6 +106,7 @@ public struct SidePulseSettings: Sendable, Equatable {
             "min_battery_percent": JSONValue(percent, integralAsInt: true),
             "policy": .string(sleepPolicy.rawValue),
         ])
+        root["sd_eject_guard"] = .object(["enabled": .bool(sdEjectGuard)])
         return JSONValue.object(root).sortedKeys()
     }
 

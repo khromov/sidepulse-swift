@@ -24,12 +24,15 @@ In scope:
   - per-device Agent/Manual mode and brightness;
   - keepalive touches (8-LED/SD devices only);
   - hot-plug.
+- SidePulse Pro Eject Prevention, in the app only: a DiskArbitration eject-approval callback vetoes ejects of
+  cards in the built-in SD reader and retries their mount every 5 s (`SDEjectGuard`, ported from Python's
+  `sd_eject_guard.c`). The hook CLI never links DiskArbitration.
 - Keep-awake while agents work: a `ProcessInfo` activity (`.idleSystemSleepDisabled`, which holds PreventUserIdleSystemSleep) with the Never / When Agents Work / Always policy, plus a low-battery safeguard.
 - Menu-bar app:
   - status icon;
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
-  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, launch at login, logs folder).
+  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder).
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
 
 Out of scope (dropped on purpose):
@@ -37,7 +40,6 @@ Out of scope (dropped on purpose):
 - remote relay
 - the headless service and Linux support
 - battery LED mode
-- the SD eject guard
 - closed-lid helper and lid animations
 - status history and charts
 - audit export
@@ -213,11 +215,11 @@ and zips it to `dist/SidePulse-VERSION.zip`.
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
-| System | `SidePulseCore/System/{Power,LaunchAgent}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd |
+| System | `SidePulseCore/System/{Power,LaunchAgent,SDEjectGuardRule}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, the eject guard's card match |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
-| App | `SidePulseApp/*` | NSStatusItem menu and SwiftUI settings |
+| App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings and `SDEjectGuard` (DiskArbitration) |
 
 `SidePulseCore` must not import AppKit or SwiftUI, so the hook process starts
 fast.

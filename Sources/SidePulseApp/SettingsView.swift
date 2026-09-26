@@ -67,6 +67,14 @@ private struct GeneralTab: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section("SD Card Reader") {
+                Toggle(isOn: Binding(
+                    get: { model.settings.sdEjectGuard },
+                    set: { enabled in model.update { $0.sdEjectGuard = enabled } })) {
+                    Text(MenuText.ejectPrevention)
+                    Text(MenuText.ejectPreventionHelp)
+                }
+            }
             Section("General") {
                 Toggle(MenuText.launchAtLogin, isOn: Binding(
                     get: { model.launchAtLogin },

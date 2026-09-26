@@ -51,7 +51,7 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
   and leaves its LaunchAgents running.
 
 **Intentionally dropped:** iPhone link and push, the remote relay, the headless
-service and Linux support, battery LED mode, the SD eject guard, the closed-lid
+service and Linux support, battery LED mode, the closed-lid
 sleep helper and lid animations, status history and charts, audit and
 decision-log export, the virtual SidePulse Notch device, WASM previews, the
 custom animation editor and profile import/export, transcript fallback
@@ -431,7 +431,7 @@ The Settings window has four tabs:
 
 | Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder)                                                                                                                                                                                                                                    |
+| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder)                                                                                                                                                    |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                   |
 | Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                        |
 | Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
@@ -487,6 +487,20 @@ locked`. The Settings window's Devices tab shows the same text. A write that
   - **Never**: off.
   - **Low-battery safeguard**: on battery below the threshold (default 20 %),
     the Mac is always allowed to sleep.
+- **Eject prevention.** After a wake from hibernation, the built-in SD reader
+  reconnects its card. If the screen is locked at that moment, macOS refuses
+  the mount and ejects the card, so a SidePulse Pro goes dark. SidePulse Pro
+  Eject Prevention (Settings > General, on by default) stops that, as the
+  Python version's helper does: the app asks DiskArbitration to approve every
+  eject, refuses the eject of any card whose device protocol is "Secure
+  Digital" or whose model contains "SDXC", and retries the mount every 5
+  seconds until it succeeds, which is after you unlock. Each refusal is logged
+  in `app.log` (`sd-eject-guard: prevented eject of disk4 (volume: …)`). While
+  it is on, no card in the built-in reader can be ejected, from Finder or with
+  `diskutil` ("SidePulse Pro Eject Prevention: keeping SD card attached"), and
+  an unmounted one is mounted again, so turn it off before you eject a card.
+  It runs in the menu-bar app only, not in a headless `sidepulse run`, and the
+  Dot (USB-C) never needs it.
 - **Launch at login.** This is the LaunchAgent
   `~/Library/LaunchAgents/io.sidepulse.swift.plist`, with `RunAtLoad` and
   `KeepAlive = {SuccessfulExit: false}`. It also sets `PATH` so the app finds
@@ -505,7 +519,7 @@ locked`. The Settings window's Devices tab shows the same text. A write that
 
 | Path                                                                       | Contents                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/Library/Application Support/SidePulse/settings.json`                    | Settings: devices, animations, timeouts, keep-awake. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced                                                                                                                                                                                                                     |
+| `~/Library/Application Support/SidePulse/settings.json`                    | Settings: devices, animations, timeouts, keep-awake, eject prevention. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced                                                                                                                                                                                                   |
 | `…/SidePulse/latest.json`                                                  | Restart snapshot of agent rows, written with a short delay                                                                                                                                                                                                                                                                                                                   |
 | `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB                                                                                                                                                                                                                                                                                                                     |
 | `…/SidePulse/events.sock`, `events.sock.lock`                              | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700                                                                                                                  |

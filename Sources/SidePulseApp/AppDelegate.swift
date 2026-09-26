@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusController: StatusItemController?
     private var settingsController: SettingsWindowController?
     private var terminationSignals: [DispatchSourceSignal] = []
+    private let ejectGuard = SDEjectGuard()
     private var stopped = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -38,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.runtime = runtime
         DiagnosticsLog.shared.log("app: started version=\(SidePulseConstants.version) pid=\(getpid())")
+        ejectGuard.setEnabled(runtime.settings.sdEjectGuard)
 
         let services = AppServices(runtime: runtime)
         self.services = services
@@ -87,7 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Also follows the eject-guard setting, since every settings change publishes an update.
     private func runtimeDidUpdate(_ snapshot: MonitorSnapshot) {
+        if let runtime { ejectGuard.setEnabled(runtime.settings.sdEjectGuard) }
         statusController?.update(snapshot: snapshot)
         settingsController?.runtimeDidUpdate()
     }
@@ -124,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRuntime() {
         guard !stopped, let runtime else { return }
         stopped = true
+        ejectGuard.setEnabled(false)
         runtime.stop()
         DiagnosticsLog.shared.log("app: stopped")
         DiagnosticsLog.shared.flush()
