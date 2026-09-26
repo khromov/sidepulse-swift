@@ -42,6 +42,8 @@ final class LEDAnimationLibraryTests: XCTestCase {
         ("night-rider", "Night Rider", true),
         ("solid-red", "Solid Red", false),
         ("solid-blue", "Solid Blue", false),
+        ("red-double-blink", "Red Double Blink", false),
+        ("blue-double-blink", "Blue Double Blink", false),
     ]
 
     func testCatalogOrderNamesAndVariants() {
@@ -175,8 +177,8 @@ final class LEDAnimationLibraryTests: XCTestCase {
     func testDefaultAnimationPerMode() {
         let expected: [AgentMode: String] = [
             .working: "ember-tide", .toolRunning: "ember-tide", .longTaskProgress: "ember-tide",
-            .waitingForInput: "ember-complete", .blockedError: "solid-red",
-            .completed: "solid-green", .idleReady: "solid-blue", .unknown: "solid-blue",
+            .waitingForInput: "solid-red", .blockedError: "red-double-blink",
+            .completed: "solid-green", .idleReady: "solid-blue", .unknown: "blue-double-blink",
         ]
         for mode in AgentMode.allCases {
             XCTAssertEqual(AnimationLibrary.defaultAnimationID(for: mode), expected[mode], mode.rawValue)
@@ -219,8 +221,8 @@ final class LEDProfileTests: XCTestCase {
         let signal = try XCTUnwrap(AnimationProfiles.profile(id: "profile:signal"))
         XCTAssertEqual(signal.animations, [
             .idleReady: "solid-blue", .working: "ember-tide", .toolRunning: "ember-tide",
-            .waitingForInput: "ember-complete", .longTaskProgress: "ember-tide",
-            .blockedError: "solid-red", .completed: "solid-green", .unknown: "solid-blue",
+            .waitingForInput: "solid-red", .longTaskProgress: "ember-tide",
+            .blockedError: "red-double-blink", .completed: "solid-green", .unknown: "blue-double-blink",
         ])
         XCTAssertNil(AnimationProfiles.profile(id: "profile:default"))
     }
@@ -230,6 +232,25 @@ final class LEDProfileTests: XCTestCase {
         XCTAssertEqual(try LedProgram.program(animationID: "solid-blue", ledCount: 8, brightness: 128),
                        "brightness 128\n#0000FF 320ms cosine")
         XCTAssertEqual(try LedProgram.program(animationID: "ember-complete", ledCount: 2, brightness: 255), "#F23819 320ms cosine")
+        XCTAssertEqual(try LedProgram.program(animationID: "red-double-blink", ledCount: 2, brightness: 255), """
+            off 120ms none
+            #FF0000 120ms none
+            off 120ms none
+            #FF0000 120ms none
+            off 120ms none
+            #FF0000 1.5s none
+            repeat
+            """)
+        XCTAssertEqual(try LedProgram.program(animationID: "blue-double-blink", ledCount: 8, brightness: 128), """
+            brightness 128
+            off 120ms none
+            #0000FF 120ms none
+            off 120ms none
+            #0000FF 120ms none
+            off 120ms none
+            #0000FF 1.5s none
+            repeat
+            """)
     }
 
     func testMatching() throws {

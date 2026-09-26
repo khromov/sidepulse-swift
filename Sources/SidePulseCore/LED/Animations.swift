@@ -37,10 +37,11 @@ public enum AnimationLibrary {
     public static func defaultAnimationID(for mode: AgentMode) -> String {
         switch mode {
         case .working, .toolRunning, .longTaskProgress: return "ember-tide"
-        case .waitingForInput: return "ember-complete"
-        case .blockedError: return "solid-red"
+        case .waitingForInput: return "solid-red"
+        case .blockedError: return "red-double-blink"
         case .completed: return "solid-green"
-        case .idleReady, .unknown: return "solid-blue"
+        case .idleReady: return "solid-blue"
+        case .unknown: return "blue-double-blink"
         }
     }
 }

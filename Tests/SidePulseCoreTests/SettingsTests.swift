@@ -151,8 +151,8 @@ final class SettingsModelTests: XCTestCase {
         {"agent_animations": {"completed": "solid-green", "lid_open": "lid-open", "idle_ready": 5,
                               "blocked_error": "default", "waiting_for_input": "lid-open"}}
         """)
-        XCTAssertEqual(mixed.animations, ["completed": "solid-green", "blocked_error": "solid-red",
-                                          "waiting_for_input": "ember-complete"])
+        XCTAssertEqual(mixed.animations, ["completed": "solid-green", "blocked_error": "red-double-blink",
+                                          "waiting_for_input": "solid-red"])
         XCTAssertEqual(mixed.animationID(for: .completed), "solid-green")
         XCTAssertEqual(mixed.animationID(for: .idleReady), "solid-blue")
     }
@@ -203,7 +203,7 @@ final class SettingsModelTests: XCTestCase {
         settings.setAnimation("ember-complete", for: .completed)
         XCTAssertEqual(settings.animationID(for: .completed), "ember-complete")
         XCTAssertEqual(settings.animationID(for: .working), "kitt")
-        XCTAssertEqual(settings.animationID(for: .blockedError), "solid-red")
+        XCTAssertEqual(settings.animationID(for: .blockedError), "red-double-blink")
 
         settings.setAnimation("nope", for: .completed)
         settings.setAnimation("lid-open", for: .working)
@@ -247,7 +247,7 @@ final class SettingsModelTests: XCTestCase {
         ]))
         XCTAssertEqual(AgentMode.workingGroup.map { settings.animationID(for: $0) }, ["kitt", "kitt", "kitt"])
         XCTAssertEqual(settings.animationID(for: .completed), "solid-green")
-        XCTAssertEqual(settings.animations["unknown"], "solid-blue")
+        XCTAssertEqual(settings.animations["unknown"], "blue-double-blink")
     }
 
     func testDeviceLookupsFallBack() {
