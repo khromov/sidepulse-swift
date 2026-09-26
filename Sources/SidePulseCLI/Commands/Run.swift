@@ -1,7 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse run`: `leds` in the foreground (no `--once`).
 enum RunCommand: CLICommand {
     static let spec = CommandSpec(
         name: "run",

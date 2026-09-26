@@ -1,7 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse help [COMMAND]`, also `sidepulse`, `-h` and `--help`.
 enum HelpCommand: CLICommand {
     static let spec = CommandSpec(
         name: "help",
@@ -22,7 +21,6 @@ enum HelpCommand: CLICommand {
         return ExitCode.ok
     }
 
-    /// The top-level usage text.
     static var overview: String {
         var rows: [(String, String)] = []
         for command in SidePulseCLI.commands {

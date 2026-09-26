@@ -137,9 +137,8 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertEqual(HookDoctor.inspect(paths: box.paths, provider: .claude, runningExecutable: python.path).hookCLIProblems, [])
     }
 
-    /// Regression: hooks written from an explicit $SIDEPULSE_CLI_PATH (which install
-    /// takes as is) were reported as "not the SidePulse CLI; run 'sidepulse install'
-    /// to repair", and that install would write the same path again.
+    /// Regression: hooks from an explicit $SIDEPULSE_CLI_PATH were told to run 'sidepulse install' to repair,
+    /// which would write the same path again.
     func testExplicitCLIPathOverrideIsOnlyCheckedForExistence() throws {
         let box = try HookInstallSandbox()
         let wrapper = box.root.appendingPathComponent("bin/sp-wrapper")

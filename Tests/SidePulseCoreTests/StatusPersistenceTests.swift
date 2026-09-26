@@ -48,7 +48,6 @@ final class StatusPersistenceTests: XCTestCase {
     }
 
     func testLatestStoreReloadReproducesModeAndOrigin() throws {
-        // Port of test_live_sidepulse_ingests_events_and_persists_latest_state.
         let engine = StatusEngine()
         engine.ingest(provider: "codex", line: [
             "logged_at": .string(TimeFormat.pythonISO(t0)),
@@ -108,7 +107,6 @@ final class StatusPersistenceTests: XCTestCase {
         let tail = LogScanner.readRecentLines(url: url, maxLines: 2)
         XCTAssertEqual(tail, Array(lines.suffix(2)))
         XCTAssertEqual(LogScanner.readRecentLines(url: url, maxLines: 6), lines)
-        // No trailing newline: the last line still counts.
         let noNewline = try write("first\nsecond", "nonl.jsonl")
         XCTAssertEqual(LogScanner.readRecentLines(url: noNewline, maxLines: 1), ["second"])
     }
@@ -130,9 +128,7 @@ final class StatusPersistenceTests: XCTestCase {
     // MARK: Restart recovery through files
 
     func testRecoveryFromLogsRewritesLatestState() throws {
-        // Port of test_live_sidepulse_recovers_missed_hook_log_events and
-        // test_live_sidepulse_recovery_does_not_replace_newer_cached_state, wired the
-        // way the runtime starts: load latest.json, reconcile with a log scan, save.
+        // Wired the way the runtime starts: load latest.json, reconcile with a log scan, save.
         let now = Date()
         func stamp(_ offset: TimeInterval) -> String { TimeFormat.iso8601Seconds(now.addingTimeInterval(offset)) }
         func cached(_ mode: AgentMode, _ event: String, _ offset: TimeInterval) -> AgentStatus {
@@ -166,8 +162,6 @@ final class StatusPersistenceTests: XCTestCase {
         XCTAssertEqual(newer.load().first?.mode, .completed)
     }
 
-    /// Restarts the way the runtime does (load the live rows, reconcile with a scan
-    /// of `lines`, at most `maxLines`) and returns the restarted engine.
     private func restart(from live: StatusEngine, lines: [JSONObject], maxLines: Int = 2000) throws -> StatusEngine {
         let log = try write(lines.map { JSONValue.object($0).serialized() }.joined(separator: "\n"), "restart-\(UUID()).jsonl")
         let engine = StatusEngine()
@@ -188,8 +182,7 @@ final class StatusPersistenceTests: XCTestCase {
     }
 
     /// Regression: the scan's tail window missed a session's Stop but not the
-    /// idle_prompt that followed; the scan took the Notification as Ask, and a
-    /// restart (or `status --offline`) showed Ask for the idle timeout.
+    /// idle_prompt that followed, which it took as Ask.
     func testIdlePromptWhoseStopFellOutsideTheScanStaysDone() throws {
         let filler = (0..<3).map { claude("PreToolUse", 30 + Double($0), ["session_id": .string("busy")]) }
         let lines = [claude("Stop", 0, ["last_assistant_message": .string("All done.")])] + filler
@@ -206,9 +199,8 @@ final class StatusPersistenceTests: XCTestCase {
         XCTAssertNil(offline.first { $0.agentID == "claude:session:s" }, "no row rather than a false Ask")
     }
 
-    /// Regression guard: a Notification the scan took after events it saw is newer
-    /// than a restored Done row (the app was down across a new turn), so it wins —
-    /// here Claude's permission prompt for an edit (no command, so not sticky).
+    /// The app was down across a new turn, so the scanned Notification is newer than
+    /// the restored Done row and wins.
     func testNotificationAfterMissedTurnReplacesRestoredDone() throws {
         let live = StatusEngine()
         live.ingest(provider: "claude", line: claude("Stop", 0, ["last_assistant_message": .string("All done.")]))

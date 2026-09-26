@@ -20,7 +20,7 @@ In scope:
 - LED output:
   - device discovery;
   - Dot vs Pro LED count;
-  - built-in animations and the Cyan/Ember/Purple profiles;
+  - built-in animations and the Cyan/Ember/Purple/Signal profiles;
   - per-device Agent/Manual mode and brightness;
   - keepalive touches (8-LED/SD devices only);
   - hot-plug.
@@ -81,6 +81,33 @@ unfinished earlier connection. The socket commands are `ping`, `status`,
 LED write that started with the old settings; if it is still running, the reply
 is `{"ok":false,"error":"LED write in progress"}`.
 
+## Runtime threading
+
+`SidePulseRuntime` (`Runtime/Runtime.swift`) keeps its engine state on a private
+serial state queue. Callers rely on these rules:
+- UI reads (`snapshot()`, `settings`, `deviceInfos()`, `keepAwakeActive`) come
+  from lock-protected caches and never wait for the state queue, device I/O or
+  a settings write.
+- `updateSettings`, `setDeviceDisplay`, `setDeviceBrightness`, `removeDevice`
+  and `refresh` return at once. `settings` shows the change immediately; the
+  save and its effects run on the state queue, then `onUpdate` fires.
+- `ingest`, `reloadSettings`, `start` and `stop` run synchronously on the state
+  queue, so a `status` reply includes an event once `ingest` returns.
+- `onUpdate` and `onOpenSettings` are called on the main queue. `onUpdate` is
+  coalesced: changes made while a delivery is pending ride along, and it gets
+  the snapshot current at delivery time.
+- LED writes run on `LedSyncService`'s serial I/O queue and `latest.json` writes
+  on their own queue. Device discovery runs on a device queue, so a hung mount
+  never stalls events; `start()` waits at most `startupDiscoveryTimeout` (2 s)
+  for the first discovery and lets a slow one finish in the background.
+- `LedSyncService` keeps the device list and errors behind a lock. `requestSync`
+  is coalesced but never drops the latest mode (the Python version could).
+  Controller resets are applied on the I/O queue right before the next sync.
+  Normal syncs wait while a preview plays.
+- `stop()` ends a playing preview and waits (bounded) for queued LED writes and
+  keepalive touches, so nothing is written after it returns. The LEDs keep
+  their last program.
+
 ## Paths
 
 All paths hang off `SidePulsePaths`. They are never taken from XDG variables,
@@ -123,7 +150,10 @@ Bundle: `Resources/Info.plist` is the template for
 writes LED programs to your SidePulse device.", is the reason macOS shows when
 it asks for removable-volume access on the first device write. `build-app.sh`
 signs ad hoc unless `SIDEPULSE_CODESIGN_IDENTITY` is set (`install.sh --sign`);
-an ad-hoc grant does not survive a rebuild.
+an ad-hoc grant does not survive a rebuild. `release.sh` uses
+`build-app.sh --distribution` (universal binaries, hardened runtime, secure
+timestamp) with a Developer ID identity. It then notarizes and staples the app
+and zips it to `dist/SidePulse-VERSION.zip`.
 
 ## Module map (`Sources/`)
 

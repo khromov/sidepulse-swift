@@ -1,12 +1,8 @@
 import AppKit
 import SidePulseCore
 
-/// The menu-bar icon: a square status item showing the aggregate state's template
-/// SF Symbol, with the pinned tooltip `SidePulse Agent Monitor: <Label>`. Working
-/// rotates and Ask pulses in `IconAnimation` steps (8 fps). The timer runs only
-/// while something visible animates (the icon, or Working/Ask rows of the open
-/// menu), Reduce Motion is off, the displays are awake and this login session is
-/// the active one: each frame makes AppKit redraw the item on every display.
+/// The animation timer runs only while someone can see it animate, because each frame makes AppKit redraw the
+/// item on every display.
 @MainActor
 final class StatusItemController: NSObject {
     let menuController: StatusMenuController
@@ -37,7 +33,6 @@ final class StatusItemController: NSObject {
         showIcon(frame: nil)
     }
 
-    /// Applies a runtime snapshot to the icon and (when open) the menu.
     func update(snapshot: MonitorSnapshot) {
         let newState = snapshot.aggregate.mode.displayState
         if newState != state {

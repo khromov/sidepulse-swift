@@ -82,7 +82,6 @@ final class IPCSocketTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Starts a server that records every message and answers `status` with a stub.
     private func startServer(path: String? = nil, configure: (EventSocketServer) -> Void = { _ in },
                              inbox: IPCTestSupport.Inbox<IPCMessage> = .init(),
                              reply: @escaping @Sendable (IPCMessage) -> Data? = { message in
@@ -187,7 +186,6 @@ final class IPCSocketTests: XCTestCase {
     func testSlowClientDoesNotBlockOthers() throws {
         let inbox = IPCTestSupport.Inbox<IPCMessage>()
         _ = try startServer(configure: { $0.readTimeout = 0.5 }, inbox: inbox)
-        // A client that sends half a message and never finishes.
         let slow = try XCTUnwrap(UnixSocket.connect(path: socketPath, deadline: SocketDeadline(after: 1)))
         descriptors.append(slow)
         XCTAssertTrue(UnixSocket.writeAll(slow, Data(#"{"provider":"claude","li"#.utf8), deadline: SocketDeadline(after: 1)))
@@ -242,7 +240,6 @@ final class IPCSocketTests: XCTestCase {
 
     // MARK: Size limits
 
-    /// Pads an event to exactly `size` bytes.
     private func paddedEvent(size: Int) -> Data {
         let prefix = #"{"provider":"claude","line":{"hook_event_name":"Stop","pad":""#
         let suffix = #""}}"#
@@ -264,7 +261,6 @@ final class IPCSocketTests: XCTestCase {
         _ = try startServer(inbox: inbox)
         let oversize = paddedEvent(size: SidePulseConstants.maxEventBytes + 1)
 
-        // The client refuses to send it at all.
         XCTAssertFalse(EventSocketClient.send(oversize, socketPath: socketPath, timeout: 1))
         let bigLine: JSONObject = ["pad": .string(String(repeating: "y", count: SidePulseConstants.maxEventBytes))]
         XCTAssertFalse(EventSocketClient.sendEvent(provider: "claude", line: bigLine, socketPath: socketPath, timeout: 1))
@@ -276,7 +272,6 @@ final class IPCSocketTests: XCTestCase {
         usleep(200_000)
         XCTAssertEqual(inbox.count, 0)
 
-        // The server keeps working.
         XCTAssertTrue(EventSocketClient.sendEvent(provider: "claude", line: ["hook_event_name": .string("Stop")], socketPath: socketPath))
         XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == 1 })
     }
@@ -352,9 +347,8 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: socketPath))
     }
 
-    /// Regression: a listener that never replies (hung, or its serial handler queue
-    /// busy) used to fail the ping probe, so a second instance unlinked its socket
-    /// and took over. Anything that accepts connections owns the path.
+    /// Regression: a listener that never answered ping used to be treated as stale and displaced by a
+    /// second instance.
     func testUnresponsiveListenerIsNotDisplaced() throws {
         descriptors.append(IPCTestSupport.makeSilentListener(at: socketPath))
         let inode = IPCTestSupport.inode(of: socketPath)
@@ -379,10 +373,9 @@ final class IPCSocketTests: XCTestCase {
         defer { release.signal() }
         XCTAssertTrue(EventSocketClient.sendEvent(provider: "claude", line: ["hook_event_name": .string("Stop")], socketPath: socketPath))
         XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
-        // The handler queue is blocked, so ping cannot be answered in time...
+        // The handler queue is blocked, so ping cannot be answered in time.
         XCTAssertFalse(EventSocketClient.isServerRunning(socketPath: socketPath, timeout: 0.2))
 
-        // ...but the instance is alive and keeps its socket.
         let inode = IPCTestSupport.inode(of: socketPath)
         let second = EventSocketServer(path: socketPath) { _ in nil }
         second.probeTimeout = 0.2
@@ -479,8 +472,7 @@ final class IPCSocketTests: XCTestCase {
 
     func testStopDoesNotUnlinkForeignSocket() throws {
         let first = try startServer()
-        // Something else replaced the socket file (e.g. a newer instance after a
-        // crash-restart cycle removed ours).
+        // Another instance replaced our socket file, as after a crash-restart cycle.
         unlink(socketPath)
         let secondInbox = IPCTestSupport.Inbox<IPCMessage>()
         let second = try startServer(inbox: secondInbox)
@@ -559,7 +551,6 @@ final class IPCSocketTests: XCTestCase {
             return IPCReply.ok
         })
         XCTAssertNil(EventSocketClient.request("status", socketPath: socketPath, timeout: 0.2))
-        // A patient client still gets the answer.
         XCTAssertEqual(EventSocketClient.request("status", socketPath: socketPath, timeout: 3), IPCReply.ok)
     }
 

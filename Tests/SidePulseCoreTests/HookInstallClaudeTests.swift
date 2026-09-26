@@ -35,8 +35,6 @@ final class HookInstallClaudeTests: XCTestCase {
     }
 
     func testUnchangedDocumentKeepsOriginalFormatting() throws {
-        // Already installed but written compactly by someone else: nothing to do,
-        // so the user's formatting must survive.
         let pretty = try ClaudeHookInstaller.installing(into: nil, command: cmd)
         let compact = try JSONValue.parse(pretty).serialized()
         XCTAssertEqual(try ClaudeHookInstaller.installing(into: compact, command: cmd), compact)
@@ -52,9 +50,7 @@ final class HookInstallClaudeTests: XCTestCase {
         XCTAssertEqual(try ClaudeHookInstaller.installing(into: text, command: cmd), text)
     }
 
-    /// Port of test_claude_installer_replaces_target_hook_and_preserves_other_hooks,
-    /// adjusted: a user hook that appends to a log is NOT ours (Python matched on
-    /// the log path and deleted it).
+    /// Deliberate deviation from the Python port: a user hook appending to our old log path is not ours.
     func testInstallPreservesOtherSettingsAndUserHooks() throws {
         let input = #"""
         {"permissions": {"allow": ["Bash(date)"]}, "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
@@ -141,7 +137,6 @@ final class HookInstallClaudeTests: XCTestCase {
 
     // MARK: Uninstall
 
-    /// Port of test_claude_uninstaller_removes_monitor_hooks_and_preserves_other_hooks.
     func testUninstallRemovesOnlyOurHooks() throws {
         let input = #"{"permissions":{"allow":["Bash(date)"]},"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"echo keep >> /tmp/other.log"}]}]}}"#
         let installed = try ClaudeHookInstaller.installing(into: input, command: cmd)

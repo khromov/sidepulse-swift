@@ -1,13 +1,8 @@
 import Foundation
 
-/// Turns a provider log line / socket `line` object into a `HookEvent`
-/// (Python `providers.parse_log_line`). Accepts both our trimmed records and
-/// Python-era shapes (the Codex `{"logged_at","event":{...}}` wrapper, camelCase keys).
-///
-/// The provider string is passed through unchanged. Python's Grok sniffing
-/// (a `claude` line that looks like Grok became provider `grok`) is not ported.
+/// Accepts Python-era records too (the Codex `event` wrapper, camelCase keys), but
+/// passes the provider through without Python's Grok sniffing.
 public enum EventParser {
-    /// Ordered union of the Codex, Claude, Grok and Junie event lists.
     public static let knownEvents: [String] = [
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
         "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop", "Interrupt",
@@ -16,7 +11,6 @@ public enum EventParser {
 
     private static let knownEventSet = Set(knownEvents)
 
-    /// snake_case form of every known event, plus the `subagent_end` alias.
     private static let snakeAliases: [String: String] = {
         var aliases: [String: String] = [:]
         for event in knownEvents { aliases[snakeCase(event)] = event }
@@ -24,8 +18,6 @@ public enum EventParser {
         return aliases
     }()
 
-    /// camelCase keys copied to their snake_case names when the snake key is absent
-    /// (Python `normalize_event_payload`).
     static let camelAliases: [(camel: String, snake: String)] = [
         ("sessionId", "session_id"), ("turnId", "turn_id"), ("agentId", "agent_id"),
         ("workspaceRoot", "cwd"), ("toolName", "tool_name"), ("toolInput", "tool_input"),
@@ -34,13 +26,8 @@ public enum EventParser {
         ("agentOriginKind", "agent_origin_kind"), ("sidepulseOrigin", "sidepulse_origin"),
     ]
 
-    /// Keys that may carry the event name, in lookup order.
     static let eventNameKeys = ["hook_event_name", "hookEventName", "event_name", "eventName"]
 
-    /// Exact match returns as-is. Otherwise snake-normalize (non-alnum runs → `_`,
-    /// split camelCase `([a-z0-9])([A-Z])` → `\1_\2`, trim `_`, lowercase) and compare
-    /// with the snake form of each known event. Alias: `subagent_end` → SubagentStop.
-    /// Unknown → nil.
     public static func canonicalEventName(_ name: String) -> String? {
         let text = PyText.strip(name)
         guard !text.isEmpty else { return nil }
@@ -48,8 +35,6 @@ public enum EventParser {
         return snakeAliases[snakeCase(text)]
     }
 
-    /// Python: `re.sub('[^a-zA-Z0-9]+','_')`, `re.sub('([a-z0-9])([A-Z])', r'\1_\2')`,
-    /// `strip('_')`, `lower()`. Only ASCII letters and digits survive.
     static func snakeCase(_ text: String) -> String {
         var out: [UInt8] = []
         out.reserveCapacity(text.utf8.count + 4)
@@ -77,13 +62,11 @@ public enum EventParser {
         return String(decoding: out, as: UTF8.self)
     }
 
-    /// Parses one JSONL line. Empty / invalid JSON / non-object → nil.
     public static func parseLine(provider: String, line: String) -> HookEvent? {
         parseLine(provider: provider, line: line, now: Date())
     }
 
-    /// `parseLine` with an explicit fallback time for records without a usable
-    /// `logged_at` (lets a scan use one consistent "now").
+    /// Lets a scan give every record without a usable `logged_at` the same "now".
     static func parseLine(provider: String, line: String, now: Date) -> HookEvent? {
         let text = PyText.strip(line)
         guard !text.isEmpty,
@@ -92,26 +75,8 @@ public enum EventParser {
         return parseRecord(provider: provider, object: object, now: now)
     }
 
-    /// Steps (see spec collector §3):
-    /// 1. If `object.event` is an object (Codex/Python wrapper): raw = event,
-    ///    logged_at = object.logged_at || raw.logged_at. Else raw = object,
-    ///    logged_at = raw.logged_at || raw.timestamp.
-    /// 2. Event name = first of hook_event_name, hookEventName, event_name, eventName →
-    ///    canonicalEventName; nil → drop.
-    /// 3. Normalize: set hook_event_name/logged_at if absent; copy camelCase keys to
-    ///    snake_case when the snake key is absent (sessionId, turnId, agentId,
-    ///    workspaceRoot→cwd, toolName, toolInput, toolResponse, lastAssistantMessage,
-    ///    notificationType, agentOrigin, agentOriginKind, sidepulseOrigin).
-    /// 4. Fields: first non-empty (non-strings stringified with `pythonString`):
-    ///    session_id, turn_id, agent_id, cwd, tool_name; message ← message |
-    ///    last_assistant_message | error_details; origin ← `originLabel(raw)`.
-    ///    The camelCase spellings are consulted as a fallback for each field, as in
-    ///    Python.
-    /// `now` is used when logged_at is missing/unparseable.
-    ///
-    /// Python only unwraps `event` for the codex provider. Here any provider's
-    /// wrapper is unwrapped, but only when the outer object carries no event name of
-    /// its own, so a flat record that happens to have an `event` object stays flat.
+    /// Unlike Python, any provider's `event` wrapper is unwrapped, but only when the
+    /// outer object has no event name of its own, so a flat record stays flat.
     public static func parseRecord(provider: String, object: JSONObject, now: Date = Date()) -> HookEvent? {
         let raw: JSONObject
         let loggedAtValue: JSONValue?
@@ -150,9 +115,6 @@ public enum EventParser {
         )
     }
 
-    /// First match: clean label (collapsed whitespace) of agent_origin, agentOrigin,
-    /// agent_origin_label, origin_label; then sidepulse_origin (string, or object's
-    /// label/name/origin); else nil.
     public static func originLabel(_ raw: JSONObject) -> String? {
         for key in ["agent_origin", "agentOrigin", "agent_origin_label", "origin_label"] {
             if let label = cleanLabel(raw[key]) { return label }
@@ -170,15 +132,12 @@ public enum EventParser {
         }
     }
 
-    /// Python `clean_label`: strings only, whitespace collapsed, empty → nil.
     static func cleanLabel(_ value: JSONValue?) -> String? {
         guard let s = value?.stringValue else { return nil }
         let label = PyText.collapseWhitespace(s)
         return label.isEmpty ? nil : label
     }
 
-    /// Python `_first_string`: the first key whose value is present, non-null and
-    /// non-empty once stringified.
     static func firstString(_ raw: JSONObject, _ keys: String...) -> String? {
         for key in keys {
             guard let value = raw[key], !value.isNull else { continue }

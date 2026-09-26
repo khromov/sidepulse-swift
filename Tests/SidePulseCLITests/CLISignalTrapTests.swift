@@ -2,9 +2,7 @@ import Foundation
 import XCTest
 @testable import SidePulseCLI
 
-/// `SignalTrap` turns Ctrl-C / SIGTERM into an event (`live`, `leds`/`run`,
-/// `app --foreground`). Exercised with SIGUSR1/SIGUSR2 sent to this process so a
-/// mistake cannot kill the test run with SIGINT.
+/// Uses SIGUSR1/SIGUSR2 so a mistake cannot kill the test run with SIGINT.
 final class CLISignalTrapTests: XCTestCase {
     func testWaitTimesOutWithoutASignal() {
         let trap = SignalTrap(signals: [SIGUSR1])
@@ -28,7 +26,6 @@ final class CLISignalTrapTests: XCTestCase {
         XCTAssertTrue(trap.wait(timeout: 5))
     }
 
-    /// The foreground runtime's loop: main-queue work keeps running until a signal.
     func testMainLoopServicesTheMainQueueUntilASignal() {
         XCTAssertTrue(Thread.isMainThread)
         let trap = SignalTrap(signals: [SIGUSR2])

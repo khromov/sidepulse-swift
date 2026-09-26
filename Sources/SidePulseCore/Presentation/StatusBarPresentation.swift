@@ -1,7 +1,6 @@
 import Foundation
 
-/// Fixed menu and alert strings. Titles use three ASCII dots, never "…"
-/// (Python pins "Settings...").
+/// Titles use three ASCII dots, never "…", because Python pins "Settings...".
 public enum MenuText {
     public static let appName = "SidePulse"
     public static let agents = "Agents"
@@ -21,34 +20,26 @@ public enum MenuText {
     public static let settingsWindowTitle = "SidePulse Settings"
 }
 
-/// Menu-bar icon, tooltip and header text (spec status-bar §4-5).
 public enum StatusBarPresentation {
-    /// Tooltip and accessibility label, exactly `SidePulse Agent Monitor: <Label>`
-    /// (pinned by the Python tests).
+    /// The exact text is pinned by the Python tests.
     public static func tooltip(for state: DisplayState) -> String {
         "SidePulse Agent Monitor: \(state.label)"
     }
 
-    /// Menu header: `SidePulse — <state>` plus ` (N active)` when agents are active,
-    /// e.g. `SidePulse — Working (2 active)`, `SidePulse — Idle`.
     public static func header(mode: AgentMode, activeCount: Int) -> String {
         let base = "\(MenuText.appName) \u{2014} \(mode.displayState.label)"
         return activeCount > 0 ? "\(base) (\(activeCount) active)" : base
     }
 
-    /// `header(mode:activeCount:)` for a snapshot's aggregate.
     public static func header(for snapshot: MonitorSnapshot) -> String {
         header(mode: snapshot.aggregate.mode, activeCount: snapshot.aggregate.activeCount)
     }
 
-    /// Only Working (rotate) and Ask (pulse) animate.
     public static func animates(_ state: DisplayState) -> Bool {
         state == .working || state == .ask
     }
 
-    /// The animation timer runs only when Reduce Motion is off, nothing is `paused`
-    /// (displays asleep, or the login session switched away, so nobody can see it),
-    /// and either the visible icon animates or an open menu shows an animating row.
+    /// `paused` means the displays are asleep or the login session switched away, so nobody can see it.
     public static func shouldAnimate(iconState: DisplayState, iconVisible: Bool = true,
                                      openMenuRowStates: [DisplayState] = [], reduceMotion: Bool,
                                      paused: Bool = false) -> Bool {
@@ -57,12 +48,10 @@ public enum StatusBarPresentation {
     }
 }
 
-/// One frame of the icon animation, applied around the icon centre.
 public struct IconFrame: Sendable, Equatable {
-    /// Degrees, counter-clockwise positive (Working uses negative = clockwise).
+    /// Counter-clockwise positive, so Working's clockwise spin is negative.
     public var rotationDegrees: Double
     public var scale: Double
-    /// 0...1 draw fraction.
     public var opacity: Double
 
     public init(rotationDegrees: Double, scale: Double, opacity: Double) {
@@ -72,18 +61,14 @@ public struct IconFrame: Sendable, Equatable {
     public static let identity = IconFrame(rotationDegrees: 0, scale: 1, opacity: 1)
 }
 
-/// Icon animation math, after Python `animated_status_icon` (48 frames at 30 fps)
-/// but stepped: 12 frames at 8 fps, the same 1.5 s cycle. Every new image makes
-/// AppKit redraw the status item on each display, so the frame rate is the cost.
-/// The 18×18 canvas draws the symbol at 15×15, centred.
+/// Python's 48 frames at 30 fps stepped down to 12 at 8 fps (same 1.5 s cycle), because every new image
+/// makes AppKit redraw the status item on each display.
 public enum IconAnimation {
     public static let framesPerSecond: Double = 8
     public static let frameCount = 12
     public static let canvasSize: Double = 18
     public static let symbolSize: Double = 15
 
-    /// `phase = index / frameCount`. Working: rotate `-360·phase`. Ask: `pulse = (1 + cos 2π·phase) / 2`, scale
-    /// `0.82 + 0.18·pulse`, opacity `0.45 + 0.55·pulse`. Others: identity.
     public static func frame(for state: DisplayState, index: Int) -> IconFrame {
         let wrapped = ((index % frameCount) + frameCount) % frameCount
         let phase = Double(wrapped) / Double(frameCount)

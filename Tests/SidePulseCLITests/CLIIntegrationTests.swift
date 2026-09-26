@@ -2,18 +2,10 @@ import XCTest
 @testable import SidePulseCLI
 import SidePulseCore
 
-/// End-to-end tests of real commands against the real core modules, in temp
-/// directories only: a fake device folder via SIDEPULSE_MOUNT_ROOTS, a temp
-/// SIDEPULSE_HOME/HOME, and a socket path under the temp root. launchd is never
-/// touched (the LaunchAgent operations stay faked and `setup` runs with
-/// `--no-app --no-migrate`).
-///
-/// Skipped unless `SIDEPULSE_INTEGRATION=1`, because they need the core modules
-/// implemented by other workstreams:
-/// `SIDEPULSE_INTEGRATION=1 swift test --filter CLIIntegration`
+/// The LaunchAgent operations stay faked and `setup` runs with `--no-app --no-migrate`, so launchd
+/// is never touched.
 final class CLIIntegrationTests: XCTestCase {
-    /// Harnesses share temp directories within a test, so keep them all alive (and
-    /// their temp dirs on disk) until the test ends.
+    /// Harnesses share temp directories within a test, so they all stay alive until it ends.
     private var harnesses: [CLIHarness] = []
 
     override func setUpWithError() throws {
@@ -26,7 +18,6 @@ final class CLIIntegrationTests: XCTestCase {
         super.tearDown()
     }
 
-    /// A harness wired to the real core (hooks, snapshots, socket) with real time.
     private func makeHarness(_ extra: [String: String] = [:]) -> CLIHarness {
         let harness = CLIHarness(variables: extra, now: Date())
         harnesses.append(harness)
@@ -44,14 +35,13 @@ final class CLIIntegrationTests: XCTestCase {
         return volume
     }
 
-    /// Points device discovery at `<root>/mounts`.
     private func useTempMounts(_ harness: CLIHarness) {
         harness.env.variables["SIDEPULSE_MOUNT_ROOTS"] = harness.root.appendingPathComponent("mounts").path
     }
 
     private func read(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
 
-    /// Command names seen by the scripted socket server (called on its queue).
+    /// Appended to from the socket server's queue, hence the lock.
     private final class CommandRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private var storage: [String] = []
@@ -104,7 +94,6 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(h.run(["write", "-", "--device", volume.path]), 0, h.stderr.text)
         XCTAssertEqual(read(volume.appendingPathComponent("LEDS.LED")), "#00FF66 320ms cosine\nrepeat")
 
-        // A custom file name.
         let custom = makeHarness()
         XCTAssertEqual(custom.run(["write", "off", "--device", volume.path, "--file-name", "TEST.LED"]), 0)
         XCTAssertEqual(read(volume.appendingPathComponent("TEST.LED")), "off")
@@ -160,9 +149,8 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
     }
 
-    /// `--manual` must key the setting by the id the runtime's discovery produces,
-    /// also for a mount root spelled with `/private` (standardizedFileURL used to
-    /// strip it from existing paths).
+    /// Regression: `standardizedFileURL` stripped `/private` from existing paths, so `--manual`
+    /// keyed the setting differently from the runtime's discovery.
     func testManualUsesTheDiscoveredDeviceID() throws {
         let h = makeHarness()
         let root = URL(fileURLWithPath: "/private" + h.root.path, isDirectory: true).appendingPathComponent("mounts")
@@ -178,9 +166,8 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(h.stdout.text.contains("(\(device.id)) to Manual"), h.stdout.text)
     }
 
-    /// The real binary on the hook path: dispatched before argument parsing,
-    /// silent on stdout, exit 0, and it survives a non-blocking stdin whose payload
-    /// arrives late (FileHandle.readDataToEndOfFile aborted there).
+    /// Regression: `FileHandle.readDataToEndOfFile` aborted the hook when a non-blocking stdin's
+    /// payload arrived late.
     func testHookLogBinaryWithNonBlockingStdin() throws {
         let binary = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("sidepulse")
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
@@ -258,9 +245,7 @@ final class CLIIntegrationTests: XCTestCase {
 
     // MARK: live app over the socket
 
-    /// A scripted "app" on the real event socket (no runtime needed): the CLI must
-    /// read its snapshot, warn before writing to an Agent-mode device, ask it to
-    /// reload settings for --manual, open settings, and refuse a second LED owner.
+    /// A scripted "app" on the real event socket, so no runtime is needed.
     func testCommandsTalkToAnAppOnTheSocket() throws {
         let h = makeHarness()
         useTempMounts(h)
@@ -341,7 +326,6 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(h.run(["status"]), 0)
         XCTAssertTrue(h.stdout.text.hasPrefix("Source: SidePulse app (live)\nAggregate: Working"), h.stdout.text)
 
-        // Writing to an Agent-mode device while the app runs warns.
         XCTAssertEqual(h.run(["write", "off"]), 0)
         XCTAssertTrue(h.stderr.text.contains("will restore it at its next update"))
         XCTAssertEqual(read(volume.appendingPathComponent("LEDS.LED")), "off")
@@ -383,8 +367,6 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertTrue(noDevice.stdout.text.hasPrefix("LEDs: Idle error=No SidePulse Pro or SidePulse Dot device found."))
     }
 
-    /// `leds --once --device` drives one device through AgentLedController (no
-    /// LedSyncService), with the device's brightness from settings.
     func testLedsOnceWithExplicitDevice() throws {
         let h = makeHarness()
         let volume = try makeDevice(h)

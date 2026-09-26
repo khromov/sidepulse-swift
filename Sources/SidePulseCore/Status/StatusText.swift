@@ -1,11 +1,7 @@
 import Foundation
 
-/// Python-compatible text helpers for the Status module.
-///
-/// The collector rules were written against Python `str` semantics: lengths and
-/// slices count code points, `strip()`/`split()` use `str.isspace`, and
-/// `splitlines()` knows more line breaks than `\n`. These helpers work on Unicode
-/// scalars (not grapheme clusters) so the Swift port gives the same answers.
+/// Works on Unicode scalars rather than grapheme clusters so the collector rules,
+/// written against Python `str` semantics, give the same answers.
 enum PyText {
     /// Python `str.isspace()` for one code point (bidi class WS/B/S or category Zs).
     static func isSpace(_ scalar: Unicode.Scalar) -> Bool {
@@ -18,16 +14,14 @@ enum PyText {
         }
     }
 
-    /// The same set as `isSpace`, spelled for use inside an ICU regex character
-    /// class (`[\(PyText.regexSpaceClass)]`). ICU's `\s` misses `\v` and U+001C–U+001F.
+    /// `isSpace` as an ICU character class, because ICU's `\s` misses `\v` and
+    /// U+001C–U+001F.
     static let regexSpaceClass = #"\t\n\x{0B}\f\r\x{1C}-\x{20}\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}"#
 
-    /// Python `str.strip()` (no arguments).
     static func strip(_ text: String) -> String {
         strip(text, where: isSpace)
     }
 
-    /// Python `str.strip(chars)`.
     static func strip(_ text: String, characters: String) -> String {
         let set = Set(characters.unicodeScalars)
         return strip(text, where: { set.contains($0) })
@@ -47,7 +41,6 @@ enum PyText {
         return String(scalars[start..<end])
     }
 
-    /// Python `" ".join(text.split())`: collapses whitespace runs and trims.
     static func collapseWhitespace(_ text: String) -> String {
         var out = String.UnicodeScalarView()
         var pendingSpace = false
@@ -63,9 +56,8 @@ enum PyText {
         return String(out)
     }
 
-    /// Python `str.splitlines()` (without keepends): splits on `\n`, `\r`, `\r\n`,
-    /// `\v`, `\f`, U+001C–U+001E, U+0085, U+2028 and U+2029. Never yields a trailing
-    /// empty line. Only for message text; JSONL is split on `\n` alone.
+    /// Python `str.splitlines()`, for message text only since JSONL is split on `\n`
+    /// alone.
     static func splitLines(_ text: String) -> [String] {
         var lines: [String] = []
         var current = String.UnicodeScalarView()
@@ -105,8 +97,7 @@ enum PyText {
         text.utf8.reversed().starts(with: suffix.utf8.reversed())
     }
 
-    /// Code-point substring check (Python `needle in text`), done as a byte search
-    /// over UTF-8 (`memmem`), which is exact for valid UTF-8.
+    /// A UTF-8 byte search, which matches code points exactly for valid UTF-8.
     static func contains(_ text: String, _ needle: String) -> Bool {
         if needle.isEmpty { return true }
         var text = text
@@ -125,12 +116,10 @@ enum PyText {
         needles.contains { contains(text, $0) }
     }
 
-    /// First `count` code points (Python `text[:count]`).
     static func prefix(_ text: String, _ count: Int) -> String {
         String(String.UnicodeScalarView(text.unicodeScalars.prefix(max(0, count))))
     }
 
-    /// Python truthiness of a JSON value (`None`, `False`, `0`, `""`, `[]`, `{}` are false).
     static func truthy(_ value: JSONValue?) -> Bool {
         switch value {
         case nil, .null?: return false
@@ -142,27 +131,25 @@ enum PyText {
         }
     }
 
-    /// Python `a or b or c` over JSON values: the first truthy value, else the last one.
+    /// Python `a or b or c`, so it returns the last value when none is truthy.
     static func firstTruthy(_ values: JSONValue?...) -> JSONValue? {
         for value in values where truthy(value) { return value }
         return values.last ?? nil
     }
 
-    /// Python `str(raw.get(key, missing))`: a missing key gives `missing`, anything
-    /// present goes through `JSONValue.pythonString` (so `null` becomes "None").
+    /// Python `str(raw.get(key, missing))`, so a JSON null becomes "None".
     static func str(_ value: JSONValue?, missing: String = "") -> String {
         value?.pythonString ?? missing
     }
 
-    /// Non-empty string value, else nil (Python `_string_or_none` in the collector).
     static func nonEmptyString(_ value: JSONValue?) -> String? {
         guard let s = value?.stringValue, !s.isEmpty else { return nil }
         return s
     }
 }
 
-/// A compiled regular expression with the few operations the Status module needs.
-/// `NSRegularExpression` is immutable and documented as thread-safe.
+/// `@unchecked Sendable` because `NSRegularExpression` is immutable and documented
+/// as thread-safe.
 struct TextRegex: @unchecked Sendable {
     let regex: NSRegularExpression
 
@@ -178,30 +165,25 @@ struct TextRegex: @unchecked Sendable {
         regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 
-    /// Capture group `group` of the first match, if the match and group exist.
     func firstGroup(_ group: Int, in text: String) -> String? {
         guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: group), in: text) else { return nil }
         return String(text[range])
     }
 
-    /// Capture group `group` of every match, in document order.
     func allGroups(_ group: Int, in text: String) -> [String] {
         regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
             Range(match.range(at: group), in: text).map { String(text[$0]) }
         }
     }
 
-    /// Replaces every match with `template` (`$1` refers to a capture group).
     func replacing(in text: String, with template: String) -> String {
         regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
     }
 }
 
-/// Python `re.sub(r"```.*?```", replacement, text, flags=re.DOTALL)` without a regex:
-/// each opening fence is paired with the nearest following fence; an unpaired
-/// fence is left alone. Works on UTF-8 bytes (a backtick never occurs inside a
-/// multi-byte sequence, so cuts always land on scalar boundaries).
+/// Python `re.sub(r"```.*?```", replacement, text, flags=re.DOTALL)` over UTF-8
+/// bytes, which is safe because a backtick never occurs inside a multi-byte sequence.
 func stripFencedCodeBlocks(_ text: String, replacement: String = "") -> String {
     let bytes = Array(text.utf8)
     func fence(from start: Int) -> Int? {
@@ -227,8 +209,6 @@ func stripFencedCodeBlocks(_ text: String, replacement: String = "") -> String {
     return String(decoding: out, as: UTF8.self)
 }
 
-/// Python `re.sub(r"`[^`\n]*`", "", text)`: removes inline code spans that do not
-/// cross a newline.
 func stripInlineCode(_ text: String) -> String {
     guard text.unicodeScalars.contains("`") else { return text }
     let scalars = Array(text.unicodeScalars)

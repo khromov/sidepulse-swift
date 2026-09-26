@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "SidePulseCore", targets: ["SidePulseCore"]),
     ],
     targets: [
-        // Foundation/Darwin/IOKit only. No AppKit: the hook path must launch fast.
+        // Foundation/Darwin/IOKit only: every hook runs the CLI, so it must launch fast.
         .target(
             name: "SidePulseCore",
             linkerSettings: [.linkedFramework("IOKit")]
@@ -18,7 +18,6 @@ let package = Package(
         // All CLI commands live in a library so they can be unit tested.
         .target(name: "SidePulseCLI", dependencies: ["SidePulseCore"]),
         .executableTarget(name: "sidepulse", dependencies: ["SidePulseCLI"]),
-        // Menu-bar app (AppKit + SwiftUI). Bundled into SidePulse.app by scripts/build-app.sh.
         .executableTarget(
             name: "SidePulseApp",
             dependencies: ["SidePulseCore"],

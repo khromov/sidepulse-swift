@@ -1,52 +1,8 @@
 import Foundation
 
-/// Codex: `~/.codex/config.toml`, edited as text.
-/// Managed block (event order = HookProvider.codex.events):
-/// ```
-/// # >>> sidepulse hooks >>>
-/// [[hooks.SessionStart]]
-/// matcher = "*"
-/// [[hooks.SessionStart.hooks]]
-/// type = "command"
-/// command = '''CMD'''
-/// timeout = 10
-///
-/// ...
-/// # <<< sidepulse hooks <<<
-/// ```
-/// Install: remove our managed block, legacy `# >>> agent-monitor hooks >>>` markers,
-/// the stray `# Provider-neutral status collection...` comment lines, and any
-/// `[[hooks.<Event>]]` block (up to the next non-`[[hooks.<Event>.hooks]]` table
-/// header) containing a SidePulse command; ensure `[features]\nhooks = true`
-/// (an explicit `hooks = false` is the user's choice and stays; `install` notes it);
-/// append the block. Uninstall: remove the same things (leave `[features]`), and remove
-/// `[hooks.state."<config path>:<event>:N:M"]` tables that belong to removed hooks.
-/// Idempotent: reinstall on an installed file returns identical text.
-///
-/// Details of the text edit:
-/// - A block ends at its last non-blank, non-comment line, so a user comment that
-///   introduces the next table survives. Blank lines left behind by a removal are
-///   collapsed to one.
-/// - The new block goes where the old managed block (or the first removed
-///   SidePulse block) was, otherwise at the end of the file, separated by one
-///   blank line. Reinstalling therefore never moves it. The old position is
-///   only reused when a table header (not a key/value line) follows it, so the
-///   block can never capture keys of the table above.
-/// - `hooks = true` goes after the last key of `[features]`; with root dotted
-///   keys (`features.x = …`) it is added as `features.hooks = true`, since a
-///   `[features]` header would redefine the table. An inline
-///   `features = { … }` is left alone.
-/// - Hook events defined inline or as plain tables (`[hooks]` + `Stop = […]`,
-///   `[hooks.Stop]`) cannot take `[[hooks.Stop]]` tables; `install` throws
-///   `HookInstallError.invalidStructure` for such files.
-/// - Codex keys hook trust as `<config path>:<snake_event>:<group>:<handler>`
-///   and the hash does not depend on the position (verified with codex-cli
-///   0.153.4). When `configPath` is given, `[hooks.state."…"]` tables for this
-///   file are kept in step with the edit: tables of removed hooks and orphans
-///   (no hook at that position) are dropped, and tables of the user's own hooks
-///   are renamed when their group index shifts, so the user's trusted hooks stay
-///   trusted. If the file defines hooks in a form we do not parse (inline arrays,
-///   a `[hooks]` table), the state tables are left alone.
+/// Edits `~/.codex/config.toml` as text so the user's formatting and comments survive.
+/// Codex keys trust by position (`<config path>:<snake_event>:<group>:<handler>`) but the hash
+/// ignores it, so when an edit shifts a user's group its `[hooks.state."…"]` table is renamed.
 public enum CodexHookInstaller {
     public static let managedStart = "# >>> sidepulse hooks >>>"
     public static let managedEnd = "# <<< sidepulse hooks <<<"
@@ -56,9 +12,7 @@ public enum CodexHookInstaller {
     /// Comment written by pre-release Python installers.
     static let legacyEventLoggingComment = "Event logging hooks:"
 
-    /// The managed block text (ends with a newline). Codex 0.153 clamps an
-    /// Interrupt hook's timeout to 3 s (it reports `timeoutSec: 3`); the uniform
-    /// `timeout = 10` is still written so every group has the same shape.
+    /// Codex 0.153 clamps Interrupt hooks to 3 s, but a uniform `timeout = 10` keeps every group the same shape.
     public static func block(command: String) -> String {
         var lines = [managedStart]
         let value = TOMLString.literalPreferred(command)
@@ -77,10 +31,7 @@ public enum CodexHookInstaller {
         return TOMLLines.join(lines)
     }
 
-    /// Pure transform. With `configPath` (the absolute path Codex reports as the
-    /// hooks' `sourcePath`), trust-state tables are kept consistent (see above).
-    /// A file that defines hook events statically (see
-    /// `staticHookDefinitionProblem`) cannot take the block; `install` refuses it.
+    /// Files flagged by `staticHookDefinitionProblem` must be rejected first, as the block cannot extend them.
     public static func installing(into text: String, command: String, configPath: String? = nil) -> String {
         let original = TOMLLines(text)
         let removal = removeSidePulse(from: original)
@@ -91,8 +42,7 @@ public enum CodexHookInstaller {
         if let configPath {
             lines = reconcileTrustState(old: original, new: lines, configPath: configPath)
         }
-        // Dropped trust tables after the block can leave blank lines at the end;
-        // the file always ends right after its last line so a rerun is a no-op.
+        // Dropped trust tables can leave trailing blank lines, which would make a rerun differ.
         while let last = lines.last, TOMLLines.isBlank(last) { lines.removeLast() }
         return TOMLLines.join(lines)
     }
@@ -106,8 +56,6 @@ public enum CodexHookInstaller {
         return TOMLLines.join(lines)
     }
 
-    /// Events (in `HookProvider.codex.events` order, then others) with a group
-    /// holding a current-style SidePulse command.
     public static func installedEvents(in text: String) -> [String] {
         let groups = hookGroups(in: TOMLLines(text))
         let found = groups.filter { $0.commands.contains(where: HookCommand.isCurrentStyleCommand) }.map(\.event)
@@ -117,15 +65,11 @@ public enum CodexHookInstaller {
         return known + others
     }
 
-    /// Distinct CLI paths called by current-style SidePulse commands.
     public static func hookCLIPaths(in text: String) -> [String] {
         uniqued(hookGroups(in: TOMLLines(text)).flatMap(\.commands).compactMap(HookCommand.cliPath(of:)))
     }
 
-    /// Events whose SidePulse hook has no `[hooks.state."<key>"]` table with a
-    /// `trusted_hash` (keys as in the type documentation). Codex does not run such a
-    /// hook until the user approves it with /hooks or `install` refreshes trust.
-    /// Only presence is checked; whether the hash still matches is Codex's call.
+    /// Only checks that a `trusted_hash` exists, since whether it still matches is Codex's call.
     public static func untrustedEvents(in text: String, configPath: String) -> [String] {
         let doc = TOMLLines(text)
         var trusted = Set<String>()
@@ -152,21 +96,17 @@ public enum CodexHookInstaller {
         return out
     }
 
-    /// Number of `[[hooks.<Event>]]` groups holding a Python-era SidePulse command.
     public static func legacyBlockCount(in text: String) -> Int {
         hookGroups(in: TOMLLines(text)).filter { $0.commands.contains(where: HookCommand.isLegacyCommand) }.count
     }
 
-    /// `hooks = true` in `[features]` (or a root-level `features.hooks = true`).
     public static func hooksFeatureEnabled(in text: String) -> Bool {
         let doc = TOMLLines(text)
         guard let location = hooksFeatureLine(in: doc) else { return false }
         return doc.rawValue(at: location) == "true"
     }
 
-    /// Writes config (atomic + backup), then (unless dryRun or `trust == false`)
-    /// runs `CodexTrust.refresh`. With `[features] hooks = false` trust is skipped
-    /// (Codex lists no hooks then) and a note says hooks are off in Codex.
+    /// Trust is skipped under `[features] hooks = false` because Codex lists no hooks then.
     public static func install(paths: SidePulsePaths, cliPath: String, dryRun: Bool, trust: Bool = true, now: Date = Date()) throws -> InstallResult {
         let config = paths.codexConfigFile
         let command = HookCommand.command(cliPath: cliPath, provider: .codex)
@@ -238,15 +178,12 @@ public enum CodexHookInstaller {
 
     // MARK: - Hook groups
 
-    /// One `[[hooks.<Event>]]` matcher group with its `[[hooks.<Event>.hooks]]`
-    /// handler tables.
     struct HookGroup {
         var event: String
-        /// Header line through the last content line of the group.
         var range: ClosedRange<Int>
         var handlerCount: Int
         var commands: [String]
-        /// Content lines, trimmed; used to recognise an unchanged group.
+        /// Trimmed content lines, used to recognise an unchanged group.
         var signature: String
 
         var isSidePulse: Bool { commands.contains(where: HookCommand.isSidePulseCommand) }
@@ -286,13 +223,10 @@ public enum CodexHookInstaller {
 
     struct Removal {
         var lines: [String]
-        /// Output index where the first removed marker or SidePulse group was.
+        /// Where the first removed marker or group was, so reinstalling never moves the block.
         var anchor: Int?
     }
 
-    /// Removes our managed markers, the legacy Python markers and stray
-    /// comments, and every hook group holding a SidePulse command. Blank lines
-    /// left at a removal site are collapsed.
     static func removeSidePulse(from doc: TOMLLines) -> Removal {
         var remove = Set<Int>()
         var anchors = Set<Int>()
@@ -322,9 +256,6 @@ public enum CodexHookInstaller {
         return Removal(lines: lines, anchor: anchor)
     }
 
-    /// Drops the lines at `indices`. After each removal, blank lines are skipped
-    /// while the output is empty or already ends with a blank line.
-    /// `onRemove(index, outputCount)` reports where each removed line was.
     static func dropLines(_ lines: [String], _ indices: Set<Int>,
                           onRemove: (Int, Int) -> Void = { _, _ in }) -> [String] {
         var out: [String] = []
@@ -344,7 +275,6 @@ public enum CodexHookInstaller {
 
     // MARK: - Features and block placement
 
-    /// The `hooks = …` line inside `[features]`, or a root-level `features.hooks`.
     static func hooksFeatureLine(in doc: TOMLLines) -> Int? {
         var table: (path: [String], isArray: Bool)?   // nil = root table
         for i in doc.lines.indices {
@@ -359,9 +289,8 @@ public enum CodexHookInstaller {
         return nil
     }
 
-    /// Ensures `[features] hooks = true`, keeping `anchor` pointing at the same line.
-    /// An explicit `hooks = false` is left as it is: turning it on would also enable
-    /// every other hook the user switched off with it, and uninstall could not undo it.
+    /// An explicit `hooks = false` stays, because enabling it would also turn on every hook the
+    /// user switched off with it, and uninstall could not undo that.
     static func ensureHooksFeature(_ lines: inout [String], anchor: inout Int?) {
         let doc = TOMLLines(lines: lines)
         if let i = hooksFeatureLine(in: doc) {
@@ -380,12 +309,10 @@ public enum CodexHookInstaller {
         for i in lines.indices {
             if case .header = doc.kinds[i] { break }
             guard let key = doc.keyPath(at: i), key.first == "features" else { continue }
-            // A root-level `features = { ... }` inline table cannot take another
-            // key without rewriting it; leave it to the user.
+            // An inline `features = { … }` table cannot take another key without rewriting it.
             if key.count == 1 { return }
-            // Root dotted keys (`features.x = …`) already define the table, so a
-            // `[features]` header would be a duplicate; add a sibling key instead.
-            // Inserting before the first one keeps it clear of multi-line values.
+            // A `[features]` header would redeclare the table these dotted keys define, and
+            // inserting before the first one keeps clear of multi-line values.
             lines.insert("features.hooks = true", at: i)
             if let a = anchor, a >= i { anchor = a + 1 }
             return
@@ -396,10 +323,8 @@ public enum CodexHookInstaller {
         lines += ["[features]", "hooks = true"]
     }
 
-    /// True when a table header (or nothing but comments and blank lines) comes
-    /// next at `index`, so tables inserted there cannot capture key/value lines
-    /// that belong to the table above (for example after a stray marker comment
-    /// in the middle of a table, or above root keys).
+    /// Tables inserted before key/value lines would capture them, such as after a stray marker
+    /// in the middle of a table.
     static func isTableBoundary(_ lines: [String], at index: Int) -> Bool {
         let doc = TOMLLines(lines: lines)
         for i in index..<lines.count {
@@ -412,11 +337,8 @@ public enum CodexHookInstaller {
         return true
     }
 
-    /// Why `[[hooks.<Event>]]` tables (and `[hooks.state."…"]` trust tables)
-    /// cannot be added to this file, or nil. TOML forbids extending a table or
-    /// array that is defined inline (`hooks = {…}`, `[hooks]` + `Stop = […]`,
-    /// `hooks.Stop = […]`) or as a plain table (`[hooks.Stop]`), so appending the
-    /// block would leave a config Codex refuses to load.
+    /// TOML forbids extending a table or array defined inline or as a plain `[hooks.Stop]`
+    /// table, so appending the block would leave a config Codex refuses to load.
     static func staticHookDefinitionProblem(in doc: TOMLLines) -> String? {
         let events = Set(HookProvider.codex.events)
         var table: (path: [String], isArray: Bool)?   // nil = root table
@@ -448,8 +370,6 @@ public enum CodexHookInstaller {
         return nil
     }
 
-    /// Inserts the managed block at `anchor` with one blank line on each side, or
-    /// appends it after one blank line.
     static func insertBlock(_ block: [String], into lines: inout [String], at anchor: Int?) {
         guard let anchor else {
             while let last = lines.last, TOMLLines.isBlank(last) { lines.removeLast() }
@@ -466,7 +386,6 @@ public enum CodexHookInstaller {
 
     // MARK: - Trust state
 
-    /// Codex's snake_case event name used in hook keys (`PreToolUse` → `pre_tool_use`).
     static func snakeCase(_ event: String) -> String {
         var out = ""
         for (i, c) in event.enumerated() {
@@ -480,8 +399,7 @@ public enum CodexHookInstaller {
         return out
     }
 
-    /// Key prefixes Codex may use for `configPath` (as given, and with symlinks
-    /// resolved), each ending in ":".
+    /// Codex may key trust by the path as given or with symlinks resolved.
     static func keyPrefixes(for configPath: String) -> [String] {
         var out: [String] = []
         for candidate in [configPath, CodexTrust.canonicalPath(configPath),
@@ -492,8 +410,7 @@ public enum CodexHookInstaller {
         return out
     }
 
-    /// True when hooks are also defined in a form `hookGroups` does not see, so
-    /// group indices cannot be trusted.
+    /// Hooks defined in a form `hookGroups` does not see make its group indices unreliable.
     static func hasUnrecognizedHookDefinitions(_ doc: TOMLLines) -> Bool {
         var table: [String] = []
         var inGroup = false
@@ -512,8 +429,6 @@ public enum CodexHookInstaller {
         return false
     }
 
-    /// Rewrites this config's `[hooks.state."<path>:<event>:G:H"]` tables to
-    /// match the hook groups in `new` (see the type documentation).
     static func reconcileTrustState(old: TOMLLines, new newLines: [String], configPath: String) -> [String] {
         let new = TOMLLines(lines: newLines)
         guard !hasUnrecognizedHookDefinitions(old), !hasUnrecognizedHookDefinitions(new) else { return newLines }
@@ -523,7 +438,6 @@ public enum CodexHookInstaller {
         var bySnake: [String: String] = [:]
         for event in oldGroups.keys { bySnake[snakeCase(event)] = event }
 
-        // old (event, group index) → new group index
         var mapping: [String: [Int: Int]] = [:]
         for (event, olds) in oldGroups {
             let news = newGroups[event] ?? []
@@ -565,7 +479,6 @@ public enum CodexHookInstaller {
 
         var lines = newLines
         for (i, header) in renames { lines[i] = header }
-        // An emptied `[hooks.state]` table goes too, once nothing hangs off it.
         if !drop.isEmpty, let s = stateHeader {
             let body = new.contentEnd(start: s, end: new.nextHeader(after: s))
             let remainingState = new.lines.indices.contains { i in

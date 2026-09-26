@@ -1,23 +1,14 @@
 import Foundation
 
-/// A line-oriented view of a TOML file, just smart enough to edit Codex's
-/// `config.toml` as text without disturbing anything else in it.
-///
-/// It classifies each line as blank, comment, table header (with its parsed
-/// dotted key path) or content. A small lexer tracks multi-line strings and
-/// values that span lines (arrays, inline tables), so a line inside them is never
-/// mistaken for a header or a comment. It is not a TOML parser: values are only
-/// decoded where the installer needs them (hook commands, `hooks = true`).
+/// Not a TOML parser: it classifies lines just well enough to edit `config.toml` as text without
+/// disturbing anything else in it.
 struct TOMLLines {
     enum Kind: Equatable {
         case blank
         case comment
-        /// `[a.b]` or `[[a.b]]` with the decoded key path.
         case header(path: [String], isArray: Bool)
-        /// A line that starts a key/value pair (or anything else outside a value).
         case content
-        /// A line that starts inside a multi-line string or a value spanning
-        /// lines; it never holds a key of its own.
+        /// Starts inside a multi-line string or value, so it never holds a key of its own.
         case continuation
     }
 
@@ -35,7 +26,6 @@ struct TOMLLines {
         self.kinds = TOMLLines.classify(lines)
     }
 
-    /// Lines joined with "\n", ending with a newline unless empty.
     var text: String { TOMLLines.join(lines) }
 
     static func join(_ lines: [String]) -> String {
@@ -51,7 +41,6 @@ struct TOMLLines {
         return nil
     }
 
-    /// Index of the next header after `index` (or `lines.count`).
     func nextHeader(after index: Int) -> Int {
         var i = index + 1
         while i < kinds.count {
@@ -61,9 +50,7 @@ struct TOMLLines {
         return kinds.count
     }
 
-    /// The last non-blank, non-comment line in `start..<end` (at least `start`).
-    /// Trailing comments and blank lines before the next header belong to what
-    /// follows, not to the table being removed.
+    /// Trailing comments and blank lines belong to the next table, not to the one being removed.
     func contentEnd(start: Int, end: Int) -> Int {
         var last = start
         var i = start
@@ -77,7 +64,6 @@ struct TOMLLines {
         return last
     }
 
-    /// Key path at the start of a content line (`a.b = ...` → ["a", "b"]).
     func keyPath(at index: Int) -> [String]? {
         guard kinds[index] == .content else { return nil }
         var scanner = TOMLScanner(lines[index])
@@ -85,9 +71,6 @@ struct TOMLLines {
         return path
     }
 
-    /// The string value of the `key = <string>` pair starting at `index`, if any.
-    /// Handles all four TOML string forms, including multi-line strings that
-    /// continue on the following lines.
     func stringValue(at index: Int, key: String) -> String? {
         guard let path = keyPath(at: index), path == [key] else { return nil }
         var scanner = TOMLScanner(lines[index])
@@ -96,7 +79,6 @@ struct TOMLLines {
         return scanner.stringValue(continuation: lines[index...].dropFirst().joined(separator: "\n"))
     }
 
-    /// The raw value text of a `key = value` line, without a trailing comment.
     func rawValue(at index: Int) -> String? {
         guard keyPath(at: index) != nil else { return nil }
         var scanner = TOMLScanner(lines[index])
@@ -139,13 +121,9 @@ struct TOMLLines {
     }
 }
 
-/// Byte-level scanner for the few TOML constructs the installer reads.
 struct TOMLScanner {
-    /// Lexer state carried from one line to the next.
     struct State {
-        /// `"""` or `'''` while inside a multi-line string.
         var multiline: String?
-        /// Unclosed `[`/`{` in a value that spans lines.
         var depth = 0
     }
 
@@ -179,7 +157,6 @@ struct TOMLScanner {
         return true
     }
 
-    /// Whatever follows on the line, minus a trailing comment and whitespace.
     mutating func restWithoutComment() -> String {
         skipSpaces()
         var end = i
@@ -205,7 +182,6 @@ struct TOMLScanner {
 
     // MARK: Keys and headers
 
-    /// A dotted key: bare keys and quoted keys separated by dots.
     mutating func keyPath() -> [String]? {
         var path: [String] = []
         while true {
@@ -238,7 +214,6 @@ struct TOMLScanner {
             || c == UInt8(ascii: "_") || c == UInt8(ascii: "-")
     }
 
-    /// `[path]` or `[[path]]`, optionally followed by a comment.
     mutating func header() -> (path: [String], isArray: Bool)? {
         skipSpaces()
         guard consume("[") else { return nil }
@@ -254,7 +229,6 @@ struct TOMLScanner {
 
     // MARK: Strings
 
-    /// Decodes `"..."` starting at the opening quote.
     private mutating func basicString() -> String? {
         i += 1
         var out: [UInt8] = []
@@ -305,8 +279,6 @@ struct TOMLScanner {
         }
     }
 
-    /// Decodes the string value at the current position (after `=`). A
-    /// multi-line string may continue into `continuation` (the following lines).
     mutating func stringValue(continuation: @autoclosure () -> String) -> String? {
         skipSpaces()
         for delimiter in ["'''", "\"\"\""] where starts(with: delimiter) {
@@ -318,7 +290,7 @@ struct TOMLScanner {
             }
             guard let close = Self.closingRange(of: delimiter, in: body) else { return nil }
             var content = String(body[..<close])
-            // A newline right after the opening delimiter is trimmed.
+            // TOML trims a newline right after the opening delimiter.
             if content.hasPrefix("\n") { content.removeFirst() } else if content.hasPrefix("\r\n") { content.removeFirst(2) }
             if delimiter == "'''" { return content }
             var inner = TOMLScanner(content)
@@ -330,8 +302,8 @@ struct TOMLScanner {
         return nil
     }
 
-    /// End of a multi-line string body: the first delimiter run, allowing up to
-    /// two extra quotes that belong to the content (`''''` = `'` + close).
+    /// TOML lets up to two quotes before the closing delimiter belong to the content
+    /// (`''''` is `'` plus the close).
     private static func closingRange(of delimiter: String, in body: String) -> String.Index? {
         let q = delimiter.first!
         var idx = body.startIndex
@@ -372,7 +344,6 @@ struct TOMLScanner {
 
     // MARK: Lexer state across lines
 
-    /// Updates the multi-line string / open-bracket state after `line`.
     static func advance(_ state: inout State, over line: String) {
         let b = Array(line.utf8)
         var i = 0
@@ -415,9 +386,7 @@ struct TOMLScanner {
     }
 }
 
-/// TOML string emission.
 enum TOMLString {
-    /// `"..."` with `\` and `"` (and control characters) escaped.
     static func basic(_ s: String) -> String {
         var out = "\""
         for scalar in s.unicodeScalars {
@@ -438,8 +407,6 @@ enum TOMLString {
         return out + "\""
     }
 
-    /// `'''...'''` (no escaping needed) unless the value cannot be written that
-    /// way, in which case a basic string is used.
     static func literalPreferred(_ s: String) -> String {
         if s.contains("'''") || s.contains("\n") || s.contains("\r") || s.hasSuffix("'") { return basic(s) }
         return "'''\(s)'''"

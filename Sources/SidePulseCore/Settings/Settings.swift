@@ -1,6 +1,6 @@
 import Foundation
 
-/// Per-device display mode. "manual" = SidePulse never writes to the device.
+/// In "manual" mode SidePulse never writes to the device.
 public enum LedDisplay: String, Sendable, CaseIterable {
     case agent
     case manual
@@ -21,7 +21,7 @@ public enum SleepPolicy: String, Sendable, CaseIterable {
 }
 
 public struct DeviceSettings: Sendable, Equatable {
-    /// Volume root path, e.g. "/Volumes/PulseDot".
+    /// The volume root path.
     public var id: String
     public var name: String
     public var path: String
@@ -34,58 +34,32 @@ public struct DeviceSettings: Sendable, Equatable {
     }
 }
 
-/// User settings. JSON schema (`settings.json`, pretty, sorted keys):
-/// ```json
-/// {
-///   "agent_animations": {"working": "cyan-roll", ...},   // explicit selections only
-///   "agent_list": {"idle_timeout_seconds": 3600, "recent_session_retention_seconds": 172800},
-///   "default_display": "agent",                          // for never-seen devices
-///   "devices": [{"id","name","path","display":"agent|manual","brightness":0-255}],
-///   "sleep_prevention": {"policy": "never|agents|always", "min_battery_percent": 20}
-/// }
-/// ```
-/// Loading is tolerant: missing/invalid values fall back to defaults field by field;
-/// unknown top-level keys are preserved on save (`extra`).
 public struct SidePulseSettings: Sendable, Equatable {
     public var devices: [DeviceSettings] = []
     public var defaultDisplay: LedDisplay = .agent
-    /// AgentMode raw value → animation id. Only explicit selections are stored.
+    /// Only explicit selections are stored, keyed by AgentMode raw value.
     public var animations: [String: String] = [:]
     public var idleTimeoutSeconds: Double = 3600
     public var sessionRetentionSeconds: Double = 172_800
     public var sleepPolicy: SleepPolicy = .agents
     public var minBatteryPercent: Double = 20
-    /// Unknown top-level keys, preserved verbatim. Kept key-sorted (recursively),
-    /// the order they are saved in, so equality does not depend on insertion order.
+    /// Unknown top-level keys, kept key-sorted as saved so equality does not depend on insertion order.
     public var extra: JSONObject = JSONObject() {
         didSet { extra = Self.canonical(extra) }
     }
 
     public init() {}
 
-    /// Top-level keys owned by this model; everything else goes to `extra`.
-    /// `leds_enabled` is retired (the global "Drive LEDs" switch was removed): it is
-    /// listed so older files drop it on the next save instead of keeping it in `extra`.
+    /// The retired `leds_enabled` is listed so older files drop it on the next save
+    /// instead of keeping it in `extra`.
     static let knownKeys: Set<String> = [
         "agent_animations", "agent_list", "default_display", "devices", "leds_enabled", "sleep_prevention",
     ]
 
     // MARK: JSON
 
-    /// Field-by-field tolerant decode (Python `load_settings` rules):
-    /// - a non-object root gives the defaults;
-    /// - `devices`: entries that are not objects or lack a non-empty string `id` are
-    ///   skipped; the first entry per id wins; a missing `path` becomes the id, a
-    ///   missing `name` the path's last component (Python `Path(path).name`, so
-    ///   `.` components are ignored) or else the id; an invalid `display`
-    ///   becomes `default_display`; `brightness` is rounded half-even and clamped,
-    ///   255 when missing or not a number;
-    /// - `agent_animations`: keys must be agent modes and values strings; unknown
-    ///   animation ids become that mode's default; the first working-group entry
-    ///   present (working, tool_running, long_task_progress) is shared by all three;
-    /// - timeouts: numbers are clamped to ≥ 0; the battery threshold to 0...100;
-    ///   non-numbers and non-finite values keep the defaults;
-    /// - `extra` keeps every other top-level key.
+    /// Like Python `load_settings`, each missing or invalid field falls back to its
+    /// default on its own, so one bad value never discards the rest of the file.
     public static func fromJSON(_ value: JSONValue) -> SidePulseSettings {
         var settings = SidePulseSettings()
         guard let root = value.objectValue else { return settings }
@@ -120,13 +94,8 @@ public struct SidePulseSettings: Sendable, Equatable {
         return settings
     }
 
-    /// The schema above plus `extra`, keys sorted recursively. Integral numbers are
-    /// written without a fraction.
-    ///
-    /// Numbers are written the way `fromJSON` would read them back (timeouts ≥ 0,
-    /// battery threshold 0...100, brightness 0...255), and a NaN or infinite value
-    /// is written as its default: JSON has no literal for those, and one invalid
-    /// number would make the whole file unreadable (every setting lost).
+    /// Non-finite numbers are written as their defaults because JSON has no literal
+    /// for them and one would make the whole file unreadable.
     public func toJSON() -> JSONValue {
         let defaults = SidePulseSettings()
         func seconds(_ value: Double, _ fallback: Double) -> JSONValue {
@@ -186,8 +155,7 @@ public struct SidePulseSettings: Sendable, Equatable {
         return devices
     }
 
-    /// Python `Path(path).name`, nil when empty: the last component once empty and
-    /// `.` components are dropped ("/" and "." have no name; "a/." is "a").
+    /// Python `Path(path).name` ignores `.` components, so "a/." is "a".
     private static func pythonPathName(_ path: String) -> String? {
         path.split(separator: "/").last { $0 != "." }.map(String.init)
     }
@@ -207,12 +175,7 @@ public struct SidePulseSettings: Sendable, Equatable {
 
     // MARK: Animations
 
-    /// Resolved animation id for `mode`: explicit selection if it is a known built-in,
-    /// else `AnimationLibrary.defaultAnimationID(for:)`. The working group shares
-    /// the `working` selection.
-    ///
-    /// For a working-group mode the first stored entry among working, tool_running
-    /// and long_task_progress is used (normally they are identical).
+    /// The working group shares one selection, so the first stored entry in the group wins.
     public func animationID(for mode: AgentMode) -> String {
         let keys = AgentMode.workingGroup.contains(mode) ? AgentMode.workingGroup : [mode]
         if let stored = keys.lazy.compactMap({ animations[$0.rawValue] }).first,
@@ -222,23 +185,18 @@ public struct SidePulseSettings: Sendable, Equatable {
         return AnimationLibrary.defaultAnimationID(for: mode)
     }
 
-    /// Sets the selection (all three working-group modes when `mode` is in the group).
-    /// Unknown ids are ignored.
     public mutating func setAnimation(_ id: String, for mode: AgentMode) {
         guard AnimationLibrary.animation(id: id) != nil else { return }
         let modes = AgentMode.workingGroup.contains(mode) ? AgentMode.workingGroup : [mode]
         for target in modes { animations[target.rawValue] = id }
     }
 
-    /// Full resolved selection for every mode.
     public var animationSelection: [AgentMode: String] {
         Dictionary(uniqueKeysWithValues: AgentMode.allCases.map { ($0, animationID(for: $0)) })
     }
 
-    /// Replaces every selection with the profile's (Python
-    /// `with_applied_agent_animation_profile`): unknown ids fall back to the mode's
-    /// default and the working group takes the profile's `working` value. All modes
-    /// are stored explicitly afterwards.
+    /// Stores every mode explicitly, unlike `setAnimation`, as Python
+    /// `with_applied_agent_animation_profile` does.
     public mutating func apply(profile: AnimationProfile) {
         func resolved(_ mode: AgentMode) -> String {
             if let id = profile.animations[mode], AnimationLibrary.animation(id: id) != nil { return id }
@@ -250,38 +208,30 @@ public struct SidePulseSettings: Sendable, Equatable {
         })
     }
 
-    /// Built-in profile matching the current selection, nil = "Current".
     public var matchingProfile: AnimationProfile? { AnimationProfiles.matching(animationSelection) }
 
     // MARK: Devices
 
     public func device(id: String) -> DeviceSettings? { devices.first { $0.id == id } }
 
-    /// Entry's display, else `defaultDisplay`.
     public func display(forDevice id: String) -> LedDisplay {
         device(id: id)?.display ?? defaultDisplay
     }
 
-    /// Entry's brightness, else 255.
     public func brightness(forDevice id: String) -> Int {
         device(id: id).map { LedProgram.clampBrightness($0.brightness) } ?? 255
     }
 
-    /// Updates the entry's display (and name/path when non-empty values are given),
-    /// or appends a new entry (name/path default to the id, brightness 255).
     public mutating func setDisplay(_ display: LedDisplay, forDevice id: String, name: String? = nil, path: String? = nil) {
         upsertDevice(id: id, name: name, path: path) { $0.display = display }
     }
 
-    /// Updates the entry's brightness (clamped to 0...255; name/path when non-empty),
-    /// or appends a new entry whose display is `display(forDevice:)`.
     public mutating func setBrightness(_ brightness: Int, forDevice id: String, name: String? = nil, path: String? = nil) {
         let value = LedProgram.clampBrightness(brightness)
         upsertDevice(id: id, name: name, path: path) { $0.brightness = value }
     }
 
-    /// Upserts name/path for a connected device (first sighting copies
-    /// `defaultDisplay`, brightness 255). Returns true if anything changed.
+    /// Pins `defaultDisplay` on first sighting, since that default only applies to never-seen devices.
     @discardableResult
     public mutating func remember(_ device: DeviceCandidate) -> Bool {
         let before = devices
@@ -308,20 +258,12 @@ public struct SidePulseSettings: Sendable, Equatable {
         }
     }
 
-    /// `MonitorConfig` derived from these settings (staleAfter = idle timeout,
-    /// retention = session retention).
     public var monitorConfig: MonitorConfig {
         MonitorConfig(staleAfter: idleTimeoutSeconds, retention: sessionRetentionSeconds)
     }
 }
 
-/// Loads/saves settings.json. `update` does reload → mutate → atomic save under an
-/// advisory lock (`flock` on `<settings>.lock`) so the CLI and app never clobber
-/// each other. Thread-safe.
-///
-/// A settings file that exists but cannot be read or parsed is copied to
-/// `settings.json.bak.<stamp>` before it is replaced, so a hand-editing mistake
-/// never silently throws away the user's devices and choices.
+/// Writes hold a `flock` on `<settings>.lock` so the CLI and app never clobber each other's changes.
 public final class SettingsStore: @unchecked Sendable {
     public let url: URL
     /// Serializes this instance's writers; `flock` covers other instances and processes.
@@ -331,30 +273,21 @@ public final class SettingsStore: @unchecked Sendable {
         self.url = url
     }
 
-    /// `<settings>.lock` next to the settings file.
     public var lockURL: URL { URL(fileURLWithPath: url.path + ".lock") }
 
-    /// Missing/corrupt → defaults (never throws).
-    ///
-    /// Reads take no lock: saves replace the file atomically, so a reader sees
-    /// either the old or the new content.
+    /// Reads take no lock because saves replace the file atomically.
     public func load() -> SidePulseSettings {
         read().settings
     }
 
-    /// Writes `settings` atomically (pretty JSON, sorted keys, trailing newline)
-    /// under the lock, creating the directory if needed.
     public func save(_ settings: SidePulseSettings) throws {
         try withLock {
             try write(settings, replacing: read())
         }
     }
 
-    /// Reloads under the lock, applies `body` and saves. Returns the saved value.
-    /// The write is skipped when `body` changed nothing and the file exists, so a
-    /// no-op update does not bump the modification date.
-    ///
-    /// `body` runs while the lock is held: it must not call back into this store.
+    /// `body` runs while the lock is held, so it must not call back into this store.
+    /// A no-op update skips the write so it does not bump the modification date.
     @discardableResult
     public func update(_ body: (inout SidePulseSettings) -> Void) throws -> SidePulseSettings {
         try withLock {
@@ -368,12 +301,11 @@ public final class SettingsStore: @unchecked Sendable {
         }
     }
 
-    /// File modification date (nil if missing) — used to detect external edits.
+    /// Used to detect external edits.
     public var modificationDate: Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
-    /// What is on disk now.
     private enum FileState { case missing, valid, unreadable }
 
     private func read() -> (settings: SidePulseSettings, state: FileState) {
@@ -387,8 +319,8 @@ public final class SettingsStore: @unchecked Sendable {
         return (SidePulseSettings.fromJSON(json), .valid)
     }
 
-    /// Saves `settings`, first backing up an existing file that could not be used
-    /// (a failed backup fails the save rather than losing the file).
+    /// An unreadable file is backed up first (a failed backup fails the save) so a
+    /// hand-editing mistake never silently loses the user's settings.
     private func write(_ settings: SidePulseSettings, replacing current: (settings: SidePulseSettings, state: FileState)) throws {
         if current.state == .unreadable {
             try FileUtil.backup(url)
@@ -396,11 +328,8 @@ public final class SettingsStore: @unchecked Sendable {
         try FileUtil.atomicWrite(settings.toJSON().serialized(pretty: true) + "\n", to: url)
     }
 
-    /// How long `update`/`save` wait for another process's lock before failing.
     static let lockTimeout: TimeInterval = 5
 
-    /// Runs `body` holding the in-process mutex and an exclusive `flock` on
-    /// `lockURL` (released when the descriptor closes, even if `body` throws).
     private func withLock<T>(_ body: () throws -> T) throws -> T {
         mutex.lock()
         defer { mutex.unlock() }
@@ -408,8 +337,8 @@ public final class SettingsStore: @unchecked Sendable {
         let fd = open(lockURL.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard fd >= 0 else { throw FileUtil.posixError("open \(lockURL.path)") }
         defer { close(fd) }
-        // Bounded wait: a process stuck while holding the lock (e.g. a suspended
-        // `sidepulse write --manual`) must not wedge the app forever.
+        // Bounded wait so a process stuck holding the lock (e.g. a suspended
+        // `sidepulse write --manual`) cannot wedge the app forever.
         let deadline = Date().addingTimeInterval(Self.lockTimeout)
         while flock(fd, LOCK_EX | LOCK_NB) != 0 {
             guard errno == EWOULDBLOCK || errno == EINTR else { throw FileUtil.posixError("lock \(lockURL.path)") }

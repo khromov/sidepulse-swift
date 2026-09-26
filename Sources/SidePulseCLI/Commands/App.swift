@@ -1,15 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse app [start|stop|restart|status|install|uninstall] [--foreground]`
-/// (alias `status-bar`): the menu-bar app and its LaunchAgent.
-///
-/// - `start` (default): start the app; see `AppLauncher.start`.
-/// - `stop`: boot the agent out (the plist stays, so it returns at next login).
-/// - `restart`: kickstart -k.
-/// - `status`: plist / launchd / socket state; exit 0 only when the app answers.
-/// - `install` / `uninstall`: write+start / boot out+delete the LaunchAgent.
-/// - `--foreground`: run the app binary as a child process and wait for it.
 enum AppCommand: CLICommand {
     static let subcommands = ["start", "stop", "restart", "status", "install", "uninstall"]
 
@@ -71,8 +62,7 @@ enum AppCommand: CLICommand {
         return ExitCode.ok
     }
 
-    /// Runs the app binary as a child and returns its exit status. Ctrl-C / SIGTERM
-    /// are forwarded; the child ending on one of them counts as a clean exit.
+    /// A child ending on the forwarded SIGINT/SIGTERM counts as a clean exit.
     static func foreground(_ env: CLIEnvironment) throws -> Int32 {
         guard let binary = env.appLocator.locate() else { throw CommandFailure(message: env.appLocator.notFoundMessage) }
         if env.app.isRunning() {
@@ -99,25 +89,18 @@ enum AppCommand: CLICommand {
     }
 }
 
-/// Starting the app (`app start|restart|install`, `setup`, `settings`). Every path
-/// pings first: a second copy would only find the socket taken and exit.
+/// Every path pings first because a second copy would only find the socket taken and exit.
 enum AppLauncher {
-    /// The instance answering `ping`, and whether it is the LaunchAgent's own
-    /// (launchd reports the same pid). nil when nothing answers.
     static func runningInstance(_ env: CLIEnvironment) -> (ping: PingReply, underLaunchd: Bool)? {
         guard let ping = PingReply(data: env.app.request("ping", JSONObject(), 0.5)) else { return nil }
         let status = env.launchAgent.status()
         return (ping, status.loaded && ping.pid != nil && status.pid == ping.pid)
     }
 
-    /// ` (pid 123)` or "".
     private static func pidText(_ ping: PingReply) -> String { ping.pid.map { " (pid \($0))" } ?? "" }
 
-    /// Starts the app without changing the login item: through launchd when the
-    /// LaunchAgent plist exists, otherwise for this session only (`openApp`), since
-    /// writing the plist would turn Launch at Login back on. A plist that runs
-    /// another binary is started as it is, with a note. A running app is left
-    /// alone (`restart` kickstarts only the LaunchAgent's own instance).
+    /// Without a LaunchAgent plist the app opens for this session only, since writing the plist
+    /// would turn Launch at Login back on.
     static func start(_ env: CLIEnvironment, restart: Bool) throws -> (outcome: String, note: String?) {
         let agent = env.launchAgent
         if let running = runningInstance(env) {
@@ -147,9 +130,6 @@ enum AppLauncher {
         return (restart ? "restarted" : "started", note)
     }
 
-    /// Writes the LaunchAgent plist and starts it. When SidePulse already runs
-    /// outside launchd only the plist is written (the agent takes over at the next
-    /// login); an unchanged agent that is already running is left alone.
     static func install(_ env: CLIEnvironment, binary: String) throws -> String {
         let agent = env.launchAgent
         guard let running = runningInstance(env) else {

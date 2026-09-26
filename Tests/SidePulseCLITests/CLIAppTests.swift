@@ -35,7 +35,6 @@ final class CLIAppLocatorTests: XCTestCase {
             .locate(), custom)
         XCTAssertEqual(locator(cli: "/x", existing: ["/opt/bin/app", system], environment: ["SIDEPULSE_APP_PATH": "/opt/bin/app"])
             .locate(), "/opt/bin/app")
-        // A missing override falls through to the normal lookup.
         XCTAssertEqual(locator(cli: "/x", existing: [system], environment: ["SIDEPULSE_APP_PATH": "/missing"]).locate(), system)
     }
 
@@ -48,8 +47,8 @@ final class CLIAppLocatorTests: XCTestCase {
         ])
     }
 
-    /// Regression: the Python install's /Applications/SidePulse.app (same layout,
-    /// bundle id io.sidepulse.cli) was taken for the app.
+    /// Regression: the Python install's /Applications/SidePulse.app (bundle id io.sidepulse.cli)
+    /// was taken for the app.
     func testBundleOfAnotherAppIsSkipped() throws {
         let harness = CLIHarness()
         let binary = harness.installFakeApp()
@@ -158,8 +157,8 @@ final class CLIAppCommandTests: XCTestCase {
         XCTAssertTrue(harness.launchAgent.installs.isEmpty && harness.launchAgent.opened.isEmpty)
     }
 
-    /// A LaunchAgent that runs another binary is started as it is, never repointed
-    /// (a build/SidePulse.app would be deleted by the next build).
+    /// The plist is never repointed because the binary found might be a build/SidePulse.app that
+    /// the next build deletes.
     func testStartLeavesAStalePlistAloneWithANote() throws {
         let harness = CLIHarness()
         let binary = harness.installFakeApp()
@@ -174,9 +173,8 @@ final class CLIAppCommandTests: XCTestCase {
             "  note: the LaunchAgent runs /old/SidePulse; 'sidepulse app install' points it at \(binary)\n"))
     }
 
-    /// Regression: start/restart bootstrapped a second copy next to a running app;
-    /// it found the socket taken, showed a modal alert and exited, while the CLI
-    /// reported success.
+    /// Regression: start/restart bootstrapped a second copy next to a running app, which exited on
+    /// the taken socket while the CLI reported success.
     func testStartAndRestartLeaveARunningAppAlone() {
         let harness = CLIHarness()
         harness.installFakeApp()
@@ -250,9 +248,8 @@ final class CLIAppCommandTests: XCTestCase {
         XCTAssertTrue(harness.stdout.text.contains("  binary: \(binary)\n"))
     }
 
-    /// Regression: `app install` / `setup` next to an app running outside launchd
-    /// started a copy that exited at once ("already running"), leaving no crash
-    /// restart, while the CLI said "installed and started".
+    /// Regression: `app install` / `setup` next to an app running outside launchd started a copy
+    /// that exited at once while the CLI said "installed and started".
     func testInstallNextToARunningAppOnlyWritesThePlist() {
         let harness = CLIHarness()
         let binary = harness.installFakeApp()

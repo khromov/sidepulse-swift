@@ -5,8 +5,7 @@ import SidePulseCore
 final class CLILiveDashboardTests: XCTestCase {
     private let utc = TimeZone(identifier: "UTC")!
 
-    /// Python rendered a 154-column table whatever the width (the goldens ran at
-    /// COLUMNS=120); this port draws the same frame from 154 columns up.
+    /// Python's table was always 154 columns wide, so the goldens only match from 154 columns up.
     private func options(interval: Double = 1, recent: Double = 3600, all: Bool = false, color: Bool = false,
                          width: Int = 154) -> LiveDashboardOptions {
         var options = LiveDashboardOptions()
@@ -20,10 +19,8 @@ final class CLILiveDashboardTests: XCTestCase {
         return options
     }
 
-    /// The Python frame with this port's documented deviations applied: the title
-    /// is "SidePulse", line 2 names the snapshot source, the OK/MISS marker is
-    /// padded before it is colored (Python padded the escape sequence, which broke
-    /// the column when colors were on), and the reason is cut to the frame width.
+    /// Applies the port's deliberate deviations; the marker is padded inside the color codes
+    /// because Python padded the escape sequence and broke the column.
     private func adapted(_ python: String, source: String = "logs", width: Int = 154) -> String {
         python
             .replacingOccurrences(of: "Agent Monitor", with: "SidePulse")
@@ -142,7 +139,6 @@ final class CLILiveDashboardTests: XCTestCase {
     }
 
     func testTerminalColumnsPreferCOLUMNSLikePython() {
-        // shutil.get_terminal_size: $COLUMNS first, then the terminal, then the fallback.
         XCTAssertEqual(Terminal.columns(environment: ["COLUMNS": "200"], ttyColumns: { 90 }), 200)
         XCTAssertEqual(Terminal.columns(environment: ["COLUMNS": "0"], ttyColumns: { 90 }), 90)
         XCTAssertEqual(Terminal.columns(environment: ["COLUMNS": "wide"], ttyColumns: { 90 }), 90)
@@ -202,7 +198,6 @@ final class CLILiveDashboardTests: XCTestCase {
     // MARK: Visible rows
 
     func testWatchFiltersToRecentStatuses() {
-        // Python test_watch_filters_to_recent_statuses.
         let recent = CLIFixtures.status("codex", "recent", "Recent", .working, age: 20, event: "PostToolUse")
         let older = CLIFixtures.status("claude", "older", "Older", .completed, age: 600, event: "Stop")
         let snapshot = MonitorSnapshot(collectedAt: CLIFixtures.now, sources: [],

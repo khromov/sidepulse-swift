@@ -1,8 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse live [--interval 1] [--recent-seconds 3600] [--all] [--no-color] [--offline]`:
-/// full-screen dashboard redrawn every interval until Ctrl-C (exit 0).
 enum LiveCommand: CLICommand {
     static let spec = CommandSpec(
         name: "live",
@@ -34,8 +32,7 @@ enum LiveCommand: CLICommand {
         return ExitCode.ok
     }
 
-    /// Draws frames until `wait(interval)` reports Ctrl-C, or after `frames`
-    /// frames (tests). Hides the cursor on a TTY and always restores it.
+    /// `frames` bounds the loop for tests.
     static func loop(_ env: CLIEnvironment, options: LiveDashboardOptions, offline: Bool, frames: Int? = nil,
                      wait: (TimeInterval) -> Bool) {
         if env.stdoutIsTTY { env.stdout.write(LiveDashboard.hideCursor) }

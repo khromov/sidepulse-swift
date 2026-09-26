@@ -1,12 +1,5 @@
-// Anonymized regression fixture for the Status module.
-//
-// Modeled on real hook logs: Python-era full Claude payloads (claude.jsonl), the
-// Codex `{"logged_at","event":{...}}` wrapper (codex.jsonl), and two lines in our
-// trimmed flat record shape (millisecond `logged_at`, `tool_response_failed`).
-// Paths, ids, prompts and messages are made up. The expected results in
-// StatusRegressionFixtureTests were produced by running the Python collector
-// (sidepulse.collector.AgentMonitor) over these exact bytes.
-//
+// Anonymized hook logs whose expected rows in StatusRegressionFixtureTests came from the Python
+// collector over these exact bytes.
 // Kept as Swift source so the test target needs no resource declarations.
 
 enum StatusRegressionFixture {

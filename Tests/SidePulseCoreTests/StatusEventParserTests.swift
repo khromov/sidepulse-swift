@@ -87,8 +87,7 @@ final class StatusEventParserTests: XCTestCase {
     }
 
     func testProviderIsPassedThroughWithoutGrokSniffing() throws {
-        // Python re-labelled this Claude-log line as "grok"; the Swift port keeps the
-        // provider it was given but still normalizes the camelCase keys.
+        // Python re-labelled this Claude-log line as "grok"; the Swift port keeps the provider it was given.
         let event = try XCTUnwrap(parse("claude", #"""
         {"hookEventName":"notification","sessionId":"019f7724-da8c-7df0-b41d-bda99e0cac9f",
          "workspaceRoot":"/Users/pero/git/ai_food/","transcriptPath":"/Users/pero/.grok/sessions/x/updates.jsonl",

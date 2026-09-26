@@ -36,7 +36,6 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testAbsentValuesAreOmitted() {
         XCTAssertEqual(jsonString(hookRecord(.claude, #"{"hook_event_name":"Stop","session_id":"s1"}"#)),
                        #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"Stop","session_id":"s1"}"#)
-        // Empty strings and nulls count as absent.
         XCTAssertEqual(jsonString(hookRecord(.claude, #"{"hook_event_name":"Stop","session_id":"","cwd":null,"message":""}"#)),
                        #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"Stop"}"#)
     }
@@ -44,7 +43,6 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testLoggedAtUsesMillisecondUTC() {
         XCTAssertEqual(hookRecord(.claude, "{}")["logged_at"], .string(TimeFormat.iso8601Millis(fixedNow)))
         XCTAssertEqual(hookRecord(.claude, "{}")["logged_at"], .string("2026-09-26T00:31:49.125Z"))
-        // A logged_at inside the payload never replaces ours.
         XCTAssertEqual(hookRecord(.claude, #"{"logged_at":"1999-01-01T00:00:00Z"}"#)["logged_at"], .string("2026-09-26T00:31:49.125Z"))
     }
 
@@ -81,8 +79,7 @@ final class HookRuntimeRecordTests: XCTestCase {
         }
     }
 
-    /// Outputs of Python `_tool_response_looks_failed` (run in-process) for edge
-    /// values, through the record's precomputed flag (the value the app trusts).
+    /// Expected values are outputs of Python `_tool_response_looks_failed`.
     func testFailureFlagMatchesPythonEdgeVectors() {
         let vectors: [(String, Bool)] = [
             (#"{"exit_code":1e0}"#, true), (#"{"exit_code":0e5}"#, false), (#"{"exit_code":-0}"#, false),
@@ -90,8 +87,7 @@ final class HookRuntimeRecordTests: XCTestCase {
             (#"{"exit_code":{}}"#, true), (#"{"exit_code":""}"#, true), (#"{"interrupted":1}"#, false),
             (#"{"success":0}"#, false), (#"{"success":null}"#, false), (#"{"interrupted":"true"}"#, false),
             (#""EXIT CODE: 12""#, true), (#""exit code:1""#, false), (#""TRACEBACK""#, true), ("[]", false), ("5", false),
-            // Python's `in` compares code points; the hook's old private copy compared
-            // graphemes and missed this one.
+            // Python's `in` compares code points, which an old grapheme-based comparison missed.
             (#""Exit code: 1\u0301""#, true),
         ]
         for (json, failed) in vectors {
@@ -169,9 +165,8 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(message(long)?.stringValue?.unicodeScalars.count, 16003)
     }
 
-    /// Regression: the head+tail cut went through a code block, the remaining fences
-    /// paired up the other way round, and a long Stop that is Done in full was
-    /// logged as one that asks (an example marker or question inside a code block).
+    /// Regression: a head+tail cut through a code block re-paired the remaining fences, so a long Stop that
+    /// is Done in full was logged as asking.
     func testTrimmedMessageClassifiesLikeTheFullMessage() throws {
         func mode(_ object: JSONObject) throws -> AgentMode? {
             ModeClassifier.mode(for: try XCTUnwrap(EventParser.parseRecord(provider: "claude", object: object)))
@@ -198,8 +193,7 @@ final class HookRuntimeRecordTests: XCTestCase {
         }
     }
 
-    /// `background_tasks` (Stop / SubagentStop) keeps only the ids, and only when the
-    /// whole list fits; the shape is the one Claude logs.
+    /// The task shapes are the ones Claude logs.
     func testBackgroundTaskIDs() {
         func ids(_ tasks: String) -> JSONValue? {
             hookRecord(.claude, #"{"hook_event_name":"Stop","background_tasks":\#(tasks)}"#)["background_task_ids"]
@@ -218,7 +212,6 @@ final class HookRuntimeRecordTests: XCTestCase {
         }
         XCTAssertEqual(hookRecord(.claude, #"{"backgroundTasks":[{"id":"a"}]}"#)["background_task_ids"], .array([.string("a")]))
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["background_task_ids"])
-        // Key order: after reason, before the markers.
         XCTAssertEqual(hookRecord(.claude, #"{"sidepulse_status":"done","background_tasks":[],"reason":"r"}"#).keys,
                        ["logged_at", "reason", "background_task_ids", "sidepulse_status"])
     }
@@ -233,7 +226,6 @@ final class HookRuntimeRecordTests: XCTestCase {
         let wrapped = #"{"logged_at":"2026-09-17T17:41:23Z","event":{"session_id":"c1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}}"#
         XCTAssertEqual(jsonString(hookRecord(.codex, wrapped, origin: fixedOrigin)),
                        #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"UserPromptSubmit","session_id":"c1","turn_id":"t1","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}"#)
-        // A flat Codex payload is used as-is.
         XCTAssertEqual(hookRecord(.codex, #"{"hook_event_name":"Stop","session_id":"c2"}"#)["session_id"], .string("c2"))
         // Only Codex payloads are unwrapped.
         XCTAssertNil(hookRecord(.claude, #"{"event":{"hook_event_name":"Stop"}}"#)["hook_event_name"])
@@ -273,7 +265,6 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(result["agent_origin_kind"], .string("claude_vscode"))
         XCTAssertNil(result["agent_origin_source"])
         XCTAssertEqual(hookRecord(.claude, #"{"agentOrigin":"Custom"}"#, origin: fixedOrigin)["agent_origin"], .string("Custom"))
-        // Without a payload origin the detected one is used; nil adds nothing.
         XCTAssertEqual(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#, origin: fixedOrigin)["agent_origin_source"], .string("process:claude"))
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["agent_origin"])
     }
@@ -281,7 +272,6 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testCamelCaseFallbacks() {
         let result = hookRecord(.claude, #"{"hookEventName":"stop","sessionId":"g1","turnId":"t","agentId":"a","toolName":"Read","toolInput":{"command":"x"},"toolResponse":"Traceback","lastAssistantMessage":"bye","notificationType":"idle_prompt"}"#)
         XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"stop","session_id":"g1","turn_id":"t","agent_id":"a","tool_name":"Read","tool_input":{"command":"x"},"tool_response":"Traceback","tool_response_failed":true,"last_assistant_message":"bye","notification_type":"idle_prompt"}"#)
-        // snake_case wins when both are present.
         XCTAssertEqual(hookRecord(.claude, #"{"sessionId":"camel","session_id":"snake"}"#)["session_id"], .string("snake"))
     }
 
@@ -326,8 +316,7 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertNil(HookRuntime.bounded(.object(JSONObject()), limit: 4))
     }
 
-    /// Every field at its limit, made of characters that escape to six bytes: the
-    /// record must still fit comfortably in one socket message.
+    /// Every field at its limit with characters that escape to six bytes, the worst case for one socket message.
     func testWorstCaseRecordFitsInOneSocketMessage() {
         let nasty = String(repeating: "\u{1}", count: 40_000)
         var payload = JSONObject()
@@ -617,7 +606,6 @@ final class HookRuntimeRunTests: XCTestCase {
 
     // MARK: Latency
 
-    /// A realistic 50 KB PostToolUse payload (Bash output dominates).
     private static func fiftyKilobytePayload() -> Data {
         let stdout = (0..<700).map { "line \($0): drwxr-xr-x  12 k  staff   384 Sep 26 02:31 Sources/SidePulseCore" }.joined(separator: "\n")
         let payload: JSONObject = [
@@ -698,7 +686,6 @@ final class HookRuntimeLogStoreTests: XCTestCase {
         XCTAssertEqual(FileUtil.readText(rotated), "12345678\n12345678\nabc\n")
         XCTAssertEqual(FileUtil.readText(url), "new\n")
 
-        // A second rotation replaces the previous .1.
         try HookLogStore.append(line: String(repeating: "x", count: 30), to: url, rotateAt: 18)
         try HookLogStore.append(line: "latest", to: url, rotateAt: 18)
         XCTAssertEqual(FileUtil.readText(rotated), "new\n" + String(repeating: "x", count: 30) + "\n")
@@ -822,7 +809,6 @@ final class HookRuntimeOriginTests: XCTestCase {
         XCTAssertEqual(process("python3 claude", comm: "python3", path: "/usr/bin/python3").basename, "")
         // A node-hosted CLI is not recognised by basename (same as Python).
         XCTAssertEqual(detect(.claude, [:], [process("node /opt/homebrew/bin/claude")]).label, "Claude")
-        // The provider must match.
         XCTAssertEqual(detect(.codex, [:], [process("claude")]).label, "Codex")
     }
 

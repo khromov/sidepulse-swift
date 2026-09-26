@@ -1,11 +1,8 @@
 import Foundation
 import SidePulseCore
 
-/// The running menu-bar app, reached over its Unix socket (see `IPCMessage`).
 public struct AppConnection {
-    /// `ping` round-trip succeeded.
     public var isRunning: () -> Bool
-    /// Sends a command and returns the raw reply (nil when nobody answers).
     public var request: (_ command: String, _ args: JSONObject, _ timeout: TimeInterval) -> Data?
 
     public init(isRunning: @escaping () -> Bool,
@@ -23,41 +20,33 @@ public struct AppConnection {
         )
     }
 
-    /// Nothing is listening (tests, or "app not running").
     public static let unavailable = AppConnection(isRunning: { false }, request: { _, _, _ in nil })
 
-    /// True when the reply to a command is the plain `ok` acknowledgement.
     public static func isOK(_ reply: Data?) -> Bool {
         guard let reply else { return false }
         return String(decoding: reply, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "ok"
     }
 }
 
-/// Parsed reply to the `ping` command: `{"ok":true,"pid":123,"version":"0.1.0"}`.
 public struct PingReply: Equatable, Sendable {
     public var pid: Int?
     public var version: String?
 
     public init(pid: Int?, version: String?) { self.pid = pid; self.version = version }
 
-    /// nil unless the reply is a JSON object with `"ok": true`.
     public init?(data: Data?) {
         guard let data, let value = try? JSONValue.parse(data), value["ok"]?.boolValue == true else { return nil }
         pid = value["pid"]?.intValue
         version = value["version"]?.stringValue
     }
 
-    /// `pid 123, version 0.1.0` (the parts that are known; may be empty).
     public var details: String {
         [pid.map { "pid \($0)" }, version.map { "version \($0)" }].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
-/// Where `status`, `live` and `leds` get their snapshot from.
 public struct SnapshotLoader {
-    /// The app's live snapshot (`status` socket command), nil when it does not answer.
     public var fromApp: (CLIEnvironment) -> MonitorSnapshot?
-    /// Offline snapshot rebuilt from the provider hook logs.
     public var fromLogs: (CLIEnvironment) -> MonitorSnapshot
 
     public init(fromApp: @escaping (CLIEnvironment) -> MonitorSnapshot?,
@@ -85,8 +74,7 @@ public struct SnapshotLoader {
     )
 }
 
-/// Hook installers, injectable so command logic is testable without touching
-/// real agent configs.
+/// Injectable so tests never touch real agent configs.
 public struct HookOperations {
     public var install: (_ provider: HookProvider, _ paths: SidePulsePaths, _ cliPath: String,
                          _ dryRun: Bool, _ trust: Bool) throws -> InstallResult
@@ -104,22 +92,17 @@ public struct HookOperations {
     )
 }
 
-/// The app's LaunchAgent, starting the app without it, and the legacy Python
-/// cleanup; injectable so `app`, `setup` and `settings` never touch launchd in tests.
+/// Injectable so `app`, `setup` and `settings` never touch launchd in tests.
 public struct LaunchAgentOperations {
     public var plistPath: URL
-    /// Writes the plist if changed and (when `start`) boots the agent out/in and
-    /// kickstarts it. Returns true if the plist changed.
+    /// Returns whether the plist changed.
     public var install: (_ programArguments: [String], _ start: Bool) throws -> Bool
     public var uninstall: () throws -> Void
     public var start: (_ restart: Bool) throws -> Void
     public var stop: () throws -> Void
     public var status: () -> LaunchAgentStatus
-    /// ProgramArguments of the installed plist (nil when there is none).
     public var installedProgram: () -> [String]?
-    /// Starts the app for this login session only, without a LaunchAgent.
     public var openApp: (_ appBinary: String) throws -> Void
-    /// `LegacyPythonMigration.run`: removes Python-era LaunchAgents; returns messages.
     public var migrateLegacy: (_ dryRun: Bool) -> [String]
 
     public init(plistPath: URL,
@@ -151,8 +134,7 @@ public struct LaunchAgentOperations {
         )
     }
 
-    /// `/usr/bin/open -a <bundle>` for a bundled app binary (Launch Services starts
-    /// it like a Finder double-click); a bare binary is spawned detached.
+    /// Bundled binaries go through `open -a` so Launch Services starts them like a Finder double-click.
     static func openApp(binary: String) throws {
         let process = Process()
         if let bundle = HookCLIPath.enclosingBundle(of: binary) {

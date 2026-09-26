@@ -6,7 +6,6 @@ import IOKit.pwr_mgt
 
 public struct BatteryState: Sendable, Equatable {
     public var present: Bool
-    /// 0...100, nil when unknown.
     public var percent: Double?
     public var onACPower: Bool
     public var charging: Bool
@@ -17,11 +16,6 @@ public struct BatteryState: Sendable, Equatable {
 
     public static let unknown = BatteryState(present: false, percent: nil, onACPower: true, charging: false)
 
-    /// Reads the internal battery via IOKit power sources
-    /// (IOPSCopyPowerSourcesInfo / IOPSCopyPowerSourcesList / IOPSGetPowerSourceDescription).
-    ///
-    /// Macs without a battery report `present == false` and the providing source
-    /// (normally AC). `unknown` when IOKit returns nothing.
     public static func read() -> BatteryState {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return .unknown }
         let providing = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
@@ -35,9 +29,8 @@ public struct BatteryState: Sendable, Equatable {
         return BatteryState(present: false, percent: nil, onACPower: providingAC, charging: false)
     }
 
-    /// Interprets one IOPS description dictionary. nil unless it describes the
-    /// internal battery. Percent = current / max capacity (IOPS reports both,
-    /// normally already in percent), clamped to 0...100.
+    /// IOPS capacities are normally already percentages, but dividing by the max keeps the value
+    /// right when they are not.
     static func from(powerSourceDescription description: [String: Any], providingAC: Bool) -> BatteryState? {
         guard description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType else { return nil }
         let present = (description[kIOPSIsPresentKey] as? Bool) ?? true
@@ -54,24 +47,17 @@ public struct BatteryState: Sendable, Equatable {
 
 // MARK: - Keep awake
 
-/// Pure policy logic for keep-awake (spec status-bar §9).
 public struct KeepAwakePolicy: Sendable {
-    /// Grace after an agent completes / asks, during which we keep holding.
     public var grace: TimeInterval = 300
     private var graceDeadline: Date?
     private var lastMode: AgentMode?
 
     public init(grace: TimeInterval = 300) { self.grace = grace }
 
-    /// Pending grace deadline, if any (tests).
     var pendingGraceDeadline: Date? { graceDeadline }
 
-    /// Working group → true (clears grace). Completed / waiting / blocked → sets a
-    /// grace deadline when entering that mode (first time), true until it passes.
-    /// Other modes → true while an earlier deadline is pending.
-    ///
-    /// "Entering" means the mode differs from the previous call's mode or no
-    /// deadline is set, so repeated refreshes in the same mode never extend it.
+    /// The grace deadline is set only on entering a completed/waiting/blocked mode, so repeated
+    /// refreshes never extend it.
     public mutating func agentsActive(mode: AgentMode, now: Date) -> Bool {
         defer { lastMode = mode }
         switch mode {
@@ -93,9 +79,6 @@ public struct KeepAwakePolicy: Sendable {
         }
     }
 
-    /// Battery present, not on AC, percent < threshold (threshold <= 0 disables).
-    ///
-    /// The threshold is clamped to 0...100; an unknown percent never triggers.
     public static func safeguardActive(battery: BatteryState, minBatteryPercent: Double) -> Bool {
         guard minBatteryPercent.isFinite else { return false }
         let threshold = min(100, max(0, minBatteryPercent))
@@ -103,7 +86,6 @@ public struct KeepAwakePolicy: Sendable {
         return percent < threshold
     }
 
-    /// (always || (agents && agentsActive)) && !safeguard.
     public static func shouldHold(policy: SleepPolicy, agentsActive: Bool, battery: BatteryState, minBatteryPercent: Double) -> Bool {
         let requested: Bool
         switch policy {
@@ -115,11 +97,9 @@ public struct KeepAwakePolicy: Sendable {
     }
 }
 
-/// Holds an IOKit power assertion (PreventUserIdleSystemSleep) while held: the
-/// Mac does not idle-sleep, though the display may. Thread-safe. The system drops
-/// the assertion when the process exits, so nothing outlives the app.
+/// PreventUserIdleSystemSleep still lets the display sleep, and the system drops it when the
+/// process exits so nothing outlives the app.
 public final class KeepAwakeAssertion: @unchecked Sendable {
-    /// The assertion's name, shown by `pmset -g assertions`.
     public let reason: String
     private let lock = NSLock()
     private var assertion: IOPMAssertionID?
@@ -138,13 +118,11 @@ public final class KeepAwakeAssertion: @unchecked Sendable {
         return assertion != nil
     }
 
-    /// Why the last attempt to hold failed, nil after a successful one.
     public var lastError: String? {
         lock.lock(); defer { lock.unlock() }
         return error
     }
 
-    /// Creates or releases the assertion; does nothing when already in that state.
     public func setHeld(_ held: Bool) {
         lock.lock(); defer { lock.unlock() }
         if held {

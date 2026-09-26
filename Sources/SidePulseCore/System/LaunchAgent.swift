@@ -18,17 +18,12 @@ public struct LaunchAgentError: Error, Equatable, CustomStringConvertible {
     public var description: String { message }
 }
 
-/// Manages `~/Library/LaunchAgents/<label>.plist` via `launchctl bootstrap/bootout/kickstart`
-/// in the `gui/<uid>` domain.
 public struct LaunchAgentManager: Sendable {
-    /// Runs launchctl with the given arguments; returns (exit status, combined output).
     public typealias LaunchctlRunner = @Sendable ([String]) -> (status: Int32, output: String)
 
     public var paths: SidePulsePaths
     public var label: String
-    /// How launchctl is invoked; tests substitute a fake.
     public var runner: LaunchctlRunner
-    /// How long to wait for launchd to finish tearing a job down after bootout.
     public var unloadTimeout: TimeInterval = 3
 
     public init(paths: SidePulsePaths, label: String = SidePulseConstants.launchAgentLabel) {
@@ -39,30 +34,21 @@ public struct LaunchAgentManager: Sendable {
         self.paths = paths; self.label = label; self.runner = runner
     }
 
-    /// The real `/bin/launchctl`.
     public static let systemRunner: LaunchctlRunner = { args in LaunchAgentManager.launchctl(args) }
 
-    /// `gui/<uid>`.
     public static var domain: String { "gui/\(getuid())" }
-    /// `gui/<uid>/<label>`.
     public var serviceTarget: String { "\(Self.domain)/\(label)" }
     public var plistURL: URL { paths.launchAgentPlist(label: label) }
 
-    /// PATH for the app under launchd, whose default is only
-    /// /usr/bin:/bin:/usr/sbin:/sbin: the installing process's PATH (absolute
-    /// entries) plus ~/.local/bin, /opt/homebrew/bin and /usr/local/bin, so the
-    /// tools the app runs (codex, and node for an npm-installed codex) resolve as
-    /// they do in a terminal.
+    /// launchd's default PATH is only /usr/bin:/bin:/usr/sbin:/sbin, so the tools the app runs
+    /// (codex, and node for an npm-installed codex) would not resolve as they do in a terminal.
     public var launchPath: String {
         let own = (paths.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(separator: ":").map(String.init)
         let extra = [paths.home.appendingPathComponent(".local/bin").path, "/opt/homebrew/bin", "/usr/local/bin"]
         return uniqued(own.filter { $0.hasPrefix("/") } + extra).joined(separator: ":")
     }
 
-    /// Plist XML: Label, ProgramArguments, RunAtLoad true,
-    /// KeepAlive {SuccessfulExit: false} (restart after crashes, stay quit after
-    /// Quit), ProcessType Interactive, EnvironmentVariables {PATH: `launchPath`},
-    /// StandardOut/ErrorPath → `<root>/app.out.log`/`app.err.log`.
+    /// KeepAlive with SuccessfulExit false restarts the app after a crash but lets it stay quit after Quit.
     public func plistContents(programArguments: [String]) -> String {
         func string(_ s: String) -> String { "<string>\(Self.xmlEscape(s))</string>" }
         var lines = [
@@ -102,8 +88,6 @@ public struct LaunchAgentManager: Sendable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// Writes the plist (atomic) if changed; when `start`, bootout (ignore errors)
-    /// + bootstrap + kickstart. Returns true if the plist changed.
     @discardableResult
     public func install(programArguments: [String], start: Bool) throws -> Bool {
         let contents = plistContents(programArguments: programArguments)
@@ -120,7 +104,6 @@ public struct LaunchAgentManager: Sendable {
         return changed
     }
 
-    /// bootout + delete plist.
     public func uninstall() throws {
         if isLoaded {
             _ = runner(["bootout", serviceTarget])
@@ -134,9 +117,8 @@ public struct LaunchAgentManager: Sendable {
         if isLoaded { throw LaunchAgentError("\(label) is still loaded after bootout") }
     }
 
-    /// bootstrap if not loaded, then `kickstart` (use `restart` = `kickstart -k`).
-    /// launchd spawns a job at most once per 10 s (ThrottleInterval), so a
-    /// restart within 10 s of the previous launch blocks until that has passed.
+    /// launchd's 10 s ThrottleInterval makes a restart within 10 s of the previous launch block
+    /// until it passes.
     public func start(restart: Bool = false) throws {
         if isLoaded {
             try kickstart(restart: restart)
@@ -147,7 +129,7 @@ public struct LaunchAgentManager: Sendable {
         }
     }
 
-    /// bootout (plist kept, so it returns at next login).
+    /// Keeps the plist, so the agent returns at next login.
     public func stop() throws {
         guard isLoaded else { return }
         let result = runner(["bootout", serviceTarget])
@@ -157,7 +139,6 @@ public struct LaunchAgentManager: Sendable {
         }
     }
 
-    /// ProgramArguments of the installed plist; nil when it is missing or unreadable.
     public func installedProgramArguments() -> [String]? {
         guard let data = try? Data(contentsOf: plistURL),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
@@ -173,9 +154,8 @@ public struct LaunchAgentManager: Sendable {
         return LaunchAgentStatus(installed: installed, loaded: true, pid: Self.parsePID(result.output))
     }
 
-    /// Runs /bin/launchctl with args; returns (exit status, combined output).
-    /// Safe to call on the main thread: it never spins the run loop, and the
-    /// pipe's descriptors are closed before it returns.
+    /// Safe on the main thread: it never spins the run loop, and the pipe's descriptors are closed
+    /// before it returns.
     @discardableResult
     public static func launchctl(_ args: [String]) -> (status: Int32, output: String) {
         autoreleasepool {
@@ -204,8 +184,8 @@ public struct LaunchAgentManager: Sendable {
 
     var isLoaded: Bool { runner(["print", serviceTarget]).status == 0 }
 
-    /// `bootstrap gui/<uid> <plist>`, retried briefly: right after a bootout,
-    /// launchd can still be tearing the old job down ("Input/output error").
+    /// Retried briefly because right after a bootout launchd can still be tearing the old job down
+    /// ("Input/output error").
     private func bootstrap() throws {
         guard FileManager.default.fileExists(atPath: plistURL.path) else {
             throw LaunchAgentError("\(plistURL.path) does not exist; install the launch agent first")
@@ -231,7 +211,6 @@ public struct LaunchAgentManager: Sendable {
         while isLoaded && Date() < deadline { usleep(50_000) }
     }
 
-    /// `pid = 123` from `launchctl print` output.
     static func parsePID(_ output: String) -> Int? {
         for line in output.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -261,22 +240,14 @@ public struct LaunchAgentManager: Sendable {
     }
 }
 
-/// Removes the Python sidepulse install's background agents so they do not fight
-/// over the LEDs. Hook cleanup is done by the hook installers (legacy markers).
-///
-/// Plists are looked up in `paths.launchAgentsDir` only. launchctl is used only
-/// when that directory is the current user's real `~/Library/LaunchAgents` (the
-/// `gui/<uid>` domain belongs to it) or when a runner is passed explicitly; for
-/// any other home (tests, scratch dirs) the plists are just deleted.
+/// Removes the Python install's background agents so they do not fight over the LEDs.
 public enum LegacyPythonMigration {
-    /// io.sidepulse.agentstatus, io.sidepulse.service, com.sidepulse.agentstatus,
-    /// com.pixiepulse.agentstatus. (io.sidepulse.sdejectguard is left alone.)
+    /// io.sidepulse.sdejectguard is deliberately left alone.
     public static let legacyLaunchAgentLabels = [
         "io.sidepulse.agentstatus", "io.sidepulse.service",
         "com.sidepulse.agentstatus", "com.pixiepulse.agentstatus",
     ]
 
-    /// Human-readable actions that `run` would take (plists present and/or loaded).
     public static func plan(paths: SidePulsePaths) -> [String] {
         plan(paths: paths, launchctl: nil)
     }
@@ -292,7 +263,6 @@ public enum LegacyPythonMigration {
         }
     }
 
-    /// Boots out and deletes each legacy plist that exists. Returns messages.
     public static func run(paths: SidePulsePaths, dryRun: Bool) -> [String] {
         run(paths: paths, dryRun: dryRun, launchctl: nil)
     }
@@ -337,7 +307,8 @@ public enum LegacyPythonMigration {
         return (plist, exists, loaded)
     }
 
-    /// The real launchctl, only when `paths` is the logged-in user's own home.
+    /// Only the logged-in user's own LaunchAgents gets the real launchctl, because the `gui/<uid>`
+    /// domain belongs to it.
     static func defaultRunner(for paths: SidePulsePaths) -> LaunchAgentManager.LaunchctlRunner? {
         guard let entry = getpwuid(getuid()), let dir = entry.pointee.pw_dir else { return nil }
         let realAgents = URL(fileURLWithPath: String(cString: dir)).appendingPathComponent("Library/LaunchAgents")

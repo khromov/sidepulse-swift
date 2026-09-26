@@ -1,7 +1,6 @@
 import AppKit
 import SidePulseCore
 
-/// The outcome of a hook install/uninstall, ready for an alert or the settings window.
 struct HookOutcome {
     let provider: HookProvider
     let action: HookAction
@@ -12,7 +11,6 @@ struct HookOutcome {
         return false
     }
 
-    /// `Codex hooks installed.` / `Codex hooks failed: …`.
     var message: String {
         switch result {
         case .success(let install):
@@ -22,7 +20,6 @@ struct HookOutcome {
         }
     }
 
-    /// Notes, backup and config path (empty on failure).
     var details: [String] {
         guard case .success(let install) = result else { return [] }
         return HookPresentation.detailLines(notes: install.notes, backupPath: install.backupPath?.path,
@@ -30,13 +27,10 @@ struct HookOutcome {
     }
 }
 
-/// Actions shared by the status menu and the settings window: hooks, launch at
-/// login, the logs folder and alerts. Main-thread only.
 @MainActor
 final class AppServices {
     let runtime: SidePulseRuntime
-    /// Called after a hook action or a Launch at Login change, whichever UI started
-    /// it, so the other one (menu or settings window) can re-read that state.
+    /// Lets the menu or settings window re-read state after the other one changed hooks or Launch at Login.
     var onStateChange: (() -> Void)?
 
     init(runtime: SidePulseRuntime) {
@@ -47,20 +41,15 @@ final class AppServices {
 
     // MARK: Hooks
 
-    /// Current hook state of every provider (reads the agent configs).
     func hookStates() -> [HookState] {
         HookDoctor.inspectAll(paths: paths)
     }
 
-    /// CLI path for new hook commands (`HookCLIPath.resolve`): the stable
-    /// `~/.local/bin/sidepulse` when it is ours, else the bundled helper; nil when
-    /// neither exists (never the menu-bar binary).
     var hookCLIPath: String? {
         HookCLIPath.resolve(paths: paths)
     }
 
-    /// Runs the installer off the main thread (Codex trust refresh can take seconds),
-    /// logs the result, refreshes the runtime and calls `completion` on the main thread.
+    /// Runs off the main thread because the Codex trust refresh can take seconds.
     func performHook(_ action: HookAction, provider: HookProvider,
                      completion: @escaping @MainActor (HookOutcome) -> Void) {
         let paths = self.paths
@@ -83,7 +72,6 @@ final class AppServices {
         }
     }
 
-    /// Alert with the outcome's message and details.
     func showHookOutcome(_ outcome: HookOutcome) {
         Self.showAlert(title: outcome.message, message: outcome.details.joined(separator: "\n"),
                        style: outcome.succeeded ? .informational : .warning)
@@ -93,14 +81,12 @@ final class AppServices {
 
     private var launchAgent: LaunchAgentManager { LaunchAgentManager(paths: paths) }
 
-    /// The LaunchAgent plist exists.
     var launchAtLoginEnabled: Bool {
         FileManager.default.fileExists(atPath: paths.launchAgentPlist(label: launchAgent.label).path)
     }
 
-    /// Enabling writes the plist for the running app binary without starting a second
-    /// instance. Disabling removes it; when this process was itself started by that
-    /// LaunchAgent only the plist is deleted, because `bootout` would kill the app.
+    /// When this process was started by the LaunchAgent, disabling only deletes the plist because `bootout`
+    /// would kill the app.
     func setLaunchAtLogin(_ enabled: Bool) throws {
         defer { onStateChange?() }
         let manager = launchAgent
@@ -119,7 +105,6 @@ final class AppServices {
 
     // MARK: Misc
 
-    /// Reveals `logs/` (next to `app.log` and `settings.json`) in Finder.
     func openLogsFolder() {
         try? paths.ensureDirectories()
         NSWorkspace.shared.activateFileViewerSelecting([paths.logsDir])
@@ -134,7 +119,6 @@ final class AppServices {
         alert.runModal()
     }
 
-    /// Two-button confirmation; true when the user picked `confirmTitle`.
     static func confirm(title: String, message: String, confirmTitle: String) -> Bool {
         NSApp.activate()
         let alert = NSAlert()

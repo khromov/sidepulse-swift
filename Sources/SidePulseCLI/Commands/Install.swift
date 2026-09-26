@@ -1,13 +1,8 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse install [claude|codex|all]... [--dry-run] [--no-trust]`
-///
-/// Without a provider, installs hooks for every agent whose config directory
-/// exists (`~/.claude`, `~/.codex`) so we never create configs for agents that
-/// are not installed. Hook commands call `HookCLIPath.resolve`. A provider that
-/// fails (e.g. malformed JSON) is reported and the others are still processed;
-/// the exit code is then 1.
+/// Without a provider only agents whose config directory exists get hooks, so we never create
+/// configs for agents that aren't installed.
 enum InstallCommand: CLICommand {
     static let spec = CommandSpec(
         name: "install",
@@ -33,8 +28,6 @@ enum InstallCommand: CLICommand {
         return succeeded ? ExitCode.ok : ExitCode.failure
     }
 
-    /// Installs and prints one block per provider (shared with `setup`). Returns
-    /// false if any provider failed.
     static func installHooks(_ providers: [HookProvider], env: CLIEnvironment, dryRun: Bool, trust: Bool) -> Bool {
         if let note = HookCLIPath.foreignLinkNote(paths: env.paths, runningExecutable: env.executablePath) {
             env.stderr.line("note: \(note)")
@@ -59,8 +52,8 @@ enum InstallCommand: CLICommand {
         return succeeded
     }
 
-    /// Hook commands must survive rebuilds and app updates (Codex trust hashes bind
-    /// to the exact command). Warn when they point at a transient binary.
+    /// Hook commands must survive rebuilds and app updates because Codex trust hashes bind to the
+    /// exact command.
     static func unstableCLINote(cliPath: String, env: CLIEnvironment) -> String? {
         if let explicit = env.variables["SIDEPULSE_CLI_PATH"], !explicit.isEmpty { return nil }
         if cliPath == env.paths.defaultCLILink.path || HookCLIPath.enclosingBundle(of: cliPath) != nil { return nil }
@@ -69,15 +62,12 @@ enum InstallCommand: CLICommand {
     }
 }
 
-/// Which providers `install` / `uninstall` / `setup` act on.
 enum ProviderSelection {
     static let positionals = PositionalSpec(name: "provider", maxCount: 3, choices: ["claude", "codex", "all"])
 
     static let noAgentsMessage = "No Claude Code (~/.claude) or Codex (~/.codex) config found, so no hooks were installed. "
         + "Install an agent first, or name it explicitly (sidepulse install claude)."
 
-    /// Named providers (in `HookProvider.allCases` order, `all` = every provider);
-    /// with none named, either the detected ones or all of them.
     static func resolve(_ names: [String], paths: SidePulsePaths, defaultToDetected: Bool,
                         directoryExists: (URL) -> Bool = directoryExists) -> [HookProvider] {
         if names.contains("all") { return HookProvider.allCases }

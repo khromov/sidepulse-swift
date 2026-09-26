@@ -1,16 +1,7 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse leds [--once] [--dry-run] [--device P] [--interval S]`
-///
-/// - `--once`: computes the current snapshot (app or logs) and syncs the LEDs one
-///   time with the user's animations and brightness. Every connected device in
-///   Agent mode is synced (`LedSyncService.syncNow`); with `--device` only that
-///   device is (`AgentLedController`, regardless of its display mode). Prints one
-///   line per device; exits 2 on any error.
-/// - Otherwise runs the SidePulse runtime headless in the foreground (it serves the
-///   event socket and drives every device) until SIGINT/SIGTERM. Refuses to start
-///   while the app is running, because only one process may own the LEDs.
+/// `--once` exits 2 on any device error, as the Python CLI does.
 enum LedsCommand: CLICommand {
     static let spec = CommandSpec(
         name: "leds",

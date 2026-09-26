@@ -1,8 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// `HookCLIPath`: the one resolver for the CLI that hook commands call. Only a
-/// SidePulse Swift CLI qualifies, never the app binary or a foreign `sidepulse`.
 final class PresentationHookCLIPathTests: XCTestCase {
     private var tmp: URL!
     private var home: URL!
@@ -79,7 +77,6 @@ final class PresentationHookCLIPathTests: XCTestCase {
         XCTAssertFalse(HookCLIPath.notFoundMessage.isEmpty)
     }
 
-    /// A CLI outside any bundle (a SwiftPM build) writes itself, and counts as ours.
     func testRunningCLIIsTheLastResort() throws {
         let cli = tmp.appendingPathComponent("debug/sidepulse")
         try makeExecutable(cli)

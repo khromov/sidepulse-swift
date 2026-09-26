@@ -1,12 +1,9 @@
 import Foundation
 
-/// `latest.json` restart snapshot: `{"updated_at": pythonISO(now), "statuses": [AgentStatus.toJSON(now)...]}`
-/// written pretty with sorted keys + trailing newline via `FileUtil.atomicWrite`.
 public struct LatestStore: Sendable {
     public var url: URL
     public init(url: URL) { self.url = url }
 
-    /// Invalid entries are skipped; missing/corrupt file → [].
     public func load() -> [AgentStatus] {
         guard let data = try? Data(contentsOf: url),
               let document = try? JSONValue.parse(data),
@@ -14,8 +11,7 @@ public struct LatestStore: Sendable {
         return entries.compactMap(AgentStatus.fromJSON)
     }
 
-    /// Entries are written with `stale: false`, newest first (ties by key) so the
-    /// file is deterministic.
+    /// Ties are broken by key so the file is deterministic.
     public func save(_ statuses: [AgentStatus], now: Date = Date()) throws {
         let ordered = statuses.sorted {
             $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.agentID < $1.agentID
@@ -30,19 +26,13 @@ public struct LatestStore: Sendable {
     }
 }
 
-/// Reading provider JSONL logs (recovery at app start, offline CLI status).
 public enum LogScanner {
     static let chunkSize = 64 * 1024
 
-    /// Last `maxLines` lines, reading backwards in 64 KiB chunks. Splits on "\n"
-    /// only, drops empty lines; a partial first line is harmless (fails JSON parse).
-    /// (Here it is dropped outright when the read stops before the start of the
-    /// file.) Missing/unreadable file or not a regular file → [].
     public static func readRecentLines(url: URL, maxLines: Int) -> [String] {
         recentLineBytes(url: url, maxLines: maxLines).map { String(decoding: $0, as: UTF8.self) }
     }
 
-    /// Byte slices of the last `maxLines` non-empty lines (see `readRecentLines`).
     static func recentLineBytes(url: URL, maxLines: Int) -> [ArraySlice<UInt8>] {
         guard maxLines > 0 else { return [] }
         // O_NONBLOCK keeps a FIFO at the path from hanging the open; O_CLOEXEC keeps
@@ -70,8 +60,7 @@ public enum LogScanner {
         bytes.reserveCapacity(chunks.reduce(0) { $0 + $1.count })
         for chunk in chunks.reversed() { bytes.append(contentsOf: chunk) }
 
-        // Line boundaries: after each newline. When the read began mid-file, the
-        // text before the first newline is a partial line and is skipped.
+        // A read that began mid-file starts with a partial line, which is skipped.
         var lines: [ArraySlice<UInt8>] = []
         var lineStart = 0
         var skipFirst = position > 0
@@ -86,7 +75,6 @@ public enum LogScanner {
         return Array(lines.suffix(maxLines))
     }
 
-    /// Offsets of every `\n` byte (found with `memchr`).
     static func newlineOffsets(in bytes: [UInt8]) -> [Int] {
         bytes.withUnsafeBufferPointer { buffer -> [Int] in
             guard let base = buffer.baseAddress else { return [] }
@@ -112,14 +100,6 @@ public enum LogScanner {
         }
     }
 
-    /// Reads all sources, stable-sorts every event by (loggedAt, source order, line
-    /// order) and runs them through a fresh `StatusEngine(config:)`. Returns the
-    /// engine's resulting rows (newest first, ties by key). Duplicate
-    /// (provider, path) sources are read once. Rows are not pruned.
-    ///
-    /// - Parameter codexTitle: Codex session-title lookup passed to the engine
-    ///   (e.g. `CodexSessionIndex.title(forSession:)`), so Codex rows get the same
-    ///   labels as in the live engine.
     public static func scan(sources: [SourceInfo], maxLines: Int = SidePulseConstants.recoveryMaxLines,
                             config: MonitorConfig = MonitorConfig(),
                             codexTitle: ((String) -> String?)? = nil) -> [AgentStatus] {
@@ -130,8 +110,8 @@ public enum LogScanner {
         }
     }
 
-    /// Every source's events, stable-sorted by (loggedAt, source order, line order).
-    /// Hook timestamps have (milli)second resolution, so ties are common.
+    /// Hook timestamps have (milli)second resolution, so ties are common and source
+    /// and line order must break them.
     static func orderedEvents(sources: [SourceInfo], maxLines: Int, now: Date = Date()) -> [HookEvent] {
         var seen = Set<String>()
         let unique = sources.filter { seen.insert("\($0.provider)\u{0}\($0.path)").inserted }
@@ -151,12 +131,8 @@ public enum LogScanner {
             .map { all[$0] }
     }
 
-    /// Default sources for the given paths: claude and codex logs (current file and
-    /// the rotated `.1` file, older first so ordering by timestamp is stable).
-    ///
-    /// Order: codex before claude (Python's tie order). The current log is always
-    /// listed (so callers can report it missing); the rotated `<log>.1` only when it
-    /// exists.
+    /// Codex precedes Claude (Python's tie order) and each rotated `.1` log precedes
+    /// its current one, which is always listed so callers can report it missing.
     public static func defaultSources(paths: SidePulsePaths) -> [SourceInfo] {
         var sources: [SourceInfo] = []
         for provider in ["codex", "claude"] {
@@ -171,11 +147,7 @@ public enum LogScanner {
     }
 }
 
-/// Codex session titles from `~/.codex/session_index.jsonl`
-/// (`{"id","thread_name","updated_at"}` rows; later rows win; titles truncated to
-/// 72). Cached by mtime+size. Thread-safe.
 public final class CodexSessionIndex: @unchecked Sendable {
-    /// Rows read from the end of the index (Python `CODEX_SESSION_INDEX_MAX_LINES`).
     public static let maxLines = 5000
 
     public let url: URL
@@ -187,7 +159,6 @@ public final class CodexSessionIndex: @unchecked Sendable {
         self.url = url
     }
 
-    /// The index for `paths.home` (`~/.codex/session_index.jsonl`).
     public convenience init(paths: SidePulsePaths) {
         self.init(url: paths.codexDir.appendingPathComponent("session_index.jsonl"))
     }
@@ -201,7 +172,6 @@ public final class CodexSessionIndex: @unchecked Sendable {
         return title
     }
 
-    /// Re-reads the index when its mtime or size changed; a missing file empties it.
     private func refreshIfNeeded() {
         var info = stat()
         guard stat(url.path, &info) == 0 else {
@@ -218,8 +188,7 @@ public final class CodexSessionIndex: @unchecked Sendable {
             guard let row = (try? JSONValue.parse(line))?.objectValue,
                   let id = PyText.nonEmptyString(row["id"]),
                   let name = PyText.nonEmptyString(row["thread_name"]) else { continue }
-            // A blank (whitespace-only) name is stored as "" so it still replaces an
-            // earlier title; lookups treat it as "no title", like Python.
+            // A blank name is stored as "" so it still replaces an earlier title, like Python.
             fresh[id] = DisplayNames.truncate(PyText.strip(name), DisplayNames.titleLimit)
         }
         titles = fresh

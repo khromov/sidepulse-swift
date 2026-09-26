@@ -1,11 +1,7 @@
 import Foundation
 
-/// Order-preserving JSON value. Used for hook payloads, third-party config files
-/// (so we never reorder a user's ~/.claude/settings.json), our own files and the
-/// socket protocol.
-///
-/// Numbers keep their original literal text (`.number("3600.0")`) so round-trips
-/// are lossless.
+/// Keeps key order and number literals so rewriting a user's config (e.g.
+/// ~/.claude/settings.json) never reorders or reformats it.
 public enum JSONValue: Equatable, Sendable {
     case null
     case bool(Bool)
@@ -22,14 +18,12 @@ public struct JSONError: Error, CustomStringConvertible, Equatable {
     public var description: String { "Invalid JSON at byte \(offset): \(message)" }
 }
 
-/// An ordered JSON object. Setting an existing key keeps its position; setting a
-/// new key appends it.
 public struct JSONObject: Equatable, Sendable, Sequence, ExpressibleByDictionaryLiteral {
     public private(set) var entries: [(key: String, value: JSONValue)] = []
 
     public init() {}
 
-    /// Builds an object from entries whose keys are already unique (no lookups, O(n)).
+    /// Callers guarantee unique keys so building skips the per-key lookups.
     init(uniqueEntries: [(key: String, value: JSONValue)]) {
         self.entries = uniqueEntries
     }
@@ -74,7 +68,7 @@ public struct JSONObject: Equatable, Sendable, Sequence, ExpressibleByDictionary
 extension JSONValue {
     // MARK: Parsing
 
-    /// Parses UTF-8 JSON. Duplicate keys: last one wins (keeps first position).
+    /// For duplicate keys the last value wins, at the first key's position.
     public static func parse(_ data: Data) throws -> JSONValue {
         var parser = JSONParser(bytes: [UInt8](data))
         return try parser.parseDocument()
@@ -86,18 +80,14 @@ extension JSONValue {
 
     // MARK: Serialization
 
-    /// Compact (`{"a":1,"b":[true,null]}`) or pretty (2-space indent, `"key": value`,
-    /// `[]`/`{}` for empty containers, matching Python `json.dumps(indent=2)` layout).
-    /// Never escapes `/` or non-ASCII; escapes `"` `\\` and control characters
-    /// (`\n`, `\r`, `\t`, `\b`, `\f`, others as `\u00XX`). U+2028/U+2029 ARE escaped
-    /// so JSONL lines never contain them.
+    /// Pretty output matches Python `json.dumps(indent=2)`, and U+2028/U+2029 are
+    /// escaped so JSONL lines never contain them.
     public func serialized(pretty: Bool = false) -> String {
         var out = ""
         JSONWriter.write(self, into: &out, pretty: pretty, level: 0)
         return out
     }
 
-    /// Recursively sorts object keys.
     public func sortedKeys() -> JSONValue {
         switch self {
         case .array(let items):
@@ -115,8 +105,6 @@ extension JSONValue {
 
     public init(_ string: String?) { self = string.map { .string($0) } ?? .null }
     public init(_ int: Int) { self = .number(String(int)) }
-    /// Integral doubles are written without a fraction when `integralAsInt` is true,
-    /// otherwise Swift's shortest round-trip representation is used.
     public init(_ double: Double, integralAsInt: Bool = false) {
         if integralAsInt, double.rounded() == double, abs(double) < 1e15 {
             self = .number(String(Int(double)))
@@ -140,8 +128,7 @@ extension JSONValue {
 
     public subscript(key: String) -> JSONValue? { objectValue?[key] }
 
-    /// Python-like `str(value)` used by the classifier: strings as-is, numbers as
-    /// their literal, bools "True"/"False", null "None", containers compact JSON.
+    /// Python-like `str(value)`, the text the classifier matches against for parity.
     public var pythonString: String {
         switch self {
         case .null: return "None"
@@ -204,9 +191,9 @@ struct JSONParser {
     }
 
     mutating func parseObject(depth: Int) throws -> JSONValue {
-        i += 1 // {
-        // Entries plus a key index keep parsing linear even for huge objects
-        // (hook payloads can carry tool responses with many thousands of keys).
+        i += 1
+        // A key index keeps parsing linear because hook payloads can carry tool
+        // responses with many thousands of keys.
         var entries: [(key: String, value: JSONValue)] = []
         var index: [String: Int] = [:]
         skipWhitespace()
@@ -235,7 +222,7 @@ struct JSONParser {
     }
 
     mutating func parseArray(depth: Int) throws -> JSONValue {
-        i += 1 // [
+        i += 1
         var items: [JSONValue] = []
         skipWhitespace()
         if i < bytes.count, bytes[i] == UInt8(ascii: "]") { i += 1; return .array(items) }
@@ -278,7 +265,7 @@ struct JSONParser {
     }
 
     mutating func parseString() throws -> String {
-        i += 1 // opening quote
+        i += 1
         var out: [UInt8] = []
         var runStart = i
         while i < bytes.count {
@@ -306,7 +293,6 @@ struct JSONParser {
                 case UInt8(ascii: "u"):
                     var scalarValue = try parseHex4()
                     if (0xD800...0xDBFF).contains(scalarValue) {
-                        // Try to combine with a following low surrogate.
                         if i + 1 < bytes.count, bytes[i] == UInt8(ascii: "\\"), bytes[i + 1] == UInt8(ascii: "u") {
                             let save = i
                             i += 2

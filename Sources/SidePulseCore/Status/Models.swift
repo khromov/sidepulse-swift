@@ -1,6 +1,6 @@
 import Foundation
 
-/// Agent status modes. Raw values are the wire/JSON values (same as Python).
+/// Raw values are the wire/JSON values shared with Python.
 public enum AgentMode: String, CaseIterable, Sendable, Codable {
     case blockedError = "blocked_error"
     case waitingForInput = "waiting_for_input"
@@ -38,8 +38,7 @@ public enum AgentMode: String, CaseIterable, Sendable, Codable {
         }
     }
 
-    /// "Active" = anything except Completed and Idle / Ready (Unknown counts as active,
-    /// matching Python `status_counts_active`).
+    /// Unknown counts as active, matching Python `status_counts_active`.
     public var isActive: Bool { self != .completed && self != .idleReady }
 
     /// The three working modes always share one animation selection.
@@ -55,7 +54,6 @@ public enum AgentMode: String, CaseIterable, Sendable, Codable {
     }
 }
 
-/// The 4-state summary used by the menu-bar icon and LED dedupe.
 public enum DisplayState: String, Sendable, CaseIterable {
     case idle, working, done, ask
 
@@ -68,7 +66,6 @@ public enum DisplayState: String, Sendable, CaseIterable {
         }
     }
 
-    /// SF Symbol name for the menu-bar icon.
     public var symbolName: String {
         switch self {
         case .ask: return "questionmark.circle"
@@ -79,14 +76,12 @@ public enum DisplayState: String, Sendable, CaseIterable {
     }
 }
 
-/// One normalized hook event.
 public struct HookEvent: Sendable, Equatable {
     public var provider: String
     public var loggedAt: Date
-    /// Canonical event name (one of `EventParser.knownEvents`).
     public var eventName: String
-    /// Normalized payload (snake_case aliases filled in, `hook_event_name` and
-    /// `logged_at` set).
+    /// Not the original payload: snake_case aliases, `hook_event_name` and
+    /// `logged_at` are filled in.
     public var raw: JSONObject
     public var sessionID: String?
     public var turnID: String?
@@ -104,8 +99,6 @@ public struct HookEvent: Sendable, Equatable {
         self.toolName = toolName; self.message = message; self.origin = origin
     }
 
-    /// `"{provider}:agent:{agent_id}"`, else `"{provider}:session:{session_id}"`, else
-    /// `"{provider}:unknown"`. Empty strings count as unset.
     public var statusKey: String {
         if let a = agentID, !a.isEmpty { return "\(provider):agent:\(a)" }
         if let s = sessionID, !s.isEmpty { return "\(provider):session:\(s)" }
@@ -113,7 +106,6 @@ public struct HookEvent: Sendable, Equatable {
     }
 }
 
-/// Current status of one agent row (a session or a subagent).
 public struct AgentStatus: Sendable, Equatable {
     public var provider: String
     /// The status key (see `HookEvent.statusKey`).
@@ -139,13 +131,9 @@ public struct AgentStatus: Sendable, Equatable {
 
     public func age(now: Date) -> TimeInterval { max(0, now.timeIntervalSince(updatedAt)) }
 
-    /// True for rows created from subagent events (key `"{provider}:agent:..."`).
     public var isSubagent: Bool { PyText.startsWith(agentID, "\(provider):agent:") }
 
-    /// JSON with Python key order: provider, agent_id, display_name, mode, mode_label,
-    /// priority, updated_at (TimeFormat.pythonISO), age_seconds (rounded to 3 dp),
-    /// event_name, session_id, cwd, tool_name, message, origin, stale. Optional
-    /// fields are written as null when absent.
+    /// Keys are set in Python's key order, which the ordered `JSONObject` preserves.
     public func toJSON(now: Date) -> JSONValue {
         var o = JSONObject()
         o["provider"] = .string(provider)
@@ -166,12 +154,8 @@ public struct AgentStatus: Sendable, Equatable {
         return .object(o)
     }
 
-    /// Inverse of `toJSON`. Requires provider, agent_id, display_name, mode (valid
-    /// raw value), updated_at (parseable), event_name; returns nil otherwise.
-    ///
-    /// Optional fields keep only non-empty strings; `stale` uses Python truthiness.
     /// Unlike Python, an unparseable `updated_at` rejects the entry instead of
-    /// becoming "now" (which would make a corrupt row look fresh).
+    /// becoming "now", which would make a corrupt row look fresh.
     public static func fromJSON(_ value: JSONValue) -> AgentStatus? {
         guard let o = value.objectValue,
               let provider = o["provider"]?.stringValue,
@@ -202,7 +186,6 @@ public struct AggregateStatus: Sendable, Equatable {
         self.mode = mode; self.activeCount = activeCount; self.staleCount = staleCount; self.representative = representative
     }
 
-    /// `{mode, mode_label, active_count, stale_count, representative}`.
     public func toJSON(now: Date) -> JSONValue {
         var o = JSONObject()
         o["mode"] = .string(mode.rawValue)
@@ -213,7 +196,6 @@ public struct AggregateStatus: Sendable, Equatable {
         return .object(o)
     }
 
-    /// Inverse of `toJSON`. Requires a valid `mode`; counts default to 0.
     public static func fromJSON(_ value: JSONValue) -> AggregateStatus? {
         guard let o = value.objectValue,
               let mode = o["mode"]?.stringValue.flatMap(AgentMode.init(rawValue:)) else { return nil }
@@ -234,9 +216,7 @@ public struct MonitorSnapshot: Sendable, Equatable {
     public var collectedAt: Date
     public var sources: [SourceInfo]
     public var aggregate: AggregateStatus
-    /// Fresh rows sorted by (priority asc, updatedAt desc).
     public var statuses: [AgentStatus]
-    /// Stale / demoted rows, same order.
     public var staleStatuses: [AgentStatus]
 
     public init(collectedAt: Date, sources: [SourceInfo], aggregate: AggregateStatus,
@@ -251,7 +231,6 @@ public struct MonitorSnapshot: Sendable, Equatable {
                         statuses: [], staleStatuses: [])
     }
 
-    /// `{collected_at, sources:[{provider,path}], aggregate, statuses, stale_statuses}`.
     public func toJSON() -> JSONValue {
         var o = JSONObject()
         o["collected_at"] = .string(TimeFormat.pythonISO(collectedAt))
@@ -262,9 +241,6 @@ public struct MonitorSnapshot: Sendable, Equatable {
         return .object(o)
     }
 
-    /// Inverse of `toJSON` (used by the CLI to read the app's `status` reply).
-    /// Requires `collected_at` and a valid `aggregate`; invalid sources and status
-    /// entries are skipped.
     public static func fromJSON(_ value: JSONValue) -> MonitorSnapshot? {
         guard let o = value.objectValue,
               let collectedAt = o["collected_at"]?.stringValue.flatMap(TimeFormat.parse),

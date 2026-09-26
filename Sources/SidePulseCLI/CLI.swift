@@ -1,20 +1,14 @@
 import Foundation
 import SidePulseCore
 
-/// One `sidepulse <command>`: a spec (parsing and help) plus the implementation.
-/// `run` may throw `UsageError` (exit 2 with usage), `CommandFailure` (its exit code)
-/// or any other error (exit 1); the dispatcher prints them.
+/// `run` throws `UsageError` for exit 2 with usage, `CommandFailure` for its own exit code, and
+/// anything else for exit 1.
 protocol CLICommand {
     static var spec: CommandSpec { get }
     static func run(_ arguments: ParsedArguments, _ env: CLIEnvironment) throws -> Int32
 }
 
-/// Entry point for the `sidepulse` executable. Returns the process exit code.
-///
-/// Commands are flat (`sidepulse status`, `sidepulse install`, ...). A leading
-/// `agent-monitor` token (the Python CLI's legacy tree) is accepted and ignored;
-/// `status-bar` is an alias of `app`, `watch` of `live`, and `run` is `leds`
-/// without `--once`. Exit codes: 0 ok, 1 error, 2 usage.
+/// A leading `agent-monitor` token, the Python CLI's legacy command tree, is accepted and ignored.
 public enum SidePulseCLI {
     /// Commands in the order `sidepulse --help` lists them.
     static let commands: [any CLICommand.Type] = [
@@ -23,7 +17,7 @@ public enum SidePulseCLI {
         SettingsCommand.self, VersionCommand.self, HelpCommand.self,
     ]
 
-    /// Alternative names (not listed separately in help, except `run`).
+    /// Hidden from the help listing, except `run`.
     static let aliases: [String: any CLICommand.Type] = [
         "status-bar": AppCommand.self,
         "watch": LiveCommand.self,
@@ -43,7 +37,7 @@ public enum SidePulseCLI {
         return run(arguments, environment: .live())
     }
 
-    /// Runs one invocation against `env` (tests call this directly).
+    /// Tests call this directly with a fake `env`.
     public static func run(_ arguments: [String], environment env: CLIEnvironment) -> Int32 {
         if let hookArguments = hookLogArguments(arguments) {
             return HookRuntime.run(arguments: hookArguments, stdin: env.stdin.readAll(),
@@ -101,8 +95,7 @@ public enum SidePulseCLI {
         }
     }
 
-    /// Arguments after `hook-log` for `hook-log ...` and `agent-monitor hook-log ...`
-    /// (the form Python-era hook commands used), else nil.
+    /// `agent-monitor hook-log` is the form Python-era hook commands used.
     static func hookLogArguments(_ arguments: [String]) -> [String]? {
         if arguments.first == "hook-log" { return Array(arguments.dropFirst()) }
         if arguments.count >= 2, arguments[0] == "agent-monitor", arguments[1] == "hook-log" {

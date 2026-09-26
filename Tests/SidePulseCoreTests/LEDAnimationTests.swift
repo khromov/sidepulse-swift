@@ -20,7 +20,6 @@ private func withoutColors(_ program: String) -> String {
     return result
 }
 
-/// Built-in catalog and embedded programs (spec led-device §9, §18).
 final class LEDAnimationLibraryTests: XCTestCase {
     let expectedCatalog: [(String, String, Bool)] = [
         ("off", "Slow Off", false),
@@ -41,6 +40,8 @@ final class LEDAnimationLibraryTests: XCTestCase {
         ("purple-attention", "Purple Attention", false),
         ("purple-complete", "Purple Complete", false),
         ("night-rider", "Night Rider", true),
+        ("solid-red", "Solid Red", false),
+        ("solid-blue", "Solid Blue", false),
     ]
 
     func testCatalogOrderNamesAndVariants() {
@@ -58,8 +59,9 @@ final class LEDAnimationLibraryTests: XCTestCase {
         for animation in AnimationLibrary.all {
             for count in [2, 8] { reachable.insert(AnimationLibrary.fileName(for: animation, ledCount: count)) }
         }
-        XCTAssertEqual(reachable, Set(BuiltInPrograms.files.keys))
+        XCTAssertEqual(reachable, Set(BuiltInPrograms.files.keys).union(ExtraPrograms.files.keys))
         XCTAssertEqual(BuiltInPrograms.files.count, 27)
+        XCTAssertTrue(Set(BuiltInPrograms.files.keys).isDisjoint(with: ExtraPrograms.files.keys))
     }
 
     func testFileNameVariants() throws {
@@ -181,7 +183,6 @@ final class LEDAnimationLibraryTests: XCTestCase {
         }
     }
 
-    /// Byte-for-byte comparison with the Python resources (skipped without a checkout).
     func testEmbeddedProgramsMatchPythonResourceFiles() throws {
         guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
         let dir = repo.appendingPathComponent("src/sidepulse/resources/animations")
@@ -195,11 +196,10 @@ final class LEDAnimationLibraryTests: XCTestCase {
     }
 }
 
-/// Cyan / Ember / Purple profiles (spec led-device §14, §19).
 final class LEDProfileTests: XCTestCase {
     func testBuiltInProfiles() throws {
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), ["profile:cyan", "profile:ember", "profile:purple"])
-        XCTAssertEqual(AnimationProfiles.builtIn.map(\.name), ["Cyan", "Ember", "Purple"])
+        XCTAssertEqual(AnimationProfiles.builtIn.map(\.id), ["profile:cyan", "profile:ember", "profile:purple", "profile:signal"])
+        XCTAssertEqual(AnimationProfiles.builtIn.map(\.name), ["Cyan", "Ember", "Purple", "Signal"])
         for profile in AnimationProfiles.builtIn {
             XCTAssertEqual(Set(profile.animations.keys), Set(AgentMode.allCases), profile.id)
             for id in profile.animations.values { XCTAssertNotNil(AnimationLibrary.animation(id: id), id) }
@@ -222,7 +222,20 @@ final class LEDProfileTests: XCTestCase {
             .waitingForInput: "purple-attention", .longTaskProgress: "purple-tide",
             .blockedError: "purple-attention", .completed: "purple-complete", .unknown: "purple-idle",
         ])
+        let signal = try XCTUnwrap(AnimationProfiles.profile(id: "profile:signal"))
+        XCTAssertEqual(signal.animations, [
+            .idleReady: "solid-blue", .working: "ember-tide", .toolRunning: "ember-tide",
+            .waitingForInput: "ember-complete", .longTaskProgress: "ember-tide",
+            .blockedError: "solid-red", .completed: "solid-green", .unknown: "solid-blue",
+        ])
         XCTAssertNil(AnimationProfiles.profile(id: "profile:default"))
+    }
+
+    func testSignalPrograms() throws {
+        XCTAssertEqual(try LedProgram.program(animationID: "solid-red", ledCount: 2, brightness: 255), "#FF0000 320ms cosine")
+        XCTAssertEqual(try LedProgram.program(animationID: "solid-blue", ledCount: 8, brightness: 128),
+                       "brightness 128\n#0000FF 320ms cosine")
+        XCTAssertEqual(try LedProgram.program(animationID: "ember-complete", ledCount: 2, brightness: 255), "#F23819 320ms cosine")
     }
 
     func testMatching() throws {
@@ -235,10 +248,9 @@ final class LEDProfileTests: XCTestCase {
         XCTAssertNil(AnimationProfiles.matching(custom))
     }
 
-    /// The shipped profiles/*.json (minus lid states) equal the built-ins.
     func testProfilesMatchPythonProfileDocuments() throws {
         guard let repo = LEDTestSupport.pythonRepo() else { throw XCTSkip("Python sidepulse checkout not found") }
-        for profile in AnimationProfiles.builtIn {
+        for profile in BuiltInPrograms.profiles {
             let stem = profile.id.replacingOccurrences(of: "profile:", with: "")
             let document = try JSONValue.parse(try Data(contentsOf: repo.appendingPathComponent("profiles/\(stem).json")))
             XCTAssertEqual(document["name"]?.stringValue, profile.name)
@@ -255,7 +267,6 @@ final class LEDProfileTests: XCTestCase {
     }
 }
 
-/// Brightness math and program generation (spec led-device §10).
 final class LEDProgramTests: XCTestCase {
     func testNormalizeBrightnessRoundsHalfToEven() {
         let vectors: [(Double?, Int)] = [
@@ -309,9 +320,7 @@ final class LEDProgramTests: XCTestCase {
         }
     }
 
-    /// Python's `re` on `str`: `\s` includes U+001C–U+001F, `\d` is any Nd digit,
-    /// and IGNORECASE folds U+0130/U+0131 to `i` and U+017F to `s`. Expected values
-    /// come from the Python implementation.
+    /// Expected values come from the Python implementation.
     func testBrightnessLineMatchesPythonUnicodeRegex() {
         let vectors: [(String, Int, String)] = [
             ("\u{1F}brightness\u{1F}40\u{1F}\n#fff", 200, "brightness 31\n#fff"),

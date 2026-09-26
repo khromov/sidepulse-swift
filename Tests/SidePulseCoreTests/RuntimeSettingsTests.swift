@@ -3,8 +3,6 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Settings changes through the runtime (UI actions), reload-settings from the
-/// CLI and external settings.json edits.
 final class RuntimeSettingsTests: XCTestCase {
     private var world: RuntimeWorld!
 
@@ -41,7 +39,6 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(world.settingsStore.load().display(forDevice: dot), .manual)
         XCTAssertEqual(runtime.deviceInfos().first { $0.id == dot }?.display, .manual)
 
-        // The user's own program stays: no self-heal, no more writes.
         world.overwrite("PulseDot", with: "#FF00FF pulse")
         runtime.ingest(provider: "claude", line: RuntimeRecords.permission())
         waitForProgram("SidePulsePro", RuntimePrograms.expected(.waitingForInput, ledCount: 8))
@@ -54,7 +51,6 @@ final class RuntimeSettingsTests: XCTestCase {
         runtime.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), "#FF00FF pulse")
 
-        // Back to Agent: live status returns right away.
         runtime.setDeviceDisplay(.agent, deviceID: dot)
         waitForProgram("PulseDot", RuntimePrograms.expected(.waitingForInput, ledCount: 2))
     }
@@ -63,15 +59,13 @@ final class RuntimeSettingsTests: XCTestCase {
         world.addDevice("PulseDot")
         let runtime = try world.startRuntime()
         waitForProgram("PulseDot", RuntimePrograms.expected(.idleReady, ledCount: 2))
-        // A device that is not connected has nothing to clear.
         runtime.setDeviceDisplay(.manual, deviceID: "/Volumes/Elsewhere")
         runtime.waitUntilIdle()
         XCTAssertEqual(world.settingsStore.load().display(forDevice: "/Volumes/Elsewhere"), .manual)
     }
 
-    /// `sidepulse write --manual`: the CLI flips the device to Manual in
-    /// settings.json, asks for reload-settings, then writes its own program. The
-    /// runtime must apply the change before replying and must not write "off".
+    /// Mirrors `sidepulse write --manual`, which flips the device to Manual, asks for reload-settings and
+    /// then writes its own program.
     func testReloadSettingsAppliesBeforeReplyingAndNeverClearsTheDevice() throws {
         world.addDevice("PulseDot")
         let dot = world.deviceID("PulseDot")
@@ -92,7 +86,6 @@ final class RuntimeSettingsTests: XCTestCase {
         runtime.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), "#00FF66 320ms cosine\nrepeat")
 
-        // Other settings arrive the same way.
         world.updateSettings { $0.setAnimation("solid-green", for: .completed) }
         XCTAssertEqual(runtime.handle(.command(name: "reload-settings", args: [:])), IPCReply.ok)
         XCTAssertEqual(runtime.settings.animationID(for: .completed), "solid-green")
@@ -109,15 +102,13 @@ final class RuntimeSettingsTests: XCTestCase {
         let updates = RuntimeInbox<Bool>()
         runtime.onUpdate = { _ in updates.append(true) }
 
-        // After 2 s the device shows the notice, and an open menu is refreshed
-        // (nothing else notifies here: no events, no refresh timer, no keep-awake).
+        // Nothing else triggers onUpdate here, so an update proves the notice itself refreshes the menu.
         XCTAssertTrue(runtimeWait(timeout: 5) {
             runtime.deviceInfos().first?.lastError == LedSyncService.waitingForPermissionMessage
         })
         XCTAssertTrue(runtimeWait { updates.count > 0 })
 
-        // `sidepulse write --manual`: the reply comes at once (the stuck write has
-        // not started writing, and will re-check)...
+        // The reply comes at once because the stuck write has not started writing and will re-check.
         world.updateSettings { $0.setDisplay(.manual, forDevice: dot, name: "SidePulse Dot", path: dot) }
         let asked = Date()
         XCTAssertEqual(world.requestText("reload-settings"), "ok")
@@ -125,7 +116,7 @@ final class RuntimeSettingsTests: XCTestCase {
         runtimeSpin(0.2)
         let notified = updates.count
 
-        // ...and when the prompt is answered the stale program never lands.
+        // Opening a reader stands in for answering the prompt.
         let reader = open(world.target("PulseDot").path, O_RDONLY | O_NONBLOCK)
         XCTAssertGreaterThanOrEqual(reader, 0)
         defer { close(reader) }
@@ -136,9 +127,8 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertTrue(runtimeWait { updates.count > notified }, "the notice going away refreshes the menu too")
     }
 
-    /// Regression: reload-settings replied ok while a write that had already passed
-    /// its settings check was still writing, so it landed after the reply (on top of
-    /// `sidepulse write --manual`'s program). Now the reply says so after 2 s.
+    /// Regression: reload-settings replied ok while a write that had passed its settings check was still
+    /// writing, so it landed on top of `sidepulse write --manual`'s program.
     func testReloadSettingsReportsAWriteThatIsStillWriting() throws {
         world.addDevice("PulseDot", content: nil)
         let target = world.target("PulseDot").path
@@ -153,7 +143,6 @@ final class RuntimeSettingsTests: XCTestCase {
         while write(filler, &chunk, chunk.count) > 0 {}
         let dot = world.deviceID("PulseDot")
         let runtime = try world.startRuntime()
-        /// Reads until the app's write got through (true) or 3 s pass.
         func drain() -> Bool {
             var buffer = [UInt8](repeating: 0, count: 16_384)
             return runtimeWait {
@@ -172,7 +161,6 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(reply["error"]?.stringValue, "LED write in progress")
         XCTAssertGreaterThan(Date().timeIntervalSince(asked), 1.5, "waited for the write first")
 
-        // Once the write gets through, nothing is pending and the reply is ok again.
         XCTAssertTrue(drain())
         runtime.waitUntilIdle()
         XCTAssertEqual(world.requestText("reload-settings"), "ok")
@@ -207,7 +195,6 @@ final class RuntimeSettingsTests: XCTestCase {
         runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
         waitForProgram("PulseDot", RuntimePrograms.expected(.working, ledCount: 2))
 
-        // `sidepulse settings`-style edit by another process.
         world.updateSettings {
             $0.setAnimation("ember-tide", for: .working)
             $0.setBrightness(100, forDevice: world.deviceID("PulseDot"))
@@ -228,9 +215,8 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(runtime.settings.animationID(for: .idleReady), "purple-idle")
     }
 
-    /// Regression: the runtime took settings.json's date after its own save had
-    /// released the store's lock. Another process saving in between left a file
-    /// whose date the runtime already "knew", so that edit was never loaded.
+    /// Regression: the runtime read settings.json's date after releasing the store's lock, so an external
+    /// save in between looked already known and was never loaded.
     func testExternalSaveRacingOurOwnSaveIsNotMissed() throws {
         world.addDevice("PulseDot")
         let runtime = try world.startRuntime(world.options(serveSocket: false))
@@ -241,8 +227,7 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(stat(url.path, &info), 0)
         let ownSaveDate = world.settingsStore.modificationDate
 
-        // Another process's save lands in that window: simulate it by writing and
-        // then giving the file back the exact date of our own save.
+        // Giving the external save our own save's exact date reproduces that window.
         world.updateSettings { $0.setAnimation("ember-tide", for: .idleReady) }
         var times = [info.st_atimespec, info.st_mtimespec]
         XCTAssertEqual(utimensat(AT_FDCWD, url.path, &times, 0), 0)
@@ -318,8 +303,6 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(world.settingsStore.load().minBatteryPercent, 50)
     }
 
-    /// The UI reads on the main thread while LED I/O hangs (a stuck SD card) and
-    /// while a settings save waits for the settings lock: nothing blocks.
     func testMainThreadReadsNeverBlock() throws {
         world.addDevice("PulseDot")
         let dot = world.deviceID("PulseDot")

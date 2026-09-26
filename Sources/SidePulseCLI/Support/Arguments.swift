@@ -1,16 +1,13 @@
 import Foundation
 
-/// Process exit codes used by every command (same as the Python CLI).
+/// Same values as the Python CLI.
 public enum ExitCode {
     public static let ok: Int32 = 0
-    /// Runtime failure (write error, launchd error, hook installer error, ...).
     public static let failure: Int32 = 1
-    /// Usage error, invalid LED program, device selection error.
+    /// Also used for an invalid LED program or a device selection error.
     public static let usage: Int32 = 2
 }
 
-/// One `--long` option (optionally with a `-x` short form). Options with a
-/// `valueName` take a value (`--opt value` or `--opt=value`); the others are flags.
 public struct OptionSpec: Sendable, Equatable {
     public var name: String
     public var short: Character?
@@ -23,7 +20,6 @@ public struct OptionSpec: Sendable, Equatable {
 
     public var takesValue: Bool { valueName != nil }
 
-    /// `--device PATH` / `-f, --force`.
     var synopsis: String {
         var text = short.map { "-\($0), " } ?? ""
         text += "--\(name)"
@@ -32,10 +28,7 @@ public struct OptionSpec: Sendable, Equatable {
     }
 }
 
-/// Positional arguments of a command: up to `maxCount` values, optionally
-/// restricted to `choices`.
 public struct PositionalSpec: Sendable, Equatable {
-    /// Name used in error messages (`argument provider: invalid choice: ...`).
     public var name: String
     public var maxCount: Int
     public var choices: [String]?
@@ -47,15 +40,10 @@ public struct PositionalSpec: Sendable, Equatable {
     public static let none = PositionalSpec(name: "", maxCount: 0)
 }
 
-/// Declarative description of one command: used for parsing, `--help` output and
-/// usage lines.
 public struct CommandSpec: Sendable {
     public var name: String
-    /// Everything after the command name in the usage line, e.g. `[--json] [--all]`.
     public var synopsis: String
-    /// One-line description (shown in `sidepulse --help`).
     public var summary: String
-    /// Optional longer text shown in `sidepulse <command> --help`.
     public var details: String?
     public var positionals: PositionalSpec
     public var options: [OptionSpec]
@@ -66,12 +54,11 @@ public struct CommandSpec: Sendable {
         self.positionals = positionals; self.options = options
     }
 
-    /// `usage: sidepulse write [PROGRAM|-] ...`
     public var usageLine: String {
         synopsis.isEmpty ? "usage: sidepulse \(name)" : "usage: sidepulse \(name) \(synopsis)"
     }
 
-    /// Full `--help` text (argparse-like layout).
+    /// Mimics argparse's layout.
     public var helpText: String {
         var lines = [usageLine, "", summary]
         if let details, !details.isEmpty { lines += ["", details] }
@@ -93,18 +80,15 @@ public struct CommandSpec: Sendable {
     func option(short: Character) -> OptionSpec? { options.first { $0.short == short } }
 }
 
-/// A usage error; printed as the usage line plus `sidepulse <cmd>: error: <message>`
-/// and exit code 2.
 public struct UsageError: Error, Equatable, CustomStringConvertible {
     public var message: String
     public init(_ message: String) { self.message = message }
     public var description: String { message }
 }
 
-/// The result of parsing one command's arguments.
 public struct ParsedArguments: Equatable, Sendable {
     public var flags: Set<String> = []
-    /// Option values; the last occurrence wins.
+    /// The last occurrence wins, as in argparse.
     public var values: [String: String] = [:]
     public var positionals: [String] = []
 
@@ -115,9 +99,6 @@ public struct ParsedArguments: Equatable, Sendable {
     public func has(_ flag: String) -> Bool { flags.contains(flag) }
     public func value(_ name: String) -> String? { values[name] }
 
-    /// Parses a numeric option (`--interval 0.5`). Returns `defaultValue` when the
-    /// option is absent. Rejects non-finite values and values below `minimum`
-    /// (or equal to it when `exclusive`).
     public func double(_ name: String, default defaultValue: Double, minimum: Double? = nil,
                        exclusive: Bool = false) throws -> Double {
         guard let raw = values[name] else { return defaultValue }
@@ -137,10 +118,7 @@ public enum ParseOutcome: Equatable {
     case arguments(ParsedArguments)
 }
 
-/// A deliberately small argument parser: `--flag`, `--opt value`, `--opt=value`,
-/// `-x` short options, `-h`/`--help`, positionals and a `--` terminator (everything
-/// after it is positional; a lone `-` is always positional). Unknown options,
-/// missing values and surplus positionals are usage errors.
+/// Deliberately small, with argparse's error messages so usage errors read like the Python CLI's.
 public enum ArgumentParser {
     public static func parse(_ arguments: [String], spec: CommandSpec) throws -> ParseOutcome {
         var result = ParsedArguments()
@@ -190,7 +168,6 @@ public enum ArgumentParser {
                 }
                 try store(option, inlineValue: inlineValue)
             } else {
-                // `-x`, `-xVALUE` for a value option, or `-abc` for bundled flags.
                 let letters = Array(argument.dropFirst())
                 var position = 0
                 while position < letters.count {

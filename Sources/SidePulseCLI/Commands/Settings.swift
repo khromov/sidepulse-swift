@@ -1,12 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse settings`: asks the app to open its Settings window (`open-settings`
-/// socket command, acknowledged with `ok`). When nobody answers, starts the app
-/// (`AppLauncher.start`, which never changes the login item) and retries for up to
-/// `startupTimeout` seconds. An
-/// instance that answers `ping` but not `open-settings` is the headless runtime,
-/// which cannot show a window: that is reported instead of starting a second copy.
 enum SettingsCommand: CLICommand {
     static let spec = CommandSpec(
         name: "settings",

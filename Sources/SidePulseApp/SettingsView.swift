@@ -1,8 +1,6 @@
 import SwiftUI
 import SidePulseCore
 
-/// The settings window content: General, Animations, Devices and Hooks tabs, plus a
-/// one-line status message at the bottom.
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
@@ -79,7 +77,6 @@ private struct GeneralTab: View {
     }
 }
 
-/// Picker over duration presets, with the current value added when it is custom.
 private struct DurationPicker: View {
     let title: String
     let presets: [TimeInterval]
@@ -96,8 +93,7 @@ private struct DurationPicker: View {
     }
 }
 
-/// A slider that reports its value when the user lets go (or on each keyboard
-/// step), so dragging does not write settings.json on every tick.
+/// Commits only on release or a keyboard step so dragging does not write settings.json on every tick.
 private struct CommitSlider: View {
     let value: Double
     let range: ClosedRange<Double>

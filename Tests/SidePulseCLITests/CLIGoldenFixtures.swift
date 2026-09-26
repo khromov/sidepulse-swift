@@ -1,8 +1,7 @@
-// Generated from the Python implementation (sidepulse.cli render_snapshot,
-// describe_status, render_watch_dashboard; TZ=UTC, COLUMNS=120) for differential
-// tests. Paths: "/state/logs/claude.jsonl" exists, "/nonexistent/codex.jsonl" does not.
-// The dashboard goldens are the Python output verbatim; the tests apply the
-// documented deviations (title, source=, marker padding) before comparing.
+// Python output (render_snapshot, describe_status, render_watch_dashboard; TZ=UTC, COLUMNS=120)
+// where only "/state/logs/claude.jsonl" exists.
+// The dashboard goldens are verbatim, so the tests apply the documented deviations (title, source=,
+// marker padding) before comparing.
 
 enum CLIPythonGolden {
     static let describeA = "proj: task (abc12345): Tool Running event=PreToolUse origin=Claude Code CLI tool=Bash age=5s cwd=/tmp/proj"

@@ -15,9 +15,7 @@ final class CLIWriteInputTests: XCTestCase {
     func testImplicitStdin() {
         XCTAssertEqual(WriteCommand.programText(nil, stdin: .data(Data("#00FF66 320ms cosine\n".utf8))),
                        "#00FF66 320ms cosine\n")
-        // Whitespace-only piped input counts as no program.
         XCTAssertNil(WriteCommand.programText(nil, stdin: .data(Data(" \n\t".utf8))))
-        // Never read from a terminal.
         XCTAssertNil(WriteCommand.programText(nil, stdin: .terminal))
         // Nothing pending on a non-TTY stdin: don't block.
         var readCalled = false

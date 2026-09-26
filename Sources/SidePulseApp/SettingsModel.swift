@@ -1,10 +1,7 @@
 import Foundation
 import SidePulseCore
 
-/// State and actions behind the SwiftUI settings window. Reads from the runtime
-/// (settings, devices, keep-awake) and writes through `runtime.updateSettings` /
-/// `setDeviceDisplay` / `setDeviceBrightness`, applying each change locally first so
-/// controls do not snap back while the runtime catches up.
+/// Applies each change locally before handing it to the runtime so controls do not snap back while it catches up.
 @MainActor
 final class SettingsModel: ObservableObject {
     @Published private(set) var settings: SidePulseSettings
@@ -13,13 +10,10 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var launchAtLogin = false
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var busyProviders: Set<HookProvider> = []
-    /// Detail lines from the last install/uninstall per provider.
     @Published private(set) var hookNotes: [HookProvider: [String]] = [:]
-    /// Last action result or error, shown at the bottom of the window.
     @Published var message: String?
 
     let services: AppServices
-    /// Built-in animation catalog (picker entries).
     let animations = AnimationLibrary.all
     let profiles = AnimationProfiles.builtIn
 
@@ -30,7 +24,7 @@ final class SettingsModel: ObservableObject {
         settings = services.runtime.settings
     }
 
-    /// Re-reads runtime state; hooks only when asked (they read agent config files).
+    /// Hooks are opt-in because reading them parses the agent config files.
     func reload(includeHooks: Bool) {
         assignIfChanged(\.settings, runtime.settings)
         assignIfChanged(\.devices, runtime.deviceInfos())
@@ -47,7 +41,6 @@ final class SettingsModel: ObservableObject {
 
     // MARK: Settings
 
-    /// Applies `body` locally, then saves it through the runtime (reload-modify-save).
     func update(_ body: @escaping (inout SidePulseSettings) -> Void) {
         body(&settings)
         runtime.updateSettings(body)
@@ -72,7 +65,6 @@ final class SettingsModel: ObservableObject {
         update { $0.apply(profile: profile) }
     }
 
-    /// Previews are possible when a connected device shows agent status.
     var canPreview: Bool {
         devices.contains { $0.connected && $0.display == .agent }
     }

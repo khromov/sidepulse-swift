@@ -15,7 +15,6 @@ final class HookInstallCommandTests: XCTestCase {
         }
     }
 
-    /// Reference values computed with Python's shlex.quote.
     func testShellQuoteMatchesPythonShlex() {
         let vectors: [(String, String)] = [
             ("", "''"),
@@ -87,10 +86,8 @@ final class HookInstallCommandTests: XCTestCase {
         }
     }
 
-    /// Regression: current-style means exactly the shape we write. A CLI path
-    /// that contains a legacy word is still ours; a foreign command that embeds
-    /// ours is not (Codex trust would otherwise approve it), but it still carries
-    /// our marker, so the installers remove it.
+    /// Regression: a foreign command embedding ours must not be current-style (Codex trust would approve it),
+    /// but its marker still makes the installers remove it.
     func testCurrentStyleIsExactlyTheWrittenShape() {
         let paths = [
             "/Users/k/src/agent-monitor/.build/debug/sidepulse",

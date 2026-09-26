@@ -2,7 +2,6 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// How device problems reach the Devices submenu (`DeviceMenuModel`).
 final class PresentationDeviceTests: XCTestCase {
     private func info(error: String?) -> DeviceInfo {
         DeviceInfo(id: "/Volumes/PulseDot", name: "SidePulse Dot", root: URL(fileURLWithPath: "/Volumes/PulseDot"),

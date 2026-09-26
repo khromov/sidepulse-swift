@@ -1,15 +1,7 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse app status` output.
 public enum AppStatusText {
-    /// ```
-    /// app: running | not running
-    ///   plist: <path> (installed|missing)
-    ///   launchd: loaded (pid 123) | loaded, not running | not loaded
-    ///   socket: <path> (responding, pid 123, version 0.1.0 | not responding)
-    ///   binary: <path> | not found
-    /// ```
     public static func render(state: LaunchAgentStatus, plistPath: URL, socketPath: String, ping: PingReply?,
                               appBinary: String?) -> String {
         let launchd: String

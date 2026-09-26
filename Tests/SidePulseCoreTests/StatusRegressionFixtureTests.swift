@@ -1,9 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Runs `LogScanner.scan` over the anonymized fixture in
-/// Fixtures/StatusRegressionFixture.swift and compares every row with the output
-/// of the Python collector over the same bytes.
 final class StatusRegressionFixtureTests: XCTestCase {
     private var tmp: URL!
 
@@ -115,8 +112,7 @@ final class StatusRegressionFixtureTests: XCTestCase {
     }
 
     func testFixtureLiveReplayMatchesScan() throws {
-        // Feeding the same lines to a live engine in timestamp order (as the socket
-        // would) gives the same rows as the scan, and survives a latest.json restart.
+        // Timestamp order mirrors what the socket would deliver.
         let scanned = try scanFixture()
         let index = CodexSessionIndex(url: tmp.appendingPathComponent("home/.codex/session_index.jsonl"))
         let sources = [SourceInfo(provider: "codex", path: tmp.appendingPathComponent("logs/codex.jsonl").path),

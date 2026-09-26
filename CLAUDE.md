@@ -20,6 +20,7 @@ swift run sidepulse --help
 SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline   # CLI against a throwaway data root
 scripts/build-app.sh [--debug]                # build/SidePulse.app (ad-hoc signed unless SIDEPULSE_CODESIGN_IDENTITY)
 scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications, link ~/.local/bin/sidepulse, run setup
+scripts/release.sh [--sign ID] [--notary-profile NAME]   # Developer ID + notarize + staple → dist/SidePulse-VERSION.zip
 ```
 
 There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 14+ and no third-party dependencies.
@@ -52,7 +53,7 @@ Data flow:
 
 Key design points that span several files:
 
-- **Runtime threading.** Engine state lives on a private serial queue. UI reads such as `snapshot()`, `settings` and `deviceInfos()` come from lock-protected caches and never block. Mutators return at once and apply their effects asynchronously. `onUpdate` is coalesced and delivered on main. LED writes and `latest.json` writes each run on their own queues. The doc comment on `SidePulseRuntime` is the contract.
+- **Runtime threading.** Engine state lives on a private serial queue. UI reads such as `snapshot()`, `settings` and `deviceInfos()` come from lock-protected caches and never block. Mutators return at once and apply their effects asynchronously. `onUpdate` is coalesced and delivered on main. LED writes and `latest.json` writes each run on their own queues. The Runtime threading section of `docs/ARCHITECTURE.md` is the contract.
 - **Event ordering.** `EventSocketServer` reads connections concurrently but delivers them in accept order, so `PreToolUse` is never applied after `PostToolUse`.
 - **CLI dependency injection.** Each command conforms to `CLICommand` (a `spec` plus `run(_:_:)`) and is registered in `SidePulseCLI.commands` or `aliases`. All I/O goes through `CLIEnvironment`: stdout, stderr, stdin, paths, clock, `AppConnection`, `SnapshotLoader` and launch-agent operations. Tests build one with captured output and fakes (`CLITestSupport.swift`) and call `SidePulseCLI.run(args, environment:)`. Exit codes: 0 ok, 1 failure, 2 usage.
 - **Presentation layer.** `SidePulseCore/Presentation/` holds UI-agnostic view models for the menu, session rows and settings, and they are unit tested. Put logic there, not in `SidePulseApp`. `HookCLIPath` is the _single_ resolver for which CLI path is written into hooks. Install, setup, doctor and the app all use it.
@@ -68,7 +69,7 @@ Key design points that span several files:
 - **`LEDS.LED` writes.** This file is the exception: it is written in place by `LedWriter`, and only truncated after the caller re-checks that it still wants the write. The re-check matters because `open()` can block on the macOS removable-volume permission prompt.
 - **Finding SidePulse hooks.** Identify our hooks, current and Python-era, only by command markers (`HookCommand.isSidePulseCommand`), never by log paths.
 - **Stable hook command.** Hook commands point at the stable `~/.local/bin/sidepulse` link. Codex trust hashes bind to the exact command string, so changing the command format invalidates trust.
-- **Generated file.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` is generated. Don't edit it by hand. Regenerate it with `SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests`.
+- **Generated file.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` is generated. Don't edit it by hand; Swift-only animations and profiles (such as Signal) go in `ExtraPrograms.swift`. Regenerate it with `SIDEPULSE_REGENERATE_BUILTINS=1 SIDEPULSE_PYTHON_REPO=<repo> swift test --filter LEDBuiltInProgramsSourceTests`.
 - **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed.
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.

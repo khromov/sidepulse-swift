@@ -1,17 +1,9 @@
 import Foundation
 
-/// Reads a file descriptor to EOF without `FileHandle`, for `write -` and piped
-/// programs. (The hook reads stdin with `HookRuntime.readStandardInput`.)
-///
-/// `FileHandle.readDataToEndOfFile()` raises an Objective-C exception (and the
-/// process aborts) when the inherited descriptor is non-blocking and no data is
-/// ready yet.
+/// Avoids `FileHandle.readDataToEndOfFile()`, which aborts the process when the inherited
+/// descriptor is non-blocking and no data is ready yet.
 enum InputReader {
-    /// Reads `fd` until EOF (blocking, like `cat -`).
-    ///
-    /// Waits with `poll` before every read, so `EAGAIN` from a non-blocking
-    /// descriptor never loses data; `EINTR` is retried. Read errors and invalid
-    /// descriptors end the read with the data so far.
+    /// Polls before every read so `EAGAIN` from a non-blocking descriptor never loses data.
     static func readAll(fd: Int32) -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 << 10)

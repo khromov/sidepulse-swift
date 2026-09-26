@@ -1,8 +1,6 @@
 import Foundation
 import SidePulseCore
 
-/// `sidepulse uninstall [claude|codex|all]... [--dry-run]`: removes SidePulse hooks
-/// (current and Python-era) from the agent configs. Defaults to both providers.
 enum UninstallCommand: CLICommand {
     static let spec = CommandSpec(
         name: "uninstall",

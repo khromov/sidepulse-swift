@@ -18,7 +18,6 @@ private func candidate(_ path: String) -> DeviceCandidate {
     return DeviceCandidate(root: root, target: root.appendingPathComponent("LEDS.LED"), reason: "name matches device")
 }
 
-/// The settings model: tolerant decoding, animations, profiles and devices.
 final class SettingsModelTests: XCTestCase {
     func testDefaults() {
         let settings = SidePulseSettings()
@@ -145,8 +144,8 @@ final class SettingsModelTests: XCTestCase {
         let working = try settings(fromJSON: #"{"agent_animations": {"tool_running": "kitt"}}"#)
         XCTAssertEqual(working.animations, ["working": "kitt", "tool_running": "kitt", "long_task_progress": "kitt"])
 
-        // Python parity: the first working-group key present wins even when its id is
-        // unknown (it becomes the default id first).
+        // Python parity: the first working-group key wins even when its unknown id
+        // has already become the default.
         let unknownFirst = try settings(fromJSON: #"{"agent_animations": {"working": "bogus", "tool_running": "kitt"}}"#)
         XCTAssertEqual(unknownFirst.animationID(for: .toolRunning), "cyan-roll")
 
@@ -343,7 +342,6 @@ final class SettingsModelTests: XCTestCase {
     }
 }
 
-/// settings.json persistence and locking.
 final class SettingsStoreTests: XCTestCase {
     func testMissingAndCorruptFilesLoadDefaults() throws {
         let dir = try makeTempDirectory(self)
@@ -430,8 +428,7 @@ final class SettingsStoreTests: XCTestCase {
     func testConcurrentUpdatesNeverLoseWrites() throws {
         let dir = try makeTempDirectory(self)
         let url = dir.appendingPathComponent("settings.json")
-        // Two stores for the same file: the in-process mutex only covers one, so the
-        // flock must serialize the other (as it does across processes).
+        // Two stores, so the flock rather than the per-instance mutex must serialize them.
         let stores = [SettingsStore(url: url), SettingsStore(url: url)]
         let workers = 8
         let perWorker = 20

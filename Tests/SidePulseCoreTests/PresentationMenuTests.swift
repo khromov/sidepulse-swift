@@ -1,7 +1,6 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Menu-bar icon, header, menu model, settings choices and hook/device labels.
 final class PresentationMenuTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 

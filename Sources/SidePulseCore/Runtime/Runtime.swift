@@ -1,9 +1,7 @@
 import Foundation
 
-/// A connected (or remembered) device as shown in the UI.
 public struct DeviceInfo: Sendable, Equatable, Identifiable {
     public var id: String
-    /// Disambiguated display name ("SidePulse Dot", "SidePulse Dot (PulseDot 1)").
     public var name: String
     public var root: URL
     public var target: URL
@@ -11,8 +9,8 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
     public var display: LedDisplay
     public var brightness: Int
     public var ledCount: Int
-    /// Last write error for this device, if any, or a notice that its I/O is stuck
-    /// waiting for macOS permission (`LedSyncService.waitingForPermissionMessage`).
+    /// Also carries the stuck-I/O notice (`LedSyncService.waitingForPermissionMessage`),
+    /// not only write errors.
     public var lastError: String?
 
     public init(id: String, name: String, root: URL, target: URL, connected: Bool, display: LedDisplay,
@@ -22,10 +20,8 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Something that can hold the Mac awake (`KeepAwakeAssertion`; tests inject fakes).
 public protocol KeepAwakeHolding: AnyObject, Sendable {
     var isHeld: Bool { get }
-    /// Why the last attempt to hold failed, nil after a success.
     var lastError: String? { get }
     func setHeld(_ held: Bool)
 }
@@ -33,49 +29,31 @@ public protocol KeepAwakeHolding: AnyObject, Sendable {
 extension KeepAwakeAssertion: KeepAwakeHolding {}
 
 public struct RuntimeOptions: Sendable {
-    /// Bind the event socket (false for tests).
     public var serveSocket = true
-    /// Run keep-awake logic (a power assertion).
     public var keepAwake = true
-    /// Validate/print but never write LEDs.
     public var dryRun = false
-    /// Override mount roots (tests).
     public var mountRoots: [URL]? = nil
-    /// Status refresh period. Clamped to 0.05 s ... 1 day (Dispatch traps on
-    /// intervals of centuries, and `--interval` accepts any positive number).
+    /// Clamped to 0.05 s ... 1 day because Dispatch traps on huge intervals and
+    /// `--interval` accepts any positive number.
     public var refreshInterval: TimeInterval = 15
-    /// Device discovery period, clamped like `refreshInterval`.
     public var devicePollInterval: TimeInterval = 2
 
-    /// Battery reader for the keep-awake low-battery safeguard. nil = IOKit
-    /// (`BatteryState.read`). Only called while `keepAwake` is on.
     public var batteryReader: (@Sendable () -> BatteryState)? = nil
-    /// How long a battery reading is reused.
     public var batteryCacheInterval: TimeInterval = 30
-    /// What holds the Mac awake. nil = a `KeepAwakeAssertion` (only created when
-    /// `keepAwake` is on).
     public var keepAwakeHolder: (any KeepAwakeHolding)? = nil
-    /// Grace after agents complete / ask during which keep-awake keeps holding.
     public var keepAwakeGrace: TimeInterval = 300
-    /// latest.json writes are coalesced: the first change schedules a save this
-    /// long after it (changes in between ride along). `stop()` flushes. Clamped to
-    /// 0 ... 1 hour.
+    /// Counted from the first unsaved change, so later changes ride along instead
+    /// of postponing the save.
     public var latestSaveDelay: TimeInterval = 1
 
-    /// Device discovery (nil = `DeviceDiscovery.discover`). Tests inject slow ones.
     var deviceDiscovery: (@Sendable ([URL]?) -> [DeviceCandidate])? = nil
-    /// One keepalive touch (nil = `KeepaliveToucher.touchFile`). Tests inject slow ones.
     var keepaliveTouch: (@Sendable (URL) throws -> Void)? = nil
-    /// Called by `start()` right after the socket is bound, before rows are loaded
-    /// (tests hold start-up there).
     var afterBind: (@Sendable () -> Void)? = nil
-    /// How long `start()` waits for the first device discovery before carrying on
-    /// in the background (a hung volume under /Volumes must not stall app launch).
+    /// Bounded so a hung volume under /Volumes cannot stall app launch.
     var startupDiscoveryTimeout: TimeInterval = 2
 
     public init() {}
 
-    /// `value` clamped to `range`; +infinity gives the upper bound, NaN `fallback`.
     static func clamped(_ value: TimeInterval, to range: ClosedRange<TimeInterval>,
                         fallback: TimeInterval) -> TimeInterval {
         if value.isNaN { return fallback }
@@ -83,41 +61,22 @@ public struct RuntimeOptions: Sendable {
     }
 }
 
-/// The app's brain, shared by the menu-bar app and headless `sidepulse run`:
-/// event socket server → StatusEngine → debounced latest.json, LED sync,
-/// keep-awake, device polling, settings reloads. No AppKit.
-///
-/// Threading: engine state lives on an internal serial queue; `onUpdate` and
-/// `onOpenSettings` are invoked on the main queue.
-///
-/// - Reads the UI makes on the main thread (`snapshot()`, `settings`,
-///   `deviceInfos()`, `keepAwakeActive`) come from lock-protected caches and never
-///   wait for the state queue, device I/O or a settings write.
-/// - `updateSettings`, `setDeviceDisplay`, `setDeviceBrightness`, `removeDevice`
-///   and `refresh` return at once: `settings` reflects the change immediately, the
-///   save and its effects happen on the state queue, then `onUpdate` fires.
-/// - `ingest`, `reloadSettings` and `start`/`stop` run synchronously on the state
-///   queue (they are called from the socket handler, tests and startup).
-/// - LED writes run on `LedSyncService`'s queue, latest.json writes on their own
-///   queue.
+/// Shared by the menu-bar app and headless `sidepulse run`; its threading contract is
+/// in docs/ARCHITECTURE.md (Runtime threading).
 public final class SidePulseRuntime: @unchecked Sendable {
     public let paths: SidePulsePaths
     public let options: RuntimeOptions
     public let settingsStore: SettingsStore
     public let leds: LedSyncService
 
-    /// Called on the main queue after every accepted event / refresh / settings change.
-    ///
-    /// Notifications are coalesced: while one is waiting for the main queue, later
-    /// changes ride along and it delivers the snapshot current at delivery time.
+    /// Coalesced on the main queue: changes made while a delivery is pending ride along.
     public var onUpdate: ((MonitorSnapshot) -> Void)? {
         get { shared.read { $0.onUpdate } }
         set { shared.write { $0.onUpdate = newValue } }
     }
 
-    /// Called on the main queue for the `open-settings` socket command. Without a
-    /// handler (headless runtime) that command is refused, so the CLI can tell
-    /// there is no settings window.
+    /// Left nil by the headless runtime, which makes `open-settings` fail so the CLI
+    /// knows there is no settings window.
     public var onOpenSettings: (() -> Void)? {
         get { shared.read { $0.onOpenSettings } }
         set { shared.write { $0.onOpenSettings = newValue } }
@@ -136,16 +95,13 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private let codexIndex: CodexSessionIndex
     private let engine: StatusEngine
     private let sources: [SourceInfo]
-    /// Settings the engine and LEDs currently run with.
     private var applied: SidePulseSettings
-    /// settings.json's modification date when it was last loaded or saved here.
     private var settingsModified: Date?
-    /// Re-read settings.json on the next refresh even if its date looks unchanged:
-    /// set after our own saves, whose date is taken after the store's lock is
-    /// released, so another process's save in between would otherwise be missed.
+    /// Set after our own saves, whose date is read after the store's lock is released
+    /// and so may belong to another process's save that must not be missed.
     private var settingsRecheck = false
-    /// Bumped by every `start()`, so the second half of a start that raced with
-    /// `stop()` (and maybe another `start()`) never runs twice.
+    /// Lets the second half of a `start()` tell that a `stop()` (and maybe another
+    /// `start()`) got in between.
     private var startGeneration = 0
     private var policy: KeepAwakePolicy
     private var battery: (state: BatteryState, readAt: Date)?
@@ -158,16 +114,13 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private var deviceTimer: DispatchSourceTimer?
     private let keepAwakeHolder: (any KeepAwakeHolding)?
     private let readBattery: @Sendable () -> BatteryState
-    /// Last keep-awake error logged.
     private var loggedHolderError: String?
-    /// The last latest.json save failed (persist queue only).
+    /// Only touched on the persist queue.
     private var latestSaveFailing = false
-    /// Guards `outputsOpen`: previews check it and enqueue their write under this
-    /// lock, and `stop()` closes it before draining the LED queue, so nothing is
-    /// written after `stop()` returns.
+    /// Mirrors `running` behind a lock so `preview` can check it without waiting for
+    /// the state queue.
     private let outputLock = NSLock()
     private var outputsOpen = false
-    /// Events passed to `ingest` (accepted or not), for tests and diagnostics.
     private var ingestCount = 0
 
     public init(paths: SidePulsePaths, options: RuntimeOptions = RuntimeOptions()) {
@@ -202,24 +155,13 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Lifecycle
 
-    /// Loads settings + latest.json, reconciles with the provider logs
-    /// (LogScanner.scan over LogScanner.defaultSources), binds the socket (throws
-    /// `EventSocketError.alreadyRunning` if another instance serves it), starts the
-    /// refresh (15 s) and device-poll (2 s) timers, and syncs LEDs.
-    ///
-    /// The socket is bound before anything is written (settings, latest.json,
-    /// LEDs), so a second instance fails without side effects. Calling `start()`
-    /// on a running runtime does nothing.
-    ///
-    /// The first device discovery is waited for (so the first sync reaches every
-    /// mounted volume) for at most a couple of seconds; a hung volume finishes in
-    /// the background and its devices are synced when it does.
+    /// Binds the socket before writing anything (settings, latest.json, LEDs), so a
+    /// second instance fails with `EventSocketError.alreadyRunning` without side effects.
     public func start() throws {
         let generation: Int? = try onState {
             guard !running else { return nil }
-            // The socket serves before the rows below are loaded: until this block
-            // ends, `status` waits for it instead of answering with an empty
-            // "live" snapshot.
+            // The socket already serves, so `status` must wait for the rows below
+            // instead of answering with an empty snapshot.
             shared.write { $0.starting = true }
             defer { shared.write { $0.starting = false } }
             // Date first: an edit landing between the two reads is picked up later.
@@ -243,9 +185,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
             applySettings(settings)
 
             let now = Date()
-            // Like reconcile: a restored row never replaces a newer one this engine
-            // already has (a restart after stop(), which may still have taken one
-            // last event that latest.json does not hold).
+            // Like reconcile, a restored row never replaces a newer one, which the
+            // engine can already hold when restarted after stop().
             let current = engine.statuses
             engine.load(LatestStore(url: paths.latestFile).load().filter { row in
                 current[row.agentID].map { $0.updatedAt < row.updatedAt } ?? true
@@ -280,9 +221,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Runs the first discovery on the device queue and waits for it at most
-    /// `options.startupDiscoveryTimeout`. If it takes longer, it finishes in the
-    /// background and then remembers and syncs what it found.
+    /// Waits (bounded) for the first discovery so the first sync reaches every mounted volume.
     private func pollDevicesAtStart(generation: Int) {
         let poll = StartupPoll()
         deviceQueue.async { [weak self] in
@@ -303,13 +242,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Stops timers and the socket, flushes latest.json, releases keep-awake.
-    /// LEDs keep their last program.
-    ///
-    /// A preview that is still playing is ended and live status restored first.
     /// Waits (bounded) for queued LED work and keepalive touches, so nothing is
-    /// written after `stop()` returns; later previews and Manual switches write
-    /// nothing. Safe to call before `start()` and more than once.
+    /// written after it returns.
     public func stop() {
         let stopped: Bool = onState {
             guard running else { return false }
@@ -343,14 +277,11 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Non-blocking reads
 
-    /// Current snapshot (thread-safe).
     public func snapshot(now: Date = Date()) -> MonitorSnapshot {
         let (statuses, config) = shared.read { ($0.statuses, $0.config) }
         return SnapshotBuilder.build(statuses: statuses, config: config, now: now, sources: sources)
     }
 
-    /// Current settings (thread-safe copy).
-    ///
     /// Includes changes made through this runtime that are still being saved.
     public var settings: SidePulseSettings {
         shared.read { $0.uiSettings }
@@ -360,28 +291,19 @@ public final class SidePulseRuntime: @unchecked Sendable {
         leds.deviceInfos(settings: settings)
     }
 
-    /// Whether the Mac is currently held awake.
     public var keepAwakeActive: Bool {
         shared.read { $0.keepAwakeActive }
     }
 
     // MARK: Settings
 
-    /// Reload-modify-save through `settingsStore.update`, then apply (monitor config,
-    /// LED resync, keep-awake) and fire `onUpdate`.
-    ///
-    /// Returns immediately: `settings` shows the change at once, the save runs on
-    /// the state queue. If the save fails the change still applies in memory.
+    /// If the save fails the change still applies in memory.
     public func updateSettings(_ body: @escaping (inout SidePulseSettings) -> Void) {
         mutateSettings(body) { _, _ in }
     }
 
-    /// Re-read settings.json (socket `reload-settings`, or external edit detected on
-    /// refresh via mtime).
-    ///
-    /// Synchronous: the new settings are applied (and LEDs resynced) when it
-    /// returns. A device that became Manual this way is only left alone, never
-    /// cleared (`sidepulse write --manual` writes its own program right after).
+    /// A device switched to Manual this way is left alone rather than cleared, because
+    /// `sidepulse write --manual` writes its own program right after.
     public func reloadSettings() {
         onState {
             reloadSettingsLocked()
@@ -389,10 +311,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Switching to Manual writes "off" once to a connected device.
-    ///
-    /// Only an actual switch (from Agent) of a connected device clears it, and only
-    /// while LED output is enabled and the runtime is running.
     public func setDeviceDisplay(_ display: LedDisplay, deviceID: String) {
         let device = leds.connectedDevices.first { $0.id == deviceID }
         let name = device?.displayName
@@ -432,10 +350,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Events and refresh
 
-    /// Feed an event directly (used by the socket handler and tests).
-    ///
-    /// Synchronous: the snapshot (and `status` replies) include the event when it
-    /// returns. Dropped/ignored events change nothing.
+    /// Synchronous, so `status` replies include the event once it returns.
     public func ingest(provider: String, line: JSONObject) {
         onState {
             ingestCount += 1
@@ -448,10 +363,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Recompute snapshot, sync LEDs, update keep-awake, fire onUpdate.
-    ///
-    /// Also picks up an external settings.json edit. Asynchronous unless called on
-    /// the state queue, so the main thread never waits.
+    /// Asynchronous unless already on the state queue, so the main thread never waits.
     public func refresh() {
         if isOnStateQueue {
             refreshLocked(now: Date(), checkSettings: true)
@@ -460,8 +372,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Plays `animationID` on the connected Agent-mode devices, then restores live
-    /// status (`LedSyncService.preview`). Ignored unless the runtime is running.
     public func preview(animationID: String, seconds: TimeInterval = 3) {
         outputLock.lock()
         defer { outputLock.unlock() }
@@ -478,7 +388,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Socket
 
-    /// Handles one socket message (exposed for tests).
     public func handle(_ message: IPCMessage) -> Data? {
         switch message {
         case .event(let provider, let line):
@@ -500,8 +409,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 return IPCReply.ok
             case "reload-settings":
                 reloadSettings()
-                // Writes still in open() re-check the new settings and skip a device
-                // that became Manual; one already writing may still land, so wait for
+                // A write already past its settings check may still land, so wait for
                 // it before `sidepulse write --manual` writes its own program.
                 guard leds.waitForWrites(timeout: 2) else { return IPCReply.error("LED write in progress") }
                 return IPCReply.ok
@@ -513,17 +421,15 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     // MARK: Test support
 
-    /// Waits until work queued so far (state, LEDs, latest.json) is done.
     func waitUntilIdle(timeout: TimeInterval = 5) {
         onState {}
         leds.waitUntilIdle(timeout: timeout)
         persistQueue.sync {}
     }
 
-    /// Whether the runtime is between `start()` and `stop()`.
     var isRunning: Bool { onState { running } }
 
-    /// Events passed to `ingest` so far (accepted or not).
+    /// Includes events the engine dropped or ignored.
     var ingestedEventCount: Int { onState { ingestCount } }
 
     // MARK: - State queue internals
@@ -537,9 +443,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         return try stateQueue.sync(execute: body)
     }
 
-    /// Applies `body` to the cached settings at once (so the UI sees it), then saves
-    /// and applies it on the state queue, runs `after(old, saved)`, refreshes and
-    /// fires `onUpdate`.
     private func mutateSettings(_ body: @escaping (inout SidePulseSettings) -> Void,
                                 after: @escaping (_ old: SidePulseSettings, _ saved: SidePulseSettings) -> Void) {
         var optimistic = settings
@@ -566,9 +469,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// Makes `new` the running settings: monitor config, controller resets for
-    /// changed devices / animations / LED output, and the caches. Returns true if
-    /// anything changed.
     @discardableResult
     private func applySettings(_ new: SidePulseSettings) -> Bool {
         let old = applied
@@ -608,8 +508,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         return changed
     }
 
-    /// Upserts every connected device into settings.json (written only when
-    /// something changed).
     private func rememberConnectedDevices() {
         let connected = leds.connectedDevices
         guard !connected.isEmpty else { return }
@@ -625,11 +523,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
     }
 
-    /// After `settingsStore.update` succeeded: remember the file's date, and make
-    /// the next refresh re-read the file once anyway. The date is taken after the
-    /// store released its lock, so it may already belong to another process's
-    /// save; the extra read (a no-op when nothing changed) makes sure that save
-    /// is not missed.
     private func noteOwnSettingsSave() {
         settingsModified = settingsStore.modificationDate
         settingsRecheck = true
@@ -647,7 +540,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         scheduleNotify()
     }
 
-    /// Copies the engine's rows into the cache; returns the snapshot at `now`.
     @discardableResult
     private func publishStatuses(now: Date) -> MonitorSnapshot {
         let statuses = Array(engine.statuses.values)
@@ -659,7 +551,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
         return SnapshotBuilder.build(statuses: statuses, config: config, now: now, sources: sources)
     }
 
-    /// LEDs, keepalive and keep-awake for the aggregate `mode` (only while running).
     private func driveOutputs(mode: AgentMode, now: Date) {
         guard running else { return }
         leds.requestSync(mode: mode)
@@ -690,9 +581,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         deviceTimer = poll
     }
 
-    /// Device queue: discovery off the state queue (a hung mount must not stall
-    /// events); on a change remember new devices and resync at once. A device
-    /// whose error or stuck-I/O notice changed refreshes the UI.
+    /// Runs on the device queue so a hung mount never stalls event handling.
     private func pollDevicesTick() {
         let changed = leds.pollDevices()
         let errorsChanged = leds.checkDeviceStatus()
@@ -725,9 +614,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
         saveLatest(now: Date())
     }
 
-    /// Writes the engine's rows on the persist queue. A failure is logged when
-    /// saving starts failing and when it works again, not on every save (errors
-    /// name a random temp file, so they differ each time).
+    /// Logs only when saving starts failing or works again, because each error names a
+    /// different random temp file.
     private func saveLatest(now: Date) {
         let statuses = Array(engine.statuses.values)
         let store = LatestStore(url: paths.latestFile)
@@ -811,16 +699,14 @@ public final class SidePulseRuntime: @unchecked Sendable {
     }
 }
 
-/// Hand-off between `start()` and its first device discovery: `start()` waits a
-/// bounded time; if it gives up, the discovery learns so when it finishes.
 private final class StartupPoll: @unchecked Sendable {
     private let lock = NSLock()
     private let done = DispatchSemaphore(value: 0)
     private var finished = false
     private var abandoned = false
 
-    /// Called by the discovery when it is done. Returns true when the waiter had
-    /// already given up (so the discovery must finish the start-up work itself).
+    /// Returns true when the waiter already gave up, so the caller must finish the
+    /// start-up work itself.
     func finish() -> Bool {
         lock.lock()
         finished = true
@@ -830,7 +716,6 @@ private final class StartupPoll: @unchecked Sendable {
         return abandoned
     }
 
-    /// Returns true when the discovery finished within `timeout`.
     func wait(timeout: TimeInterval) -> Bool {
         if done.wait(timeout: .now() + timeout) == .success { return true }
         lock.lock()
@@ -841,20 +726,17 @@ private final class StartupPoll: @unchecked Sendable {
     }
 }
 
-/// Lock-protected values shared between the state queue and readers on any
-/// thread (the UI reads them on the main thread).
 private final class RuntimeCache: @unchecked Sendable {
     struct Values {
-        /// What `SidePulseRuntime.settings` returns (includes unsaved UI changes).
+        /// Includes UI changes that are still being saved, unlike `ledSettings`.
         var uiSettings: SidePulseSettings
-        /// What the LEDs run with (applied on the state queue).
         var ledSettings: SidePulseSettings
-        /// UI changes queued for saving; while > 0 `uiSettings` is not overwritten.
+        /// While > 0 `uiSettings` is not overwritten, so an earlier save cannot undo a
+        /// later unsaved change.
         var pendingUIUpdates = 0
         var statuses: [AgentStatus] = []
         var config: MonitorConfig
         var keepAwakeActive = false
-        /// `start()` is loading rows (the socket may already serve).
         var starting = false
         var notifyScheduled = false
         var onUpdate: ((MonitorSnapshot) -> Void)?

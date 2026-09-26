@@ -4,29 +4,20 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var provider: HookProvider
     public var configPath: URL
     public var configExists: Bool
-    /// ~/.claude or ~/.codex exists.
     public var agentDetected: Bool
     /// Codex: `[features] hooks = true`; Claude: always true when the file parses.
     public var hooksEnabled: Bool
-    /// Events with a current-style SidePulse hook.
     public var installedEvents: [String]
-    /// Events expected but missing.
     public var missingEvents: [String]
     public var legacyHooks: Int
     public var logPath: URL
     public var logExists: Bool
-    /// Parse error, if any.
     public var error: String?
-    /// Distinct CLI paths the SidePulse hook commands call.
     public var hookCLIPaths: [String]
-    /// `<path> (missing)` / `<path> (not the SidePulse CLI)` for each of
-    /// `hookCLIPaths` that cannot run the hook (`HookCLIPath.problem`).
     public var hookCLIProblems: [String]
-    /// Codex: events whose SidePulse hook has no trust entry, so Codex skips it
-    /// until approved (`CodexHookInstaller.untrustedEvents`). Always empty for Claude.
+    /// Codex skips these hooks until they are approved; always empty for Claude.
     public var untrustedEvents: [String]
 
-    /// Every event hooked, runnable, enabled and (Codex) trusted, and the config parses.
     public var fullyInstalled: Bool {
         error == nil && missingEvents.isEmpty && !installedEvents.isEmpty && hooksEnabled
             && hookCLIProblems.isEmpty && untrustedEvents.isEmpty
@@ -44,10 +35,8 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     }
 }
 
-/// `sidepulse doctor`: what is installed where. Read-only.
 public enum HookDoctor {
-    /// `runningExecutable` decides whether a hook CLI that is not in an app bundle
-    /// still counts as ours (it is this very CLI; see `HookCLIPath.problem`).
+    /// `runningExecutable` lets a hook CLI outside an app bundle count as ours when it is this very CLI.
     public static func inspect(paths: SidePulsePaths, provider: HookProvider,
                                runningExecutable: String = SidePulsePaths.currentExecutablePath) -> ProviderDoctorInfo {
         let fm = FileManager.default
@@ -107,19 +96,6 @@ public enum HookDoctor {
         HookProvider.allCases.map { inspect(paths: paths, provider: $0, runningExecutable: runningExecutable) }
     }
 
-    /// Text:
-    /// ```
-    /// claude:
-    ///   config: /Users/x/.claude/settings.json (found|missing)
-    ///   hooks: installed (12/12 events) | partial (n/12) | not installed
-    ///   legacy python hooks: 0
-    ///   log: /…/logs/claude.jsonl (found|missing)
-    /// ```
-    /// Extra lines appear only when relevant: `  error: …` (unparsable config),
-    /// `  missing events: A, B` (partial install), `  hook cli: <path> (ok)` or
-    /// `  hook cli: <path> (missing); run 'sidepulse install <p>' to repair`, and for
-    /// Codex `  trust: 11/11 hooks trusted` (or n/11 plus what to do) and
-    /// `  hooks feature: disabled (…)`. No trailing newline.
     public static func renderText(_ infos: [ProviderDoctorInfo]) -> String {
         var lines: [String] = []
         for info in infos {
@@ -158,9 +134,6 @@ public enum HookDoctor {
         return lines.joined(separator: "\n")
     }
 
-    /// `{"providers":[{provider, config_path, config_exists, agent_detected,
-    /// hooks_enabled, installed_events, missing_events, legacy_hooks, log_path,
-    /// log_exists, error, hook_cli_paths, hook_cli_problems, untrusted_events}]}`
     public static func renderJSON(_ infos: [ProviderDoctorInfo]) -> JSONValue {
         .object(["providers": .array(infos.map { info in
             .object([

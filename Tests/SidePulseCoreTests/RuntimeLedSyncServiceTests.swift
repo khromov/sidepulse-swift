@@ -3,11 +3,10 @@ import Foundation
 import XCTest
 @testable import SidePulseCore
 
-/// Mutable settings for a `LedSyncService` under test.
 private final class SettingsBox: @unchecked Sendable {
     private let lock = NSLock()
     private var current: SidePulseSettings
-    /// Called (outside the lock) on every read; lets a test stall a sync mid-flight.
+    /// Runs outside the lock so a test can stall a sync mid-flight.
     var onRead: (@Sendable () -> Void)?
 
     init(_ settings: SidePulseSettings = SidePulseSettings()) { current = settings }
@@ -26,7 +25,6 @@ private final class SettingsBox: @unchecked Sendable {
     }
 }
 
-/// LedSyncService against fake device folders in a temp mount root.
 final class RuntimeLedSyncServiceTests: XCTestCase {
     private var world: RuntimeWorld!
     private var box: SettingsBox!
@@ -52,7 +50,6 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
                               log: { logs.append($0) }, keepalive: keepalive, stallNotice: stallNotice)
     }
 
-    /// `writeOnceAsync`, waited for.
     private func writeOnce(_ service: LedSyncService, _ program: String, to deviceID: String) throws {
         let failure = RuntimeInbox<Error?>()
         service.writeOnceAsync(program: program, deviceID: deviceID) { failure.append($0) }
@@ -64,14 +61,12 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.deviceInfos(settings: box.value)
     }
 
-    /// Makes `<device>/LEDS.LED` a FIFO: opening it for writing blocks until a
-    /// reader shows up, like open() waiting on the macOS permission prompt.
+    /// A FIFO's open() blocks until a reader shows up, like open() waiting on the macOS permission prompt.
     private func makeBlockingTarget(_ name: String) {
         world.addDevice(name, content: nil)
         XCTAssertEqual(mkfifo(world.target(name).path, 0o644), 0)
     }
 
-    /// Lets a write blocked on the FIFO through and returns what it wrote.
     private func unblock(_ name: String, _ service: LedSyncService) -> String {
         let fd = open(world.target(name).path, O_RDONLY | O_NONBLOCK)
         XCTAssertGreaterThanOrEqual(fd, 0)
@@ -103,15 +98,13 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("SidePulsePro"), pro)
         XCTAssertEqual(results[world.deviceID("PulseDot")], LedSyncResult(changed: true, program: dot, target: world.target("PulseDot")))
 
-        // Same mode again: deduped, nothing rewritten.
+        // Tool Running shows the same program as Working, so the write is deduped.
         let again = service.syncNow(mode: .toolRunning)
         XCTAssertEqual(again[world.deviceID("PulseDot")]?.changed, false)
-        // An external overwrite is repaired on the next sync.
         world.overwrite("PulseDot", with: "off")
         XCTAssertEqual(service.syncNow(mode: .working)[world.deviceID("PulseDot")]?.changed, true)
         XCTAssertEqual(world.program("PulseDot"), dot)
 
-        // Each state has its own program.
         service.syncNow(mode: .waitingForInput)
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.waitingForInput, ledCount: 2))
         service.syncNow(mode: .completed)
@@ -129,7 +122,6 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(Array(results.keys), [world.deviceID("SidePulsePro")])
         XCTAssertEqual(world.program("PulseDot"), "boot", "Manual devices are never written")
 
-        // Back to Agent: the device is written on the next sync.
         box.update { $0.setDisplay(.agent, forDevice: world.deviceID("PulseDot")) }
         service.syncNow(mode: .completed)
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
@@ -169,7 +161,6 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertTrue(toucher.waitForPendingTouches())
         XCTAssertEqual(touched.count, 2, "rate limited to once a minute")
 
-        // The real toucher creates the file.
         let real = makeService()
         real.pollDevices()
         real.touchKeepalive()
@@ -181,8 +172,6 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
 
     // MARK: Coalescing
 
-    /// 200 requests queued behind a busy I/O queue collapse into one pass that
-    /// writes the last mode.
     func testRequestSyncCoalescesToTheLatestMode() {
         world.addDevice("PulseDot")
         let service = makeService()
@@ -198,8 +187,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
-    /// A request made while a sync is in flight is never dropped (the Python bug):
-    /// the sync runs once more with the newest mode.
+    /// Deliberate deviation from Python, which dropped a request made while a sync was in flight.
     func testRequestDuringInFlightSyncRunsAgain() {
         world.addDevice("PulseDot")
         let service = makeService()
@@ -238,8 +226,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), program)
         XCTAssertTrue(logs.items.contains { $0.hasPrefix("devices: connected SidePulse Dot") }, "\(logs.items)")
 
-        // Unplug; replug a "different card" that happens to hold the same program:
-        // the controller was reset, so the device is written again.
+        // A replugged card's controller was reset, so it is written again even if it holds the same program.
         world.removeDevice("PulseDot")
         XCTAssertTrue(service.pollDevices())
         XCTAssertEqual(service.connectedDevices, [])
@@ -288,7 +275,6 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(infos[4].brightness, 255, "clamped")
         XCTAssertEqual(Set(infos.map(\.name)).count, infos.count)
 
-        // Two connected volumes with the same display name.
         world.addDevice("PulseDot 1")
         service.pollDevices()
         let names = deviceInfos(service).filter(\.connected).map(\.name)
@@ -355,10 +341,9 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertFalse(service.checkDeviceStatus())
         XCTAssertEqual(logs.items.filter { $0.contains("waiting for macOS permission?") }.count, 1, "\(logs.items)")
 
-        // `sidepulse write --manual` meanwhile: a write still in open() is not waited for...
+        // A write still blocked in open() is not waited for; it re-checks the settings once open() returns.
         box.update { $0.setDisplay(.manual, forDevice: dot) }
         XCTAssertTrue(service.waitForWrites(timeout: 0.1))
-        // ...and once open() returns it sees Manual and writes nothing.
         XCTAssertEqual(unblock("PulseDot", service), "")
         XCTAssertNil(deviceInfos(service).first?.lastError)
         XCTAssertTrue(service.checkDeviceStatus(), "the notice goes away")

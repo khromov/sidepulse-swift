@@ -1,13 +1,8 @@
 import XCTest
 @testable import SidePulseCore
 
-/// Differential check against the Python collector, run by hand.
-///
-/// Set `SIDEPULSE_STATUS_DIFF_DIR` to a scratch directory holding COPIES of
-/// provider logs in `logs/{codex,claude}.jsonl` (and optionally
-/// `home/.codex/session_index.jsonl`). The test writes `swift.json` there with one
-/// entry per status key, in the same shape as the Python harness output, so the
-/// two can be compared. Skipped when the variable is unset.
+/// Run by hand with `SIDEPULSE_STATUS_DIFF_DIR` holding COPIES of `logs/{codex,claude}.jsonl` (and optionally
+/// `home/.codex/session_index.jsonl`); it writes `swift.json` there to diff against the Python harness output.
 final class StatusDifferentialTests: XCTestCase {
     func testDumpScanForPythonComparison() throws {
         guard let dir = ProcessInfo.processInfo.environment["SIDEPULSE_STATUS_DIFF_DIR"], !dir.isEmpty else {

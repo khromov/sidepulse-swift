@@ -1,10 +1,8 @@
 import Foundation
 
 public enum TimeFormat {
-    /// Parses ISO-8601-ish timestamps like Python `datetime.fromisoformat` after
-    /// replacing a trailing `Z` with `+00:00`: accepts `Z`, `+HH:MM`, `+HHMM`, no
-    /// offset (naive = UTC), optional fractional seconds (any number of digits),
-    /// `T` or space separator, and date-only `YYYY-MM-DD`. Returns nil on failure.
+    /// Accepts what Python `datetime.fromisoformat` does once a trailing `Z` becomes
+    /// `+00:00`, treating naive times as UTC.
     public static func parse(_ string: String) -> Date? {
         var s = Array(string.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
         guard !s.isEmpty else { return nil }
@@ -95,28 +93,23 @@ public enum TimeFormat {
         return Date(timeIntervalSince1970: epoch)
     }
 
-    /// `parse`, falling back to `now` for nil/empty/invalid (Python parse_datetime).
     public static func parseOrNow(_ value: JSONValue?, now: Date = Date()) -> Date {
         guard let s = value?.stringValue, let d = parse(s.trimmingCharacters(in: .whitespaces)) else { return now }
         return d
     }
 
-    /// `2026-09-26T00:31:49.123Z` (UTC, millisecond precision). Used for `logged_at`
-    /// in hook records we write.
     public static func iso8601Millis(_ date: Date) -> String {
         let (base, frac) = split(date)
         let ms = min(999, Int((frac * 1000).rounded(.down)))
         return components(base) + String(format: ".%03dZ", ms)
     }
 
-    /// `2026-09-26T00:31:49Z` (UTC, whole seconds).
     public static func iso8601Seconds(_ date: Date) -> String {
         components(split(date).0) + "Z"
     }
 
-    /// Python `datetime.isoformat()` for an aware UTC datetime:
-    /// `2026-09-17T17:42:43+00:00`, or `2026-09-17T17:42:43.131369+00:00` when the
-    /// date has a non-zero sub-second part (microsecond precision).
+    /// Matches Python `datetime.isoformat()`, which omits the fraction entirely when
+    /// microseconds are zero.
     public static func pythonISO(_ date: Date) -> String {
         var (base, frac) = split(date)
         var micros = Int((frac * 1_000_000).rounded())
@@ -125,7 +118,6 @@ public enum TimeFormat {
         return micros == 0 ? head + "+00:00" : head + String(format: ".%06d+00:00", micros)
     }
 
-    /// Filesystem-safe UTC stamp for backups: `20260926T003149Z`.
     public static func backupStamp(_ date: Date) -> String {
         var t = time_t(split(date).0)
         var tmv = tm()
@@ -150,13 +142,10 @@ public enum TimeFormat {
 }
 
 public enum FileUtil {
-    /// Writes `data` via a temp file in the same directory + `rename(2)`. Creates the
-    /// parent directory. Preserves the existing file's POSIX permissions if present.
-    /// NEVER use this for LEDS.LED on the device (see LedWriter).
+    /// Never use this for LEDS.LED, which must be written in place (see LedWriter).
     public static func atomicWrite(_ data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Replace the real file behind any symlink chain (dotfiles setups), resolved
-        // the way the kernel does, never lexically.
+        // Replace the real file behind any symlink chain so dotfile links survive.
         let target = try ensureWritable(url)
         let tmp = target.deletingLastPathComponent()
             .appendingPathComponent(".\(target.lastPathComponent).tmp.\(getpid()).\(UInt32.random(in: 0...UInt32.max))")
@@ -183,10 +172,8 @@ public enum FileUtil {
         ok = true
     }
 
-    /// Resolves the file a write to `url` would replace and throws when it exists but
-    /// is read-only. Users make configs read-only to stop tools from editing them;
-    /// rename(2) would bypass that, so writers refuse explicitly (call this before
-    /// taking a backup, so a refused write leaves nothing behind).
+    /// Refuses read-only files explicitly because rename(2) would bypass the protection;
+    /// call it before taking a backup so a refused write leaves nothing behind.
     @discardableResult
     public static func ensureWritable(_ url: URL) throws -> URL {
         let target = try resolvedWriteTarget(url)
@@ -197,10 +184,7 @@ public enum FileUtil {
         return target
     }
 
-    /// The file a write to `url` must replace: `realpath` for an existing path;
-    /// otherwise the realpath of the parent directory plus the symlink chain
-    /// (dangling links point at the file to create), resolving each relative link
-    /// against its own directory. At most 32 hops.
+    /// Follows dangling symlinks by hand because they point at the file a write should create.
     static func resolvedWriteTarget(_ url: URL) throws -> URL {
         if let real = realpath(url.path, nil) {
             defer { free(real) }
@@ -237,9 +221,6 @@ public enum FileUtil {
         try atomicWrite(Data(string.utf8), to: url)
     }
 
-    /// Copies `url` to `<name>.bak.<backupStamp>` next to it if it exists. If that
-    /// name is taken, appends `-2`, `-3`, ... Returns the backup URL or nil if the
-    /// source does not exist.
     @discardableResult
     public static func backup(_ url: URL, now: Date = Date()) throws -> URL? {
         let fm = FileManager.default
@@ -256,16 +237,12 @@ public enum FileUtil {
         return dest
     }
 
-    /// Reads a file as UTF-8 (lossy). Returns nil if it does not exist / unreadable.
     public static func readText(_ url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
 }
 
-/// Minimal append-only diagnostics logger used by the app/runtime
-/// (`<root>/app.log`, rotated at 2 MB). Thread-safe. Also mirrors to stderr when
-/// `echo` is true (foreground runs).
 public final class DiagnosticsLog: @unchecked Sendable {
     public static let shared = DiagnosticsLog()
     private let queue = DispatchQueue(label: "sidepulse.diagnostics")
@@ -273,13 +250,12 @@ public final class DiagnosticsLog: @unchecked Sendable {
     private var _url: URL?
     private var _echo = false
 
-    /// Log file; nil = don't write a file.
     public var url: URL? {
         get { stateLock.lock(); defer { stateLock.unlock() }; return _url }
         set { stateLock.lock(); _url = newValue; stateLock.unlock() }
     }
 
-    /// Mirror lines to stderr (foreground runs).
+    /// Mirrors lines to stderr for foreground runs.
     public var echo: Bool {
         get { stateLock.lock(); defer { stateLock.unlock() }; return _echo }
         set { stateLock.lock(); _echo = newValue; stateLock.unlock() }
@@ -287,7 +263,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
 
     public init(url: URL? = nil) { self._url = url }
 
-    /// Blocks until every queued line has been written (call before exiting).
+    /// Call before exiting, since lines are written asynchronously.
     public func flush() {
         queue.sync {}
     }
