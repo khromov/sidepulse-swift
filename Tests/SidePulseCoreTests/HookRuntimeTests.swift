@@ -27,9 +27,9 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(result.keys, [
             "logged_at", "hook_event_name", "session_id", "agent_id", "cwd", "tool_name",
             "tool_input", "tool_response", "tool_response_failed", "prompt", "last_assistant_message", "message",
-            "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin",
+            "notification_type", "error_details", "agent_origin",
         ])
-        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","agent_id":"a1","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error_details":"details","sidepulse_status":"ask","sidepulse_mode":"working","agent_origin":"Claude Code CLI"}"#)
+        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","agent_id":"a1","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error_details":"details","agent_origin":"Claude Code CLI"}"#)
     }
 
     func testAbsentValuesAreOmitted() {
@@ -133,62 +133,10 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(value("prompt", 5000), .string(String(repeating: "z", count: 4000)))
         XCTAssertEqual(value("prompt", 4000), .string(String(repeating: "z", count: 4000)))
         XCTAssertEqual(value("message", 3000), .string(String(repeating: "z", count: 2000)))
+        XCTAssertEqual(value("last_assistant_message", 3000), .string(String(repeating: "z", count: 2000)))
         XCTAssertEqual(value("error_details", 700), .string(String(repeating: "z", count: 500)))
         XCTAssertEqual(value("session_id", 5000), .string(String(repeating: "z", count: HookRuntime.defaultFieldLimit)))
         XCTAssertEqual(value("cwd", 300), .string(String(repeating: "z", count: 300)))
-    }
-
-    func testLastAssistantMessageKeepsHeadAndTail() {
-        let exact = String(repeating: "a", count: 16000)
-        XCTAssertEqual(hookRecord(.claude, JSONValue.object(["last_assistant_message": .string(exact)]).serialized())["last_assistant_message"],
-                       .string(exact))
-
-        let long = String(repeating: "h", count: 4000) + String(repeating: "m", count: 5000) + String(repeating: "t", count: 12000)
-        let trimmed = hookRecord(.claude, JSONValue.object(["last_assistant_message": .string(long)]).serialized())["last_assistant_message"]?.stringValue
-        XCTAssertEqual(trimmed, String(repeating: "h", count: 4000) + "\n\u{2026}\n" + String(repeating: "t", count: 12000))
-        XCTAssertEqual(trimmed?.unicodeScalars.count, 16003)
-    }
-
-    func testLastAssistantMessageDropsFencedCode() {
-        func message(_ text: String) -> JSONValue? {
-            hookRecord(.claude, JSONValue.object(["last_assistant_message": .string(text)]).serialized())["last_assistant_message"]
-        }
-        XCTAssertEqual(message("Done.\n```swift\nlet x = 1\n```\nbye"), .string("Done.\n\nbye"))
-        XCTAssertEqual(message("one ``` unpaired fence"), .string("one ``` unpaired fence"))
-        XCTAssertNil(message("```\nonly code\n```"))
-        XCTAssertNil(message(""))
-        // The limits apply to what is left.
-        let long = String(repeating: "h", count: 4000) + "```" + String(repeating: "c", count: 30_000) + "```"
-            + String(repeating: "t", count: 15_000)
-        XCTAssertEqual(message(long)?.stringValue?.unicodeScalars.count, 16003)
-    }
-
-    /// Regression: a head+tail cut through a code block re-paired the remaining fences, so a long Stop that
-    /// is Done in full was logged as asking.
-    func testTrimmedMessageClassifiesLikeTheFullMessage() throws {
-        func mode(_ object: JSONObject) throws -> AgentMode? {
-            ModeClassifier.mode(for: try XCTUnwrap(EventParser.parseRecord(provider: "claude", object: object)))
-        }
-        func stop(_ text: String) -> JSONObject {
-            ["hook_event_name": .string("Stop"), "session_id": .string("s"), "last_assistant_message": .string(text)]
-        }
-        // A code block opens at scalar 3990, inside the kept head, and closes in the
-        // dropped middle; the prose after it keeps the text long after stripping.
-        let start = String(repeating: "Prose line.\n", count: 332) + "Here:\n```swift\n"
-            + String(repeating: "let value = 1\n", count: 40) + "```\n" + String(repeating: "Details.\n", count: 1450)
-        let endings = [
-            "Add this line to CLAUDE.md:\n```text\n<!-- sidepulse:ask -->\n```\nAll finished.\n<!-- sidepulse:done -->",
-            "Paste this prompt:\n```text\nWhich file should I edit?\n```\nAll finished, tests pass.",
-        ]
-        for ending in endings {
-            let full = start + ending
-            XCTAssertEqual(try mode(stop(full)), .completed, ending)
-            XCTAssertEqual(try mode(stop(HookRuntime.headAndTail(full))), .waitingForInput, "a fence-blind cut flips it")
-            let record = HookRuntime.makeRecord(provider: .claude, payload: Data(JSONValue.object(stop(full)).serialized().utf8),
-                                                now: fixedNow, origin: nil)
-            XCTAssertEqual(record["last_assistant_message"]?.stringValue?.unicodeScalars.count, 16003, "still trimmed")
-            XCTAssertEqual(try mode(record), .completed, ending)
-        }
     }
 
     /// The task shapes are the ones Claude logs.
@@ -210,7 +158,7 @@ final class HookRuntimeRecordTests: XCTestCase {
         }
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["background_task_ids"])
         XCTAssertEqual(hookRecord(.claude, #"{"sidepulse_status":"done","background_tasks":[]}"#).keys,
-                       ["logged_at", "background_task_ids", "sidepulse_status"])
+                       ["logged_at", "background_task_ids"])
     }
 
     func testLengthsCountUnicodeScalars() {
@@ -311,7 +259,7 @@ final class HookRuntimeRecordTests: XCTestCase {
         let nasty = String(repeating: "\u{1}", count: 40_000)
         var payload = JSONObject()
         for key in ["hook_event_name", "session_id", "agent_id", "cwd", "tool_name", "prompt", "last_assistant_message",
-                    "message", "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin",
+                    "message", "notification_type", "error_details", "agent_origin",
                     "tool_response"] {
             payload[key] = .string(nasty)
         }

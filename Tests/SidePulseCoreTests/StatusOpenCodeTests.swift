@@ -41,7 +41,7 @@ final class StatusOpenCodeTests: XCTestCase {
 
             (#"{"hook_event_name":"SessionStart","session_id":"ses_f21a77012ffevs2QjXiDKFCmRk","cwd":"/work/projB"}"#, c, .idleReady),
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_f21a77012ffevs2QjXiDKFCmRk","cwd":"/work/projB","prompt":"Reply with one short sentence that asks me whether you should also add unit tests."}"#, c, .working),
-            (#"{"hook_event_name":"Stop","session_id":"ses_f21a77012ffevs2QjXiDKFCmRk","cwd":"/work/projB","last_assistant_message":"Should I also add unit tests for this?"}"#, c, .waitingForInput),
+            (#"{"hook_event_name":"Stop","session_id":"ses_f21a77012ffevs2QjXiDKFCmRk","cwd":"/work/projB","last_assistant_message":"Should I also add unit tests for this?"}"#, c, .completed),
 
             (#"{"hook_event_name":"SessionStart","session_id":"ses_f21a76392ffezchKrN5VHPpriB","cwd":"/work/projA"}"#, d, .idleReady),
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_f21a76392ffezchKrN5VHPpriB","cwd":"/work/projA","prompt":"Use your subagent tool to start a 'general' subagent."}"#, d, .working),
@@ -60,10 +60,10 @@ final class StatusOpenCodeTests: XCTestCase {
         XCTAssertEqual(first.displayName, "projA: Run the shell command 'echo hi' with your shell tool, then reply with... (2m6nYgg1)")
         XCTAssertEqual(SessionRows.detail(for: first, now: t0.addingTimeInterval(30)), "Done \u{b7} Stop \u{b7} 26s ago \u{b7} OpenCode")
         XCTAssertEqual(engine.statuses[sub]?.sessionID, "ses_f21a76392ffezchKrN5VHPpriB")
-        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(30)).aggregate.mode, .waitingForInput)
+        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(30)).aggregate.mode, .completed)
     }
 
-    func testFailuresMarkersAndApprovedShellCommands() {
+    func testFailuresQuestionToolAndApprovedShellCommands() {
         let s = "opencode:session:ses_x"
         _ = run([
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_x","cwd":"/work/p","prompt":"clean up"}"#, s, .working),
@@ -75,7 +75,7 @@ final class StatusOpenCodeTests: XCTestCase {
             (#"{"hook_event_name":"PreToolUse","session_id":"ses_x","tool_name":"question"}"#, s, .toolRunning),
             (#"{"hook_event_name":"PermissionRequest","session_id":"ses_x","tool_name":"question","message":"OpenCode is asking: Tea or coffee?"}"#, s, .waitingForInput),
             (#"{"hook_event_name":"PostToolUse","session_id":"ses_x","tool_name":"question"}"#, s, .working),
-            (#"{"hook_event_name":"Stop","session_id":"ses_x","last_assistant_message":"ready\n\n<!-- sidepulse:ask -->"}"#, s, .waitingForInput),
+            (#"{"hook_event_name":"Stop","session_id":"ses_x","last_assistant_message":"ready\n\n<!-- sidepulse:ask -->"}"#, s, .completed),
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_x","prompt":"go on"}"#, s, .working),
             (#"{"hook_event_name":"StopFailure","session_id":"ses_x","error":"provider.no-route","error_details":"Model unavailable: opencode/x"}"#, s, .blockedError),
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_x"}"#, s, .working),
@@ -89,17 +89,6 @@ final class StatusOpenCodeTests: XCTestCase {
         ])
         XCTAssertEqual(engine.statuses["opencode:session:ses_y"]?.message, "Model unavailable: opencode/x")
         XCTAssertEqual(engine.statuses["opencode:session:ses_y"]?.displayName, "OpenCode session ses_y")
-    }
-
-    /// Regression: the plugin puts the whole command in `message`, so a marker line in
-    /// a command that writes agent instructions replaced the Ask.
-    func testMarkerInsidePermissionCommandKeepsTheAsk() {
-        let s = "opencode:session:ses_m"
-        let engine = run([
-            (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_m","prompt":"add the marker advice"}"#, s, .working),
-            (#"{"hook_event_name":"PermissionRequest","session_id":"ses_m","tool_name":"shell","tool_input":{"command":"cat >> AGENTS.md <<'EOF'\n<!-- sidepulse:done -->\nEOF"},"message":"OpenCode needs permission: shell cat >> AGENTS.md <<'EOF'\n<!-- sidepulse:done -->\nEOF"}"#, s, .waitingForInput),
-        ])
-        XCTAssertEqual(engine.snapshot(now: t0.addingTimeInterval(5)).aggregate.mode, .waitingForInput)
     }
 
     /// Regression: OpenCode sends no SubagentStop for a subagent that failed and never
@@ -120,7 +109,7 @@ final class StatusOpenCodeTests: XCTestCase {
         let asked = run([
             (#"{"hook_event_name":"UserPromptSubmit","session_id":"ses_p","prompt":"delegate"}"#, p, .working),
             (#"{"hook_event_name":"SubagentStart","session_id":"ses_p","agent_id":"ses_c","agent_type":"general"}"#, c, .working),
-            (#"{"hook_event_name":"SubagentStop","session_id":"ses_p","agent_id":"ses_c","last_assistant_message":"Which file should I edit?"}"#, c, .waitingForInput),
+            (#"{"hook_event_name":"PermissionRequest","session_id":"ses_p","agent_id":"ses_c","tool_name":"question","message":"OpenCode is asking: Which file?"}"#, c, .waitingForInput),
             (#"{"hook_event_name":"StopFailure","session_id":"ses_p","error":"provider.no-route"}"#, p, .blockedError),
         ])
         XCTAssertEqual(asked.statuses[c]?.mode, .completed)

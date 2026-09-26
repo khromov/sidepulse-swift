@@ -232,7 +232,7 @@ final class CLIIntegrationTests: XCTestCase {
 
         XCTAssertEqual(h.run(["status", "--offline", "--json"]), 0)
         let value = try JSONValue.parse(h.stdout.text)
-        XCTAssertEqual(value["aggregate"]?["mode"]?.stringValue, "waiting_for_input")
+        XCTAssertEqual(value["aggregate"]?["mode"]?.stringValue, "completed", "a plain-text question is not an Ask")
         let row = value["statuses"]?.arrayValue?.first
         XCTAssertEqual(row?["provider"]?.stringValue, "opencode")
         XCTAssertEqual(row?["origin"]?.stringValue, "OpenCode")

@@ -18,9 +18,6 @@ enum PyText {
     /// U+001C–U+001F.
     static let regexSpaceClass = #"\t\n\x{0B}\f\r\x{1C}-\x{20}\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}"#
 
-    /// `regexSpaceClass` without `\n`, the only line break under `useUnixLineSeparators`.
-    static let regexLineSpaceClass = #"\t\x{0B}\f\r\x{1C}-\x{20}\x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}"#
-
     static func strip(_ text: String) -> String {
         strip(text, where: isSpace)
     }
@@ -164,20 +161,10 @@ struct TextRegex: @unchecked Sendable {
         }
     }
 
-    func matches(_ text: String) -> Bool {
-        regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
-    }
-
     func firstGroup(_ group: Int, in text: String) -> String? {
         guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range(at: group), in: text) else { return nil }
         return String(text[range])
-    }
-
-    func allGroups(_ group: Int, in text: String) -> [String] {
-        regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
-            Range(match.range(at: group), in: text).map { String(text[$0]) }
-        }
     }
 
     func replacing(in text: String, with template: String) -> String {
@@ -210,24 +197,4 @@ func stripFencedCodeBlocks(_ text: String, replacement: String = "") -> String {
     }
     out.append(contentsOf: bytes[copied...])
     return String(decoding: out, as: UTF8.self)
-}
-
-func stripInlineCode(_ text: String) -> String {
-    guard text.unicodeScalars.contains("`") else { return text }
-    let scalars = Array(text.unicodeScalars)
-    var out = String.UnicodeScalarView()
-    var i = 0
-    while i < scalars.count {
-        if scalars[i] == "`" {
-            var j = i + 1
-            while j < scalars.count, scalars[j] != "`", scalars[j] != "\n" { j += 1 }
-            if j < scalars.count, scalars[j] == "`" {
-                i = j + 1
-                continue
-            }
-        }
-        out.append(scalars[i])
-        i += 1
-    }
-    return String(out)
 }

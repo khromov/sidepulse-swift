@@ -143,20 +143,13 @@ public enum HookRuntime {
         }
 
         record["prompt"] = scalar("prompt", limit: 4000)
-        if case .string(let text)? = raw["last_assistant_message"] {
-            // Strip code before the cut, since a cut through a code block would pair the remaining fences
-            // differently and expose code to the classifier.
-            let prose = stripFencedCodeBlocks(text)
-            if !prose.isEmpty { record["last_assistant_message"] = .string(headAndTail(prose)) }
-        }
+        record["last_assistant_message"] = scalar("last_assistant_message", limit: 2000)
         record["message"] = scalar("message", limit: 2000)
         record["notification_type"] = scalar("notification_type")
         record["error_details"] = scalar("error_details", limit: 500)
         if let ids = backgroundTaskIDs(raw["background_tasks"]) {
             record["background_task_ids"] = .array(ids.map(JSONValue.string))
         }
-        record["sidepulse_status"] = scalar("sidepulse_status")
-        record["sidepulse_mode"] = scalar("sidepulse_mode")
 
         record["agent_origin"] = scalar("agent_origin") ?? origin.map(JSONValue.string)
         return record
@@ -211,15 +204,6 @@ public enum HookRuntime {
         guard let end = scalars.index(scalars.startIndex, offsetBy: limit, limitedBy: scalars.endIndex),
               end != scalars.endIndex else { return text }
         return String(scalars[..<end])
-    }
-
-    static func headAndTail(_ text: String) -> String {
-        let scalars = text.unicodeScalars
-        guard let limitIndex = scalars.index(scalars.startIndex, offsetBy: 16000, limitedBy: scalars.endIndex),
-              limitIndex != scalars.endIndex else { return text }
-        let headEnd = scalars.index(scalars.startIndex, offsetBy: 4000)
-        let tailStart = scalars.index(scalars.endIndex, offsetBy: -12000)
-        return String(scalars[..<headEnd]) + "\n\u{2026}\n" + String(scalars[tailStart...])
     }
 }
 

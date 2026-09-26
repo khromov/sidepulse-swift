@@ -30,10 +30,12 @@ final class StatusRegressionFixtureTests: XCTestCase {
                  name: "demo-app: Add a --verbose flag to ... and document it (agent a1b2c3d4)",
                  updatedAt: "2026-09-20T10:00:23+00:00", origin: "Claude in VS Code", tool: nil,
                  message: "Found 3 call sites in src/cli.ts."),
-        Expected(key: "claude:session:aaaa1111-2222-4333-8444-555566667777", mode: .waitingForInput, event: "Notification",
+        // Deviation: Python read "Want me to open a PR?" as a question; the Stop is Done here, so the later
+        // idle_prompt is ignored.
+        Expected(key: "claude:session:aaaa1111-2222-4333-8444-555566667777", mode: .completed, event: "Stop",
                  name: "demo-app: Add a --verbose flag to ... and document it (aaaa1111)",
-                 updatedAt: "2026-09-20T10:01:30+00:00", origin: "Claude in VS Code", tool: nil,
-                 message: "Claude is waiting for your input"),
+                 updatedAt: "2026-09-20T10:00:30+00:00", origin: "Claude in VS Code", tool: nil,
+                 message: "Added the flag and the tests pass.\n\nWant me to open a PR?"),
         Expected(key: "claude:session:bbbb2222-3333-4444-8555-666677778888", mode: .completed, event: "Stop",
                  name: "web: Fix the flaky login test in LoginForm.test.tsx (bbbb2222)",
                  updatedAt: "2026-09-20T10:02:05+00:00", origin: "Claude Code CLI", tool: nil,
@@ -93,18 +95,19 @@ final class StatusRegressionFixtureTests: XCTestCase {
         let now = TimeFormat.parse("2026-09-20T10:02:10Z")!
         let snapshot = SnapshotBuilder.build(statuses: rows, config: MonitorConfig(), now: now, sources: [])
         XCTAssertEqual(snapshot.aggregate.mode, .blockedError)
-        XCTAssertEqual(snapshot.aggregate.activeCount, 4)
-        XCTAssertEqual(snapshot.aggregate.staleCount, 5)
+        // Deviation: one fewer active row, since aaaa1111 is Done (see `expected`).
+        XCTAssertEqual(snapshot.aggregate.activeCount, 3)
+        XCTAssertEqual(snapshot.aggregate.staleCount, 6)
         XCTAssertEqual(snapshot.aggregate.representative?.agentID, "claude:session:dddd4444-5555-4666-8777-888899990000")
         XCTAssertEqual(snapshot.statuses.map(\.agentID), [
             "claude:session:dddd4444-5555-4666-8777-888899990000",
-            "claude:session:aaaa1111-2222-4333-8444-555566667777",
             "codex:session:01a0b8b8-0000-7000-8000-00000000b8b8",
             "claude:session:cccc3333-4444-4555-8666-777788889999",
         ])
         XCTAssertEqual(snapshot.staleStatuses.map { "\($0.agentID) \($0.mode.rawValue)" }, [
             "claude:session:bbbb2222-3333-4444-8555-666677778888 completed",
             "claude:session:eeee5555-6666-4777-8888-999900001111 completed",
+            "claude:session:aaaa1111-2222-4333-8444-555566667777 completed",
             "claude:agent:a1b2c3d4e5f6a7b8c completed",
             "codex:session:01a0f6f6-0000-7000-8000-00000000f6f6 completed",
             "codex:session:01a0a7a7-0000-7000-8000-00000000a7a7 idle_ready",

@@ -317,11 +317,11 @@ animation.
 | Mode | Priority | Menu bar | Default LED (Signal profile) | Set by |
 | --- | --- | --- | --- | --- |
 | Blocked / Error | 1 | Ask | `solid-red` | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response |
-| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog` or `agent_needs_input` Notification, an `idle_prompt` or untyped Notification whose text asks for input, `Stop`/`SubagentStop` whose final message asks a question |
+| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` or `idle_prompt` Notification |
 | Tool Running | 3 | Working | `ember-tide` | `PreToolUse` |
-| Long Task Progress | 4 | Working | `ember-tide` | Explicit marker only (`progress`) |
-| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`, any other `idle_prompt` or untyped Notification |
-| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop` without a question, `SessionEnd`, an `idle_prompt` or untyped Notification that reports completion, a subagent closed along with its session or its parent's turn (see Subagents below) |
+| Long Task Progress | 4 | Working | `ember-tide` | Not produced by any event today |
+| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse` |
+| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop`, `SessionEnd`, a subagent closed along with its session or its parent's turn (see Subagents below) |
 | Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, `Interrupt` (Codex, OpenCode) |
 
 How the global display state is chosen:
@@ -346,8 +346,8 @@ How the global display state is chosen:
   history was not seen, into Ask. Other Notifications, such as permission
   prompts, still ask on a row that is not Completed.
 - **Other Notifications.** A Notification type not named in the table, such as
-  `auth_success` or `agent_completed`, is ignored, so it never starts a Working
-  row that nothing settles.
+  `auth_success` or `agent_completed`, is ignored, and so is a Notification
+  without a type, so it never starts a Working row that nothing settles.
 - **Settling.** `PostToolUse` means the tool returned, not that the turn has
   finished. If no newer event arrives, the Working row settles to Completed
   after 2 minutes. This way a missed `Stop` cannot leave the display stuck on
@@ -371,49 +371,14 @@ How the global display state is chosen:
 - **Interrupt.** `Interrupt` (Codex, and OpenCode for a stopped or cancelled
   turn) returns the session to Idle without marking it Completed.
 
-### Explicit markers
+### Message text
 
-The agent can state its hand-off state directly with a hidden line in its final
-message:
-
-```text
-<!-- sidepulse:ask -->
-<!-- sidepulse:done -->
-<!-- sidepulse:working -->
-<!-- sidepulse:blocked -->
-<!-- sidepulse:idle -->
-```
-
-- A marker overrides the event rules for every event except `Interrupt`.
-- Markers are read only from the agent's final message
-  (`last_assistant_message`), so a marker line inside a command or a
-  notification, such as an OpenCode permission prompt, is ignored.
-- A marker must be a whole line and is case-insensitive.
-  `<!-- sidepulse status: ask -->` and `[sidepulse status: ask]` also work, and
-  so does `agent-monitor` in place of `sidepulse`.
-- Markers inside fenced code blocks are ignored.
-- Accepted values:
-  - `ask`, `question`, `waiting`, `input`: Waiting for Input
-  - `blocked`, `error`: Blocked / Error
-  - `working`: Working
-  - `tool_running`: Tool Running
-  - `progress`: Long Task Progress
-  - `done`, `complete`, `completed`: Completed
-  - `idle`, `ready`: Idle / Ready
-
-Without a marker, a final message counts as a question only if one of its last
-lines asks something concrete. "Want me to push?" counts as Ask, while casual
-closers such as "Anything else?" count as Done. Questions inside code spans or
-fenced blocks are ignored.
-
-To make status reliable, add guidance like this to your agent instructions
-(`CLAUDE.md`, `AGENTS.md`):
-
-```text
-When your final response needs user input, approval, or a decision, include
-`<!-- sidepulse:ask -->` as a final hidden marker line. When the work is complete
-and no user response is needed, include `<!-- sidepulse:done -->`.
-```
+SidePulse never reads what an agent writes to choose a state. A turn that ends
+is Done, and Ask comes only from the agents' own signals: permission prompts,
+question tools (Claude Code's `AskUserQuestion`, OpenCode's question tool) and
+the input Notifications in the table above. A question an agent asks in plain
+text at the end of its turn therefore shows as Done. Nothing needs to go into
+your projects' `CLAUDE.md` or `AGENTS.md`.
 
 ## Menu-bar app
 
@@ -617,8 +582,8 @@ On every event, `sidepulse hook-log`:
    - the `interrupted`, `success` and `exit_code` fields of the tool response,
      plus a `tool_response_failed` flag;
    - `prompt` (up to 4000 characters);
-   - `last_assistant_message` (fenced code blocks removed, then up to 16000:
-     the first 4000 plus the last 12000);
+   - `last_assistant_message` (up to 2000 characters), kept only as the row's
+     message;
    - `message`, `notification_type` and `error_details`;
    - `background_task_ids`: the ids of the tasks Claude lists as still running
      on `Stop`/`SubagentStop` (up to 32 ids of up to 128 characters; omitted
@@ -671,16 +636,16 @@ are lost.
 | `session.tool.failed` (declined permission, Ctrl-C, dismissed question) | `PostToolUseFailure` |
 | `permission.asked`, `form.created` (the question tool) | `PermissionRequest` |
 | `session.compaction.started`, `session.compaction.ended` | `PreCompact`, `PostCompact` |
-| `session.execution.succeeded` | `Stop`, with the text of the turn's last assistant message, so markers and the question heuristic work |
+| `session.execution.succeeded` | `Stop`, with the text of the turn's last assistant message as the row's message |
 | `session.execution.failed` | `StopFailure`, with the error type and message |
 | `session.execution.interrupted` | `Interrupt` |
 | `session.deleted` | `SessionEnd`, only for a session the plugin has seen since OpenCode started, so deleting old sessions adds no rows |
 
 - **Subagents.** A subagent session reports under its parent session with its
   own `agent_id` (`SubagentStart`, `SubagentStop`), like a Claude subagent.
-  OpenCode reports no end for a subagent that failed, and a question in its
-  final message keeps it on Ask, so the parent's `Stop`, `StopFailure` or
-  `Interrupt` closes the subagent rows that are still open. Rows show the last 8
+  OpenCode reports no end for a subagent that failed or still waits on a
+  prompt, so the parent's `Stop`, `StopFailure` or `Interrupt` closes the
+  subagent rows that are still open. Rows show the last 8
   characters of the `ses_…` id, because the start of the id changes slowly.
 - **One copy per project.** OpenCode's background service loads the plugin
   once per open project, and every copy sees every event. The copies share

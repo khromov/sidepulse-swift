@@ -15,7 +15,6 @@ In scope:
   - Removal of Python-era hooks.
   - `doctor`.
 - The full status state machine from the Python collector:
-  - markers and question heuristics;
   - sticky permission prompts, settling, staleness and priority aggregation;
   - `latest.json`.
 - LED output:
@@ -46,6 +45,8 @@ Out of scope (dropped on purpose):
 - WASM previews
 - custom animation editor and profile import/export
 - transcript fallback monitoring
+- reading state from message text: the Python question heuristic, notification
+  phrases and `<!-- sidepulse:… -->` markers (state comes only from hook events)
 - terminal resume/focus
 - `update`
 - Cursor, Grok and Junie
