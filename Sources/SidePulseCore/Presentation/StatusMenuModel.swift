@@ -49,7 +49,6 @@ public struct DeviceMenuModel: Sendable, Equatable, Identifiable {
 /// ---
 /// Devices                          (disabled)
 /// <device submenus> | No devices
-/// Drive LEDs                       (checkmark)
 /// ---
 /// Keep Awake ▸ Never | When Agents Work | Always [--- Keeping Mac awake]
 /// Hooks ▸ <one item per provider>
@@ -65,7 +64,6 @@ public struct StatusMenuModel: Sendable, Equatable {
     public var displayState: DisplayState
     public var rows: [SessionRow]
     public var devices: [DeviceMenuModel]
-    public var ledsEnabled: Bool
     public var sleepPolicy: SleepPolicy
     public var keepAwakeActive: Bool
     public var hooks: [HookState]
@@ -74,7 +72,7 @@ public struct StatusMenuModel: Sendable, Equatable {
     /// - Parameters:
     ///   - snapshot: current monitor snapshot (rows use its `collectedAt` for the
     ///     retention cut-off).
-    ///   - settings: reads `sessionRetentionSeconds`, `ledsEnabled`, `sleepPolicy`.
+    ///   - settings: reads `sessionRetentionSeconds`, `sleepPolicy`.
     ///   - now: reference time for row ages (default: the snapshot's time).
     public init(snapshot: MonitorSnapshot, settings: SidePulseSettings, devices: [DeviceInfo],
                 keepAwakeActive: Bool, hooks: [HookState], launchAtLogin: Bool, now: Date? = nil,
@@ -84,7 +82,6 @@ public struct StatusMenuModel: Sendable, Equatable {
         rows = SessionRows.rows(snapshot: snapshot, retention: settings.sessionRetentionSeconds,
                                 now: now, projectName: projectName)
         self.devices = devices.map(DeviceMenuModel.init)
-        ledsEnabled = settings.ledsEnabled
         sleepPolicy = settings.sleepPolicy
         self.keepAwakeActive = keepAwakeActive
         self.hooks = hooks

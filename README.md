@@ -402,7 +402,6 @@ started by the LaunchAgent exits quietly (see `app.log`).
 | `SidePulse — Working (2 active)` | Header: aggregate state and number of active agents |
 | **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. The tooltip shows state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
 | **Devices** | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected |
-| **Drive LEDs** | Global LED output switch. Status tracking continues when it is off |
 | **Keep Awake** | **Never** / **When Agents Work** / **Always**. "Keeping Mac awake" appears while the Mac is held awake |
 | **Hooks** | One item per provider, for example `Claude Code — Installed`. Statuses: Installed; Needs repair (the hooks call a missing or non-SidePulse CLI); Installed, not trusted (Codex has no trust entry: approve with `/hooks` in Codex, or click to reinstall); Disabled; Partial; Not installed; Error. An agent whose config directory does not exist shows a disabled item (Not detected). Clicking uninstalls a complete install (after confirmation), and otherwise installs or repairs |
 | **Open Logs Folder** | Reveals `logs/` in Finder |
@@ -414,9 +413,9 @@ The Settings window has four tabs:
 
 | Tab | Contents |
 | --- | --- |
-| General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Drive LEDs**. **Launch at Login** |
+| General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** |
 | Animations | Profile picker: **Cyan** (the default), **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
-| Devices | **Drive LEDs**. For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
+| Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
 | Hooks | For each provider: status, config path, the CLI its hooks call (**Hooks call**), leftover Python hooks, and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
@@ -428,10 +427,10 @@ variants.
 - **Devices.** The app polls `/Volumes` every 2 seconds, so devices can be
   plugged in and out at any time. Network filesystems mounted under `/Volumes`
   are skipped without being accessed. Dot and PulseDot volume names get the
-  2-LED programs, and everything else gets the 8-LED ones. While **Drive LEDs**
-  is on, the app touches `keepalive` on each connected 8-LED volume (SidePulse
-  Pro, including Manual ones) at most once a minute, which stops the MacBook SD
-  reader from powering it off. Dots (USB) are never touched. A device that has
+  2-LED programs, and everything else gets the 8-LED ones. The app touches
+  `keepalive` on each connected 8-LED volume (SidePulse Pro, including Manual
+  ones) at most once a minute, which stops the MacBook SD reader from powering
+  it off. Dots (USB) are never touched. A device that has
   never been seen before starts in Agent mode.
 - **Manual mode.** In Manual mode, SidePulse never writes `LEDS.LED` on that
   device (a Pro still gets keepalive touches). Switching a connected device to
@@ -444,7 +443,7 @@ variants.
   `Error: macOS denied access. Allow SidePulse in System Settings › Privacy &
   Security › Files and Folders (Removable Volumes)`. The Settings window's
   Devices tab shows the same text. A write that was waiting is skipped if the
-  device became Manual (or **Drive LEDs** was turned off) in the meantime.
+  device became Manual in the meantime.
 - **Brightness.** Each device has its own brightness, 0 to 255 (shown as a
   percentage). It scales any `brightness N` lines in the animation, or adds a
   `brightness` line when the program has none.
@@ -665,3 +664,9 @@ scripts/uninstall.sh --app-dir DIR   # only if neither the CLI link nor the Laun
 
 To remove only parts of the install, use `sidepulse uninstall [claude|codex]`
 for the hooks, and `sidepulse app uninstall` for launch at login.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The built-in LED animations, animation profiles and
+agent status rules are derived from the MIT-licensed Python
+[sidepulse](https://github.com/inteliwear/sidepulse) by Peter Kuhar.

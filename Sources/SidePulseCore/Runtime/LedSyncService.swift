@@ -10,10 +10,9 @@ import Foundation
 ///   run once more afterwards (never drops the latest mode — fixes the Python bug).
 /// - Per device: Manual → skip; Agent → `AgentLedController.sync(mode:animationID:)`
 ///   with the device brightness and `settings.animationID(for: mode)`.
-/// - `ledsEnabled == false` → no writes.
 /// - Agent writes (syncs and previews) check the settings again once LEDS.LED is
-///   open, and skip a device that meanwhile became Manual (or LED output that was
-///   turned off): open() can wait minutes on the macOS removable-volume prompt.
+///   open, and skip a device that meanwhile became Manual: open() can wait minutes
+///   on the macOS removable-volume prompt.
 /// - While a preview is active (until its deadline) normal syncs are deferred; when
 ///   it ends controllers are reset and the latest mode is re-synced.
 /// - Keepalive: `KeepaliveToucher.poke` for connected 8-LED devices (Agent or
@@ -277,8 +276,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     /// Synchronous sync of all devices (CLI `leds --once`). Keyed by device id.
     ///
-    /// Manual devices are skipped (not in the result), and nothing is written (empty
-    /// result) while `ledsEnabled` is false. Runs even while a preview plays.
+    /// Manual devices are skipped (not in the result). Runs even while a preview plays.
     @discardableResult
     public func syncNow(mode: AgentMode) -> [String: LedSyncResult] {
         ioQueue.sync {
@@ -291,7 +289,7 @@ public final class LedSyncService: @unchecked Sendable {
     /// restores live status. A newer preview cancels the older restore.
     ///
     /// Unknown animation ids are ignored (logged). Each device gets its own LED
-    /// count variant and brightness. Nothing is written while `ledsEnabled` is false.
+    /// count variant and brightness.
     public func preview(animationID: String, seconds: TimeInterval = 3) {
         guard AnimationLibrary.animation(id: animationID) != nil else {
             log("leds: preview skipped, unknown animation \(animationID)")
@@ -342,8 +340,7 @@ public final class LedSyncService: @unchecked Sendable {
     /// Keepalive only (called from the refresh timer).
     ///
     /// Touches `<volume>/keepalive` of every connected 8-LED device (rate limited to
-    /// once a minute per volume by `KeepaliveToucher`) while `ledsEnabled`; never in
-    /// dry runs.
+    /// once a minute per volume by `KeepaliveToucher`); never in dry runs.
     public func touchKeepalive(now: Date = Date()) {
         touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now)
     }
@@ -422,7 +419,6 @@ public final class LedSyncService: @unchecked Sendable {
         }
 
         let settings = settingsProvider()
-        guard settings.ledsEnabled else { return [:] }
         let animationID = settings.animationID(for: mode)
         var results: [String: LedSyncResult] = [:]
         for device in devices {
@@ -475,7 +471,6 @@ public final class LedSyncService: @unchecked Sendable {
 
     private func writePreview(_ animationID: String) {
         let settings = settingsProvider()
-        guard settings.ledsEnabled else { return }
         for device in connectedDevices where settings.display(forDevice: device.id) == .agent {
             do {
                 let program = try LedProgram.program(animationID: animationID, ledCount: device.ledCount,
@@ -537,7 +532,7 @@ public final class LedSyncService: @unchecked Sendable {
                 entered = true
                 guard agentOnly else { return true }
                 let settings = settingsProvider()
-                return settings.ledsEnabled && settings.display(forDevice: device.id) == .agent
+                return settings.display(forDevice: device.id) == .agent
             }
         } catch LedError.accessDenied {
             throw LedError.writeFailed(Self.accessDeniedMessage)
@@ -547,7 +542,7 @@ public final class LedSyncService: @unchecked Sendable {
     private func touchKeepalive(devices: [DeviceCandidate], settings: SidePulseSettings, now: Date) {
         // Only the MacBook SD reader powers down an idle card: Dots (USB) are skipped.
         let targets = devices.filter { $0.ledCount == 8 }.map(\.target)
-        guard !dryRun, settings.ledsEnabled, !targets.isEmpty else { return }
+        guard !dryRun, !targets.isEmpty else { return }
         keepalive.poke(targets: targets, now: now)
         let error = keepalive.lastError
         let previous = locked { state -> String? in

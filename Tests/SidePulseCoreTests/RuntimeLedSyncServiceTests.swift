@@ -118,7 +118,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("SidePulsePro"), RuntimePrograms.expected(.completed, ledCount: 8, brightness: 128))
     }
 
-    func testSyncNowSkipsManualDevicesAndHonoursLedsEnabled() {
+    func testSyncNowSkipsManualDevices() {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
         box.update { $0.setDisplay(.manual, forDevice: world.deviceID("PulseDot")) }
@@ -129,15 +129,8 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(Array(results.keys), [world.deviceID("SidePulsePro")])
         XCTAssertEqual(world.program("PulseDot"), "boot", "Manual devices are never written")
 
-        box.update { $0.ledsEnabled = false }
-        XCTAssertEqual(service.syncNow(mode: .completed), [:])
-        XCTAssertEqual(world.program("SidePulsePro"), RuntimePrograms.expected(.working, ledCount: 8))
-
         // Back to Agent: the device is written on the next sync.
-        box.update {
-            $0.ledsEnabled = true
-            $0.setDisplay(.agent, forDevice: world.deviceID("PulseDot"))
-        }
+        box.update { $0.setDisplay(.agent, forDevice: world.deviceID("PulseDot")) }
         service.syncNow(mode: .completed)
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
     }
@@ -157,7 +150,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
     }
 
     /// Regression: the USB Dot got a keepalive write every minute it does not need.
-    func testKeepaliveIsTouchedForConnectedEightLedDevicesWhenEnabled() {
+    func testKeepaliveIsTouchedForConnectedEightLedDevices() {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
         world.addDevice("NO NAME")
@@ -176,14 +169,8 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertTrue(toucher.waitForPendingTouches())
         XCTAssertEqual(touched.count, 2, "rate limited to once a minute")
 
-        box.update { $0.ledsEnabled = false }
-        service.touchKeepalive(now: Date().addingTimeInterval(120))
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(touched.count, 2, "no keepalive while LED output is off")
-
         // The real toucher creates the file.
         let real = makeService()
-        box.update { $0.ledsEnabled = true }
         real.pollDevices()
         real.touchKeepalive()
         XCTAssertTrue(runtimeWait {
@@ -466,13 +453,13 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertTrue(runtimeWait(timeout: 4) { self.world.program("PulseDot") == RuntimePrograms.expected(.working, ledCount: 2) })
     }
 
-    func testPreviewIgnoresUnknownAnimationsAndDisabledLeds() {
+    func testPreviewIgnoresUnknownAnimationsAndManualDevices() {
         world.addDevice("PulseDot")
         let service = makeService()
         service.pollDevices()
         service.preview(animationID: "no-such-animation", seconds: 0.1)
         XCTAssertFalse(service.isPreviewing)
-        box.update { $0.ledsEnabled = false }
+        box.update { $0.setDisplay(.manual, forDevice: world.deviceID("PulseDot")) }
         service.preview(animationID: "kitt", seconds: 0.1)
         runtimeSpin(0.3)
         service.waitUntilIdle()

@@ -10,7 +10,6 @@ public enum MenuText {
     public static let noDevices = "No devices"
     public static let notConnected = "Not connected"
     public static let remove = "Remove"
-    public static let driveLEDs = "Drive LEDs"
     public static let keepAwake = "Keep Awake"
     public static let keepingAwake = "Keeping Mac awake"
     public static let hooks = "Hooks"

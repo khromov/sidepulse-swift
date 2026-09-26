@@ -59,17 +59,11 @@ final class RuntimeSettingsTests: XCTestCase {
         waitForProgram("PulseDot", RuntimePrograms.expected(.waitingForInput, ledCount: 2))
     }
 
-    func testManualIsNotClearedWhileLedOutputIsOff() throws {
+    func testManualForDisconnectedDeviceIsOnlySaved() throws {
         world.addDevice("PulseDot")
-        let dot = world.deviceID("PulseDot")
         let runtime = try world.startRuntime()
         waitForProgram("PulseDot", RuntimePrograms.expected(.idleReady, ledCount: 2))
-        runtime.updateSettings { $0.ledsEnabled = false }
-        runtime.setDeviceDisplay(.manual, deviceID: dot)
-        runtime.waitUntilIdle()
-        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.idleReady, ledCount: 2))
         // A device that is not connected has nothing to clear.
-        runtime.updateSettings { $0.ledsEnabled = true }
         runtime.setDeviceDisplay(.manual, deviceID: "/Volumes/Elsewhere")
         runtime.waitUntilIdle()
         XCTAssertEqual(world.settingsStore.load().display(forDevice: "/Volumes/Elsewhere"), .manual)
@@ -203,27 +197,6 @@ final class RuntimeSettingsTests: XCTestCase {
         runtime.waitUntilIdle()
         XCTAssertEqual(world.settingsStore.load().brightness(forDevice: pro), 255)
         XCTAssertEqual(world.program("PulseDot"), dotBefore, "other devices are untouched")
-    }
-
-    func testDisablingLedOutputStopsWritesAndEnablingResumes() throws {
-        world.addDevice("PulseDot")
-        let runtime = try world.startRuntime()
-        runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
-        waitForProgram("PulseDot", RuntimePrograms.expected(.working, ledCount: 2))
-
-        runtime.updateSettings { $0.ledsEnabled = false }
-        XCTAssertFalse(runtime.settings.ledsEnabled)
-        runtime.waitUntilIdle()
-        runtime.ingest(provider: "claude", line: RuntimeRecords.stop())
-        runtime.preview(animationID: "kitt", seconds: 0.1)
-        runtimeSpin(0.3)
-        runtime.refresh()
-        runtime.waitUntilIdle()
-        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
-        XCTAssertFalse(world.settingsStore.load().ledsEnabled)
-
-        runtime.updateSettings { $0.ledsEnabled = true }
-        waitForProgram("PulseDot", RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
     // MARK: External edits

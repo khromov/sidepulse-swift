@@ -102,7 +102,6 @@ final class PresentationMenuTests: XCTestCase {
 
     func testMenuModelForEmptyState() {
         var settings = SidePulseSettings()
-        settings.ledsEnabled = false
         settings.sleepPolicy = .always
         let model = StatusMenuModel(snapshot: .empty(now: now), settings: settings, devices: [],
                                     keepAwakeActive: true, hooks: [], launchAtLogin: true)
@@ -111,7 +110,6 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertEqual(model.tooltip, "SidePulse Agent Monitor: Idle")
         XCTAssertTrue(model.rows.isEmpty)
         XCTAssertTrue(model.devices.isEmpty)
-        XCTAssertFalse(model.ledsEnabled)
         XCTAssertEqual(model.sleepPolicy, .always)
         XCTAssertTrue(model.keepAwakeActive)
         XCTAssertTrue(model.launchAtLogin)

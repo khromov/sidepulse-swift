@@ -71,10 +71,6 @@ enum LedsCommand: CLICommand {
             env.stdout.line(LedsText.errorLine(state: state, message: ErrorText.describe(LedError.noDevice)))
             return ExitCode.usage
         }
-        guard settings.ledsEnabled else {
-            env.stdout.line("LEDs: skipped (LED output is turned off in SidePulse settings)")
-            return ExitCode.ok
-        }
         let results = service.syncNow(mode: mode)
         var failed = false
         for device in devices {

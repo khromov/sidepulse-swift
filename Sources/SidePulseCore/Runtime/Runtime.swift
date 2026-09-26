@@ -398,12 +398,12 @@ public final class SidePulseRuntime: @unchecked Sendable {
         let name = device?.displayName
         let path = device?.root.path
         // applySettings resets the device's controller (its display changed).
-        mutateSettings({ $0.setDisplay(display, forDevice: deviceID, name: name, path: path) }) { [self] old, saved in
+        mutateSettings({ $0.setDisplay(display, forDevice: deviceID, name: name, path: path) }) { [self] old, _ in
             let label = device?.displayName ?? deviceID
             DiagnosticsLog.shared.log("devices: \(label) set to \(display.label)")
             // `running` is read on the state queue, so this write is queued before
             // stop() drains the LED queue, or not at all.
-            guard running, display == .manual, old.display(forDevice: deviceID) != .manual, saved.ledsEnabled,
+            guard running, display == .manual, old.display(forDevice: deviceID) != .manual,
                   leds.connectedDevices.contains(where: { $0.id == deviceID }) else { return }
             leds.writeOnceAsync(program: "off", deviceID: deviceID) { error in
                 if let error {
@@ -576,7 +576,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         if new != old {
             engine.config = new.monitorConfig
             // Flag resets before the LEDs can see the new settings.
-            if new.ledsEnabled != old.ledsEnabled || new.animationSelection != old.animationSelection {
+            if new.animationSelection != old.animationSelection {
                 leds.resetControllers()
             } else {
                 var ids = Set(new.devices.map(\.id)).union(old.devices.map(\.id))
@@ -585,9 +585,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
                     || old.brightness(forDevice: id) != new.brightness(forDevice: id) {
                     leds.resetControllers(deviceID: id)
                 }
-            }
-            if new.ledsEnabled != old.ledsEnabled {
-                DiagnosticsLog.shared.log("leds: output \(new.ledsEnabled ? "enabled" : "disabled")")
             }
         }
         let config = engine.config

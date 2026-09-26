@@ -41,7 +41,6 @@ public struct DeviceSettings: Sendable, Equatable {
 ///   "agent_list": {"idle_timeout_seconds": 3600, "recent_session_retention_seconds": 172800},
 ///   "default_display": "agent",                          // for never-seen devices
 ///   "devices": [{"id","name","path","display":"agent|manual","brightness":0-255}],
-///   "leds_enabled": true,
 ///   "sleep_prevention": {"policy": "never|agents|always", "min_battery_percent": 20}
 /// }
 /// ```
@@ -56,8 +55,6 @@ public struct SidePulseSettings: Sendable, Equatable {
     public var sessionRetentionSeconds: Double = 172_800
     public var sleepPolicy: SleepPolicy = .agents
     public var minBatteryPercent: Double = 20
-    /// Global LED output switch ("Drive LEDs" in the menu).
-    public var ledsEnabled: Bool = true
     /// Unknown top-level keys, preserved verbatim. Kept key-sorted (recursively),
     /// the order they are saved in, so equality does not depend on insertion order.
     public var extra: JSONObject = JSONObject() {
@@ -67,6 +64,8 @@ public struct SidePulseSettings: Sendable, Equatable {
     public init() {}
 
     /// Top-level keys owned by this model; everything else goes to `extra`.
+    /// `leds_enabled` is retired (the global "Drive LEDs" switch was removed): it is
+    /// listed so older files drop it on the next save instead of keeping it in `extra`.
     static let knownKeys: Set<String> = [
         "agent_animations", "agent_list", "default_display", "devices", "leds_enabled", "sleep_prevention",
     ]
@@ -113,10 +112,6 @@ public struct SidePulseSettings: Sendable, Equatable {
             settings.minBatteryPercent = min(100, max(0, percent))
         }
 
-        if let enabled = root["leds_enabled"]?.boolValue {
-            settings.ledsEnabled = enabled
-        }
-
         var extra = JSONObject()
         for (key, value) in root where !knownKeys.contains(key) {
             extra[key] = value
@@ -153,7 +148,6 @@ public struct SidePulseSettings: Sendable, Equatable {
                 "path": .string(device.path),
             ])
         })
-        root["leds_enabled"] = .bool(ledsEnabled)
         let percent = minBatteryPercent.isFinite ? min(100, max(0, minBatteryPercent)) : defaults.minBatteryPercent
         root["sleep_prevention"] = .object([
             "min_battery_percent": JSONValue(percent, integralAsInt: true),

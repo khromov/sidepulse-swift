@@ -29,7 +29,6 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.sessionRetentionSeconds, 172_800)
         XCTAssertEqual(settings.sleepPolicy, .agents)
         XCTAssertEqual(settings.minBatteryPercent, 20)
-        XCTAssertTrue(settings.ledsEnabled)
         XCTAssertTrue(settings.extra.isEmpty)
         XCTAssertEqual(settings.matchingProfile?.id, "profile:cyan")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
@@ -47,7 +46,6 @@ final class SettingsModelTests: XCTestCase {
           },
           "default_display": "agent",
           "devices": [],
-          "leds_enabled": true,
           "sleep_prevention": {
             "min_battery_percent": 20,
             "policy": "agents"
@@ -65,7 +63,7 @@ final class SettingsModelTests: XCTestCase {
     func testGarbageTypesFallBackFieldByField() throws {
         let loaded = try settings(fromJSON: """
         {"devices": "x", "default_display": 5, "agent_animations": [], "agent_list": "x",
-         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}, "leds_enabled": "yes"}
+         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}}
         """)
         XCTAssertEqual(loaded, SidePulseSettings())
 
@@ -79,12 +77,11 @@ final class SettingsModelTests: XCTestCase {
     func testNumbersAreClampedAndMustBeFinite() throws {
         let loaded = try settings(fromJSON: """
         {"agent_list": {"idle_timeout_seconds": -5, "recent_session_retention_seconds": 1e999},
-         "sleep_prevention": {"min_battery_percent": 150}, "leds_enabled": false}
+         "sleep_prevention": {"min_battery_percent": 150}}
         """)
         XCTAssertEqual(loaded.idleTimeoutSeconds, 0)
         XCTAssertEqual(loaded.sessionRetentionSeconds, 172_800)
         XCTAssertEqual(loaded.minBatteryPercent, 100)
-        XCTAssertFalse(loaded.ledsEnabled)
         XCTAssertEqual(try settings(fromJSON: #"{"sleep_prevention": {"min_battery_percent": -3}}"#).minBatteryPercent, 0)
         XCTAssertEqual(try settings(fromJSON: #"{"agent_list": {"idle_timeout_seconds": true}}"#).idleTimeoutSeconds, 3600)
     }
@@ -165,15 +162,14 @@ final class SettingsModelTests: XCTestCase {
 
     func testUnknownKeysArePreservedSorted() throws {
         let loaded = try settings(fromJSON: """
-        {"future": {"b": 1, "a": [1, {"z": 2, "y": 3}]}, "show_menu_bar_icon": false, "leds_enabled": false}
+        {"future": {"b": 1, "a": [1, {"z": 2, "y": 3}]}, "show_menu_bar_icon": false}
         """)
         XCTAssertEqual(loaded.extra.keys, ["future", "show_menu_bar_icon"])
         XCTAssertEqual(loaded.extra["future"]?.serialized(), #"{"a":[1,{"y":3,"z":2}],"b":1}"#)
-        XCTAssertFalse(loaded.ledsEnabled)
 
         let json = loaded.toJSON()
         XCTAssertEqual(json.objectValue?.keys, ["agent_animations", "agent_list", "default_display", "devices",
-                                                "future", "leds_enabled", "show_menu_bar_icon", "sleep_prevention"])
+                                                "future", "show_menu_bar_icon", "sleep_prevention"])
         XCTAssertEqual(SidePulseSettings.fromJSON(json), loaded)
 
         var built = SidePulseSettings()
@@ -196,7 +192,6 @@ final class SettingsModelTests: XCTestCase {
         original.sessionRetentionSeconds = 1.5
         original.sleepPolicy = .always
         original.minBatteryPercent = 25
-        original.ledsEnabled = false
         original.extra["custom"] = .string("kept")
 
         let json = original.toJSON()
@@ -387,12 +382,13 @@ final class SettingsStoreTests: XCTestCase {
         let store = SettingsStore(url: dir.appendingPathComponent("settings.json"))
         try Data(#"{"show_menu_bar_icon": false, "future": [1, 2], "leds_enabled": true}"#.utf8).write(to: store.url)
 
-        try store.update { $0.ledsEnabled = false }
+        try store.update { $0.sleepPolicy = .never }
 
         let saved = try JSONValue.parse(try Data(contentsOf: store.url))
         XCTAssertEqual(saved["show_menu_bar_icon"], .bool(false))
         XCTAssertEqual(saved["future"], .array([.number("1"), .number("2")]))
-        XCTAssertEqual(saved["leds_enabled"], .bool(false))
+        XCTAssertNil(saved["leds_enabled"], "the retired Drive LEDs key is dropped, not kept as unknown")
+        XCTAssertEqual(saved["sleep_prevention"]?["policy"], .string("never"))
     }
 
     func testUpdateReturnsSavedValueAndSkipsNoOpWrites() throws {
@@ -494,14 +490,14 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(try backups(in: dir), [], "a no-op update leaves the corrupt file alone")
         XCTAssertEqual(try String(contentsOf: store.url, encoding: .utf8), corrupt)
 
-        try store.update { $0.ledsEnabled = false }
+        try store.update { $0.sleepPolicy = .never }
 
         let saved = try backups(in: dir)
         XCTAssertEqual(saved.count, 1)
         XCTAssertEqual(try String(contentsOf: saved[0], encoding: .utf8), corrupt)
-        XCTAssertFalse(store.load().ledsEnabled)
+        XCTAssertEqual(store.load().sleepPolicy, .never)
 
-        try store.update { $0.ledsEnabled = true }
+        try store.update { $0.sleepPolicy = .always }
         try store.save(SidePulseSettings())
         XCTAssertEqual(try backups(in: dir).count, 1, "valid files are replaced without a backup")
 
@@ -513,7 +509,7 @@ final class SettingsStoreTests: XCTestCase {
     func testUnreadableFileIsNotReplaced() throws {
         let dir = try makeTempDirectory(self)
         let store = SettingsStore(url: dir.appendingPathComponent("settings.json"))
-        try Data(#"{"leds_enabled": false}"#.utf8).write(to: store.url)
+        try Data(#"{"default_display": "manual"}"#.utf8).write(to: store.url)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: store.url.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: store.url.path) }
         guard (try? Data(contentsOf: store.url)) == nil else { throw XCTSkip("running with permission to read anything") }
@@ -521,7 +517,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.update { $0.sleepPolicy = .never })
 
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: store.url.path)
-        XCTAssertFalse(store.load().ledsEnabled, "the original content is still there")
+        XCTAssertEqual(store.load().defaultDisplay, .manual, "the original content is still there")
     }
 
     func testUpdateWaitsForALockHeldByAnotherProcess() throws {
@@ -552,7 +548,7 @@ final class SettingsStoreTests: XCTestCase {
         try Data("x".utf8).write(to: blocker)
         let store = SettingsStore(url: blocker.appendingPathComponent("settings.json"))
 
-        XCTAssertThrowsError(try store.update { $0.ledsEnabled = false })
+        XCTAssertThrowsError(try store.update { $0.sleepPolicy = .never })
         XCTAssertThrowsError(try store.save(SidePulseSettings()))
         XCTAssertEqual(store.load(), SidePulseSettings())
     }

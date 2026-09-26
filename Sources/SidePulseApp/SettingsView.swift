@@ -70,7 +70,6 @@ private struct GeneralTab: View {
                 }
             }
             Section("General") {
-                LEDsToggle(model: model)
                 Toggle(MenuText.launchAtLogin, isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }))
@@ -94,16 +93,6 @@ private struct DurationPicker: View {
             set: { seconds in if seconds != value { onChange(seconds) } })) {
             ForEach(choices) { Text($0.label).tag($0.seconds) }
         }
-    }
-}
-
-private struct LEDsToggle: View {
-    @ObservedObject var model: SettingsModel
-
-    var body: some View {
-        Toggle(MenuText.driveLEDs, isOn: Binding(
-            get: { model.settings.ledsEnabled },
-            set: { enabled in model.update { $0.ledsEnabled = enabled } }))
     }
 }
 
@@ -186,7 +175,7 @@ private struct AnimationsTab: View {
                             .disabled(!model.canPreview)
                             .help(model.canPreview
                                   ? "Play this animation on connected devices for 3 seconds."
-                                  : "Connect a device in Agent Status mode with Drive LEDs on to preview.")
+                                  : "Connect a device in Agent Status mode to preview.")
                     }
                 }
             }
@@ -202,9 +191,6 @@ private struct DevicesTab: View {
 
     var body: some View {
         Form {
-            Section {
-                LEDsToggle(model: model)
-            }
             if model.devices.isEmpty {
                 Section {
                     Text("No devices. Connect a SidePulse Pro or SidePulse Dot; it appears here automatically.")

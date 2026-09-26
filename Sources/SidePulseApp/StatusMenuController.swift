@@ -25,7 +25,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private var rowItems: [NSMenuItem] = []
     private var deviceItems: [NSMenuItem] = []
     private var deviceControls: [String: DeviceControls] = [:]
-    private var driveLEDsItem: NSMenuItem?
     private var policyItems: [SleepPolicy: NSMenuItem] = [:]
     private var keepingAwakeItems: [NSMenuItem] = []
     private var launchAtLoginItem: NSMenuItem?
@@ -148,9 +147,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(label(MenuText.devices))
         deviceItems = makeDeviceItems(model.devices)
         deviceItems.forEach(menu.addItem)
-        let driveLEDs = action(MenuText.driveLEDs, #selector(toggleLEDs(_:)))
-        driveLEDsItem = driveLEDs
-        menu.addItem(driveLEDs)
         menu.addItem(.separator())
 
         menu.addItem(makeKeepAwakeItem())
@@ -308,7 +304,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func applyToggles(_ model: StatusMenuModel) {
-        driveLEDsItem?.state = model.ledsEnabled ? .on : .off
         for (policy, item) in policyItems { item.state = policy == model.sleepPolicy ? .on : .off }
         keepingAwakeItems.forEach { $0.isHidden = !model.keepAwakeActive }
         launchAtLoginItem?.state = model.launchAtLogin ? .on : .off
@@ -362,11 +357,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func removeDevice(_ sender: NSMenuItem) {
         guard let deviceID = sender.representedObject as? String else { return }
         runtime.removeDevice(id: deviceID)
-    }
-
-    @objc private func toggleLEDs(_ sender: NSMenuItem) {
-        let enabled = !runtime.settings.ledsEnabled
-        runtime.updateSettings { $0.ledsEnabled = enabled }
     }
 
     @objc private func setSleepPolicy(_ sender: NSMenuItem) {

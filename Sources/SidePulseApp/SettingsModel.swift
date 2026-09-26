@@ -72,9 +72,9 @@ final class SettingsModel: ObservableObject {
         update { $0.apply(profile: profile) }
     }
 
-    /// Previews are possible when LEDs are on and a connected device shows agent status.
+    /// Previews are possible when a connected device shows agent status.
     var canPreview: Bool {
-        settings.ledsEnabled && devices.contains { $0.connected && $0.display == .agent }
+        devices.contains { $0.connected && $0.display == .agent }
     }
 
     func preview(_ row: AnimationStateRow) {
