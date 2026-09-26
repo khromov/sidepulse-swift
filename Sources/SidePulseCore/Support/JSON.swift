@@ -167,8 +167,11 @@ struct JSONParser {
         }
     }
 
+    /// Hook payloads are shallow, and the event socket parses on a GCD worker whose 512 KB stack a debug
+    /// build overflows at a few hundred levels.
+    static let maxNesting = 128
+
     mutating func parseValue(depth: Int) throws -> JSONValue {
-        guard depth < 512 else { throw JSONError("Nesting too deep", offset: i) }
         guard i < bytes.count else { throw JSONError("Unexpected end of input", offset: i) }
         switch bytes[i] {
         case UInt8(ascii: "{"): return try parseObject(depth: depth)
@@ -191,6 +194,7 @@ struct JSONParser {
     }
 
     mutating func parseObject(depth: Int) throws -> JSONValue {
+        guard depth < Self.maxNesting else { throw JSONError("Nesting too deep", offset: i) }
         i += 1
         // A key index keeps parsing linear because hook payloads can carry tool
         // responses with many thousands of keys.
@@ -222,6 +226,7 @@ struct JSONParser {
     }
 
     mutating func parseArray(depth: Int) throws -> JSONValue {
+        guard depth < Self.maxNesting else { throw JSONError("Nesting too deep", offset: i) }
         i += 1
         var items: [JSONValue] = []
         skipWhitespace()

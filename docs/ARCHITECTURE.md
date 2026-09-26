@@ -75,8 +75,13 @@ background service and runs the same `hook-log --provider opencode` command for
 each event, one CLI at a time so records keep their order.
 
 The app is the only thing that owns monitor state and LED writes. The runtime
-binds the socket before it writes anything, and refuses to start if another
-process already listens on it.
+binds the socket before it writes anything. It holds an `flock` on
+`events.sock.lock` for as long as it serves, and only while holding it probes,
+replaces a stale socket file and binds, so two instances starting together
+cannot both win. It refuses to start if another process holds the lock or
+already listens on the socket. Clients only connect to a socket file owned by
+the current user, and then check with `getpeereid` that the process serving it
+is too.
 
 `EventSocketServer` reads each connection on a concurrent queue but hands the
 messages to the runtime in accept order, so a hook's `PreToolUse` is never
@@ -118,17 +123,27 @@ serial state queue. Callers rely on these rules:
 
 All paths hang off `SidePulsePaths`. SidePulse's own paths are never taken from
 XDG variables, so the hook, the CLI and the app launched by the LaunchAgent
-always agree. `SIDEPULSE_HOME` overrides the root; tests use it. Agent config
-locations follow the agent's own overrides: `CODEX_HOME` for Codex, and
-`OPENCODE_CONFIG_DIR`, then `XDG_CONFIG_HOME/opencode`, then
-`~/.config/opencode` for OpenCode (plugin: `plugins/sidepulse.js`).
+always agree. `SIDEPULSE_HOME` overrides the root; tests use it. A relative
+`SIDEPULSE_HOME` resolves against `HOME`, because hooks run in each project's
+working directory. Agent config locations follow the agent's own overrides:
+`CODEX_HOME` for Codex, and `OPENCODE_CONFIG_DIR`, then
+`XDG_CONFIG_HOME/opencode`, then `~/.config/opencode` for OpenCode (plugin:
+`plugins/sidepulse.js`).
 
 Files under the root (`~/Library/Application Support/SidePulse/`):
 - `settings.json`
 - `latest.json`
 - `logs/claude.jsonl`, `logs/codex.jsonl` and `logs/opencode.jsonl` (rotated at
-  8 MB to `.1`)
-- `events.sock`
+  8 MB to `.1`). The hook's append never blocks: it refuses anything but a
+  regular file, skips a rotation when another process holds the log's `flock`,
+  and starts on a new line when an interrupted write left the last one
+  unfinished.
+- `events.sock` and its instance lock `events.sock.lock`. When the root is too
+  long for the 104-byte socket path limit, the socket moves to
+  `/tmp/sidepulse-<uid>/events-<hash>.sock`, where the hash is the 64-bit
+  FNV-1a of the root path, so each root keeps its own runtime. The server
+  creates that directory with `mkdir` and refuses it unless it is a real
+  directory (not a symlink) owned by the user with mode 0700 or stricter.
 - `app.log` (rotated at 2 MB), plus the LaunchAgent's `app.out.log` and
   `app.err.log`
 

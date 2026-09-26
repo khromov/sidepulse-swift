@@ -80,10 +80,8 @@ final class CLIHarness {
     static let cliPath = "/opt/sidepulse/bin/sidepulse"
 
     init(variables extra: [String: String] = [:], now: Date = CLIFixtures.now) {
-        // Short temp paths keep the socket path under the sun_path limit.
         let fm = FileManager.default
-        root = fm.temporaryDirectory
-            .appendingPathComponent("spcli-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        root = Self.makeShortTempDir()
         home = root.appendingPathComponent("home", isDirectory: true)
         stateDir = root.appendingPathComponent("state", isDirectory: true)
         applicationsDir = root.appendingPathComponent("Applications", isDirectory: true)
@@ -94,6 +92,7 @@ final class CLIHarness {
         var variables = ["SIDEPULSE_HOME": stateDir.path, "HOME": home.path, "SIDEPULSE_CLI_PATH": Self.cliPath]
         variables.merge(extra) { $1 }
         let paths = SidePulsePaths(environment: variables, home: home)
+        precondition(paths.socketPath.hasPrefix(root.path), "the socket must live in the temp root")
         env = CLIEnvironment(
             variables: variables,
             paths: paths,
@@ -115,6 +114,19 @@ final class CLIHarness {
     }
 
     deinit { try? FileManager.default.removeItem(at: root) }
+
+    /// `TMPDIR` can be long enough to push the socket past the 104-byte `sun_path` limit into the real
+    /// `/tmp/sidepulse-<uid>` fallback, so the root is made directly under `/tmp`.
+    static func makeShortTempDir() -> URL {
+        var template = Array("/tmp/spcli.XXXXXX".utf8CString)
+        let created = template.withUnsafeMutableBufferPointer { buffer -> Bool in
+            guard let base = buffer.baseAddress else { return false }
+            return mkdtemp(base) != nil
+        }
+        precondition(created, "mkdtemp failed")
+        let path = template.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
 
     var paths: SidePulsePaths { env.paths }
 

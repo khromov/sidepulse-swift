@@ -461,7 +461,7 @@ variants.
 | `~/Library/Application Support/SidePulse/settings.json` | Settings: devices, animations, timeouts, keep-awake. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced |
 | `…/SidePulse/latest.json` | Restart snapshot of agent rows, written with a short delay |
 | `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB |
-| `…/SidePulse/events.sock` | Unix socket served by the app. Falls back to `/tmp/sidepulse-<uid>/events.sock` if the path is too long |
+| `…/SidePulse/events.sock`, `events.sock.lock` | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700 |
 | `…/SidePulse/app.log`, `app.out.log`, `app.err.log` | App diagnostics, and the LaunchAgent's stdout and stderr |
 | `~/Library/LaunchAgents/io.sidepulse.swift.plist` | Launch at login |
 | `~/Applications/SidePulse.app` | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications` |
@@ -474,7 +474,7 @@ Environment overrides:
 
 | Variable | Effect |
 | --- | --- |
-| `SIDEPULSE_HOME` | Replaces the data root (`~/Library/Application Support/SidePulse`) |
+| `SIDEPULSE_HOME` | Replaces the data root (`~/Library/Application Support/SidePulse`). A relative path is relative to `HOME`, not to the working directory |
 | `SIDEPULSE_MOUNT_ROOTS` | Colon-separated directories to scan for devices, instead of `/Volumes` |
 | `SIDEPULSE_CLI_PATH` | CLI path to write into hook commands, taken as is (doctor only checks that it exists) |
 | `SIDEPULSE_APP_PATH` | App bundle or binary used by `app`, `setup`, `settings` and `doctor` |
@@ -553,10 +553,17 @@ On every event, `sidepulse hook-log`:
      when the list does not fit);
    - the detected origin.
 
-   Invalid JSON becomes a `ParseError` record. A payload without an event
-   name, such as a hand-run command with no input, is dropped here.
-3. Appends the record as one line to `logs/<provider>.jsonl`.
-4. Sends `{"provider": …, "line": {…}}` to `events.sock` with a 0.2 s timeout.
+   Invalid JSON, including JSON nested more than 128 levels deep, becomes a
+   `ParseError` record. A payload without an event name, such as a hand-run
+   command with no input, is dropped here.
+3. Appends the record as one line to `logs/<provider>.jsonl`. If an
+   interrupted write left the last line unfinished, the record starts on a
+   new line. The append never waits: a log path that is not a regular file
+   (a FIFO, say) is skipped, and when another process holds the log's lock
+   the 8 MB rotation is left to a later hook.
+4. Sends `{"provider": …, "line": {…}}` to `events.sock` with a 0.2 s timeout,
+   and only when both the socket file and the process serving it belong to
+   the current user.
 
 Each step is independent, so a dead socket never loses the log line. The hook
 never writes to stdout and always exits 0. Python-era hook commands of the form
@@ -611,7 +618,7 @@ same runtime without UI. The runtime does the following, per
 `docs/ARCHITECTURE.md` and its doc comments:
 
 - **Start.** It binds `events.sock` before writing anything, and refuses to
-  start if another process already listens there. It then applies
+  start if another process holds `events.sock.lock` or listens there. It then applies
   `settings.json`, loads `latest.json`, and reconciles the rows with the tail
   of the provider logs (the last 2000 lines of each, within its last 4 MB). Finally it starts a 15 s
   status refresh and a 2 s device poll. The first device discovery runs in the

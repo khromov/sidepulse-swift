@@ -30,7 +30,11 @@ public struct SidePulsePaths: Sendable, Equatable {
         }
         self.home = resolvedHome.standardizedFileURL
         if let override = environment["SIDEPULSE_HOME"], !override.isEmpty {
-            self.root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true).standardizedFileURL
+            let expanded = (override as NSString).expandingTildeInPath
+            // Hooks run in each project's directory, so a relative root resolves against HOME, not the cwd.
+            let root = expanded.hasPrefix("/") ? URL(fileURLWithPath: expanded, isDirectory: true)
+                : self.home.appendingPathComponent(expanded, isDirectory: true)
+            self.root = root.standardizedFileURL
         } else {
             self.root = self.home
                 .appendingPathComponent("Library", isDirectory: true)
@@ -47,11 +51,15 @@ public struct SidePulsePaths: Sendable, Equatable {
     public func logFile(for provider: String) -> URL { logsDir.appendingPathComponent("\(provider).jsonl") }
     public var appLogFile: URL { root.appendingPathComponent("app.log") }
 
-    /// macOS limits `sun_path` to 104 bytes, so a long data root falls back to /tmp.
+    /// Only tests change this.
+    var socketFallbackBase = "/tmp"
+
+    /// macOS limits `sun_path` to 104 bytes, so a long data root falls back to a socket in /tmp named after
+    /// the root, which keeps two long roots from sharing one runtime.
     public var socketPath: String {
         let preferred = root.appendingPathComponent("events.sock").path
         if preferred.utf8.count <= 100 { return preferred }
-        return "/tmp/sidepulse-\(getuid())/events.sock"
+        return "\(socketFallbackBase)/\(Self.socketFallbackDirectoryName)/events-\(Self.fnv1a64Hex(root.path)).sock"
     }
 
     public var claudeDir: URL { home.appendingPathComponent(".claude", isDirectory: true) }
@@ -97,5 +105,25 @@ public struct SidePulsePaths: Sendable, Equatable {
 
     public func ensureDirectories() throws {
         try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+    }
+}
+
+extension SidePulsePaths {
+    static var socketFallbackDirectoryName: String { "sidepulse-\(getuid())" }
+
+    /// The server makes the fallback directory private because it lives in world-writable /tmp.
+    static func isFallbackSocket(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        let name = url.lastPathComponent
+        return url.deletingLastPathComponent().lastPathComponent == socketFallbackDirectoryName
+            && name.hasPrefix("events-") && name.hasSuffix(".sock") && name.utf8.count == 28
+    }
+
+    /// Swift's `Hasher` is seeded per process, and the hook and the app must derive the same name.
+    static func fnv1a64Hex(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+        let hex = String(hash, radix: 16)
+        return String(repeating: "0", count: 16 - hex.count) + hex
     }
 }

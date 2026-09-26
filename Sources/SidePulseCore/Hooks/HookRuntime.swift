@@ -225,27 +225,38 @@ public enum HookRuntime {
 
 public enum HookLogStore {
     /// Concurrent hook processes rotate at most once because the rename happens under an `flock` on the old
-    /// file and only if the path still names that file.
+    /// file and only if the path still names that file; a busy lock skips rotation so a reader never stalls
+    /// the agent.
     public static func append(line: String, to url: URL, rotateAt: Int = SidePulseConstants.logRotateBytes) throws {
         let path = url.path
-        var fd = try openForAppend(path)
-        var info = stat()
-        if rotateAt > 0, fstat(fd, &info) == 0, Int(info.st_size) > rotateAt {
-            flock(fd, LOCK_EX)
-            var current = stat()
-            if stat(path, &current) == 0, current.st_dev == info.st_dev, current.st_ino == info.st_ino {
-                rename(path, path + ".1")
+        var (fd, info) = try openForAppend(path)
+        if rotateAt > 0, Int(info.st_size) > rotateAt {
+            if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+                var current = stat()
+                if stat(path, &current) == 0, current.st_dev == info.st_dev, current.st_ino == info.st_ino {
+                    rename(path, path + ".1")
+                }
+                flock(fd, LOCK_UN)
             }
-            flock(fd, LOCK_UN)
             close(fd)
-            fd = try openForAppend(path)
+            (fd, info) = try openForAppend(path)
         }
         defer { close(fd) }
-        guard FileUtil.writeAll(fd, Data((line + "\n").utf8)) else { throw FileUtil.posixError("write \(path)") }
+        // A torn earlier write would otherwise swallow this record into its unparseable line.
+        let record = (endsMidLine(fd, size: info.st_size) ? "\n" : "") + line + "\n"
+        guard FileUtil.writeAll(fd, Data(record.utf8)) else { throw FileUtil.posixError("write \(path)") }
     }
 
-    private static func openForAppend(_ path: String) throws -> Int32 {
-        let flags = O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC
+    private static func endsMidLine(_ fd: Int32, size: off_t) -> Bool {
+        guard size > 0 else { return false }
+        var last: UInt8 = 0
+        return pread(fd, &last, 1, size - 1) == 1 && last != UInt8(ascii: "\n")
+    }
+
+    /// Non-blocking and regular-files-only so a FIFO or device at the log path can never hang the hook;
+    /// read access is for `endsMidLine`.
+    private static func openForAppend(_ path: String) throws -> (Int32, stat) {
+        let flags = O_RDWR | O_APPEND | O_CREAT | O_CLOEXEC | O_NONBLOCK
         var fd = open(path, flags, 0o600)
         if fd < 0 && errno == ENOENT {
             let dir = (path as NSString).deletingLastPathComponent
@@ -254,6 +265,12 @@ public enum HookLogStore {
             fd = open(path, flags, 0o600)
         }
         guard fd >= 0 else { throw FileUtil.posixError("open \(path)") }
-        return fd
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+            close(fd)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EFTYPE),
+                          userInfo: [NSLocalizedDescriptionKey: "\(path) is not a regular file"])
+        }
+        return (fd, info)
     }
 }

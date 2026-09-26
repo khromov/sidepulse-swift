@@ -105,10 +105,12 @@ public enum EventSocketError: Error, Equatable, LocalizedError {
     }
 }
 
-/// Connections are read concurrently but delivered in accept order, so a hook's PreToolUse is never applied
-/// after its PostToolUse; `reorderGrace` caps how long a stalled client can hold later messages back.
+/// Connections are read concurrently but delivered in accept order, so a hook's PreToolUse is not applied
+/// after its PostToolUse; a stalled connection holds later messages back for about `reorderGrace` at most
+/// and is then delivered late.
 public final class EventSocketServer: @unchecked Sendable {
     public let path: String
+    var lockPath: String { path + ".lock" }
     // Tunables (internal: tests shorten them before `start()`).
     var readTimeout: TimeInterval = 2
     let writeTimeout: TimeInterval = 2
@@ -141,6 +143,7 @@ public final class EventSocketServer: @unchecked Sendable {
         var fd: Int32
         var wakeRead: Int32
         var wakeWrite: Int32
+        var lockFD: Int32
         var device: dev_t
         var inode: ino_t
         var exited: DispatchSemaphore
@@ -158,74 +161,10 @@ public final class EventSocketServer: @unchecked Sendable {
         return listening != nil
     }
 
-    /// The parent directory must be ours because the `/tmp` fallback could have been pre-created by
-    /// another user.
     public func start() throws {
         lock.lock(); defer { lock.unlock() }
         guard listening == nil else { return }
-        guard path.utf8.count <= UnixSocket.maxPathBytes else {
-            throw EventSocketError.bindFailed("path is longer than \(UnixSocket.maxPathBytes) bytes: \(path)")
-        }
-        let directory = (path as NSString).deletingLastPathComponent
-        do {
-            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-        } catch {
-            throw EventSocketError.bindFailed("cannot create \(directory): \(error.localizedDescription)")
-        }
-        var directoryInfo = stat()
-        guard stat(directory, &directoryInfo) == 0, directoryInfo.st_uid == geteuid() else {
-            throw EventSocketError.bindFailed("\(directory) is not owned by the current user")
-        }
-
-        var existing = stat()
-        if lstat(path, &existing) == 0 {
-            if (existing.st_mode & S_IFMT) == S_IFDIR {
-                throw EventSocketError.bindFailed("\(path) is a directory")
-            }
-            if anotherServerListens() { throw EventSocketError.alreadyRunning(path) }
-            unlink(path)
-        }
-
-        guard var address = UnixSocket.address(path) else {
-            throw EventSocketError.bindFailed("invalid path: \(path)")
-        }
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw EventSocketError.bindFailed(UnixSocket.lastError("socket")) }
-        UnixSocket.configure(fd)
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard bound == 0 else {
-            let failure = UnixSocket.lastError("bind")
-            let inUse = errno == EADDRINUSE
-            close(fd)
-            // Lost a race with another instance that bound between our unlink and bind.
-            if inUse && anotherServerListens() { throw EventSocketError.alreadyRunning(path) }
-            throw EventSocketError.bindFailed(failure)
-        }
-        chmod(path, 0o600)
-        var info = stat()
-        guard stat(path, &info) == 0, listen(fd, SOMAXCONN) == 0 else {
-            let failure = UnixSocket.lastError("listen")
-            close(fd)
-            unlink(path)
-            throw EventSocketError.bindFailed(failure)
-        }
-
-        var pipeFDs: [Int32] = [-1, -1]
-        guard pipe(&pipeFDs) == 0 else {
-            let failure = UnixSocket.lastError("pipe")
-            close(fd)
-            unlink(path)
-            throw EventSocketError.bindFailed(failure)
-        }
-        for end in pipeFDs { UnixSocket.configure(end) }
-
-        let state = Listening(fd: fd, wakeRead: pipeFDs[0], wakeWrite: pipeFDs[1],
-                              device: info.st_dev, inode: info.st_ino, exited: DispatchSemaphore(value: 0))
+        let state = try openListening()
         listening = state
         generation += 1
         let cycle = generation
@@ -256,9 +195,117 @@ public final class EventSocketServer: @unchecked Sendable {
         if lstat(path, &current) == 0, current.st_dev == state.device, current.st_ino == state.inode {
             unlink(path)
         }
+        close(state.lockFD)
     }
 
     // MARK: Internals
+
+    private func openListening() throws -> Listening {
+        guard path.utf8.count <= UnixSocket.maxPathBytes else {
+            throw EventSocketError.bindFailed("path is longer than \(UnixSocket.maxPathBytes) bytes: \(path)")
+        }
+        try prepareDirectory()
+        let lockFD = try acquireInstanceLock()
+        do {
+            let (fd, info) = try bindSocket()
+            var pipeFDs: [Int32] = [-1, -1]
+            guard pipe(&pipeFDs) == 0 else {
+                let failure = UnixSocket.lastError("pipe")
+                close(fd)
+                unlink(path)
+                throw EventSocketError.bindFailed(failure)
+            }
+            for end in pipeFDs { UnixSocket.configure(end) }
+            return Listening(fd: fd, wakeRead: pipeFDs[0], wakeWrite: pipeFDs[1], lockFD: lockFD,
+                             device: info.st_dev, inode: info.st_ino, exited: DispatchSemaphore(value: 0))
+        } catch {
+            close(lockFD)
+            throw error
+        }
+    }
+
+    /// The parent directory must be ours because the `/tmp` fallback could have been pre-created by
+    /// another user.
+    private func prepareDirectory() throws {
+        let directory = (path as NSString).deletingLastPathComponent
+        if SidePulsePaths.isFallbackSocket(path) { return try preparePrivateDirectory(directory) }
+        do {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+        } catch {
+            throw EventSocketError.bindFailed("cannot create \(directory): \(error.localizedDescription)")
+        }
+        var directoryInfo = stat()
+        guard stat(directory, &directoryInfo) == 0, directoryInfo.st_uid == geteuid() else {
+            throw EventSocketError.bindFailed("\(directory) is not owned by the current user")
+        }
+    }
+
+    /// `mkdir` and `lstat`, because `createDirectory` and `stat` accept a symlink another user planted in `/tmp`.
+    private func preparePrivateDirectory(_ directory: String) throws {
+        guard mkdir(directory, 0o700) == 0 || errno == EEXIST else {
+            throw EventSocketError.bindFailed(UnixSocket.lastError("mkdir \(directory)"))
+        }
+        var info = stat()
+        guard lstat(directory, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == geteuid(),
+              info.st_mode & 0o077 == 0 else {
+            throw EventSocketError.bindFailed("\(directory) is not a private directory owned by the current user")
+        }
+    }
+
+    /// Held until `stop()`, so the probe, unlink and bind of two starts over a stale socket cannot interleave.
+    private func acquireInstanceLock() throws -> Int32 {
+        let fd = open(lockPath, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw EventSocketError.bindFailed(UnixSocket.lastError("open \(lockPath)")) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            let held = errno == EWOULDBLOCK
+            let failure = UnixSocket.lastError("flock \(lockPath)")
+            close(fd)
+            throw held ? EventSocketError.alreadyRunning(path) : EventSocketError.bindFailed(failure)
+        }
+        return fd
+    }
+
+    private func bindSocket() throws -> (Int32, stat) {
+        var existing = stat()
+        if lstat(path, &existing) == 0 {
+            if (existing.st_mode & S_IFMT) == S_IFDIR {
+                throw EventSocketError.bindFailed("\(path) is a directory")
+            }
+            // Still probed under the lock, because an older build or a foreign listener never takes it.
+            if anotherServerListens() { throw EventSocketError.alreadyRunning(path) }
+            unlink(path)
+        }
+
+        guard var address = UnixSocket.address(path) else {
+            throw EventSocketError.bindFailed("invalid path: \(path)")
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw EventSocketError.bindFailed(UnixSocket.lastError("socket")) }
+        UnixSocket.configure(fd)
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else {
+            let failure = UnixSocket.lastError("bind")
+            let inUse = errno == EADDRINUSE
+            close(fd)
+            // An older build that takes no lock bound between our unlink and bind.
+            if inUse && anotherServerListens() { throw EventSocketError.alreadyRunning(path) }
+            throw EventSocketError.bindFailed(failure)
+        }
+        chmod(path, 0o600)
+        var info = stat()
+        guard stat(path, &info) == 0, listen(fd, SOMAXCONN) == 0 else {
+            let failure = UnixSocket.lastError("listen")
+            close(fd)
+            unlink(path)
+            throw EventSocketError.bindFailed(failure)
+        }
+        return (fd, info)
+    }
 
     /// Connects instead of pinging, because a live instance whose handler is busy or hung must not be
     /// displaced.
@@ -329,42 +376,45 @@ public final class EventSocketServer: @unchecked Sendable {
             }
             // Failed/invalid reads still take their slot so later messages are not held up.
             pendingDelivery[sequence] = item
-            drainDeliveries(cycle: cycle)
-            scheduleRelease(cycle: cycle)
+            drainDeliveries()
+            scheduleRelease()
         }
     }
 
-    private func drainDeliveries(cycle: Int) {
+    private func drainDeliveries() {
         while let next = pendingDelivery.removeValue(forKey: nextDelivery) {
             nextDelivery += 1
-            dispatch(next, cycle: cycle)
+            dispatch(next, cycle: deliveryCycle)
         }
     }
 
-    private func scheduleRelease(cycle: Int) {
-        guard !pendingDelivery.isEmpty, !releaseScheduled else { return }
+    /// Armed for the oldest waiting message and re-armed after every release, because a timer reused from an
+    /// earlier message would let a later one wait up to twice the grace.
+    private func scheduleRelease() {
+        guard !releaseScheduled, let oldest = pendingDelivery.values.map(\.arrived).min() else { return }
         releaseScheduled = true
-        handlerQueue.asyncAfter(deadline: .now() + max(0.01, reorderGrace)) { [self] in
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let waited = TimeInterval(now > oldest ? now - oldest : 0) / 1_000_000_000
+        handlerQueue.asyncAfter(deadline: .now() + max(0.01, reorderGrace - waited)) { [self] in
             releaseScheduled = false
-            guard cycle == deliveryCycle else { return }
-            releaseStale(cycle: cycle)
-            scheduleRelease(cycle: cycle)
+            releaseStale()
+            scheduleRelease()
         }
     }
 
-    private func releaseStale(cycle: Int) {
+    private func releaseStale() {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let grace = UInt64(max(0, reorderGrace) * 1_000_000_000)
         guard let target = pendingDelivery.filter({ now &- $0.value.arrived >= grace }).keys.max() else { return }
         while nextDelivery <= target {
             if let next = pendingDelivery.removeValue(forKey: nextDelivery) {
-                dispatch(next, cycle: cycle)
+                dispatch(next, cycle: deliveryCycle)
             } else {
                 skippedDelivery.insert(nextDelivery)
             }
             nextDelivery += 1
         }
-        drainDeliveries(cycle: cycle)
+        drainDeliveries()
     }
 
     private func dispatch(_ item: Completed, cycle: Int) {
@@ -439,7 +489,13 @@ enum UnixSocket {
     /// Refuses sockets not owned by the current user because records carry prompts and the `/tmp`
     /// fallback could have been pre-created by another user.
     static func connect(path: String, deadline: SocketDeadline) -> Int32? {
-        guard isOwnSocket(path), var addr = address(path) else { return nil }
+        guard isOwnSocket(path) else { return nil }
+        return connectToOwnPeer(path: path, deadline: deadline)
+    }
+
+    /// Checks the peer as well as the file, because the file can be swapped between `stat` and `connect`.
+    static func connectToOwnPeer(path: String, deadline: SocketDeadline) -> Int32? {
+        guard var addr = address(path) else { return nil }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         configure(fd)
@@ -451,14 +507,21 @@ enum UnixSocket {
                 Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if rc == 0 { return fd }
-        if errno == EINPROGRESS || errno == EINTR || errno == EAGAIN, wait(fd, for: POLLOUT, deadline: deadline) {
+        var connected = rc == 0
+        if !connected, errno == EINPROGRESS || errno == EINTR || errno == EAGAIN, wait(fd, for: POLLOUT, deadline: deadline) {
             var error: Int32 = 0
             var length = socklen_t(MemoryLayout<Int32>.size)
-            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0, error == 0 { return fd }
+            connected = getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == 0
         }
+        if connected && isOwnPeer(fd) { return fd }
         close(fd)
         return nil
+    }
+
+    static func isOwnPeer(_ fd: Int32) -> Bool {
+        var uid = uid_t.max
+        var gid = gid_t.max
+        return getpeereid(fd, &uid, &gid) == 0 && uid == geteuid()
     }
 
     /// Also returns true on error or hangup, leaving the next call to report it.

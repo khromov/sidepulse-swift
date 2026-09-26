@@ -236,6 +236,39 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == 2 }, "the stalled message still arrives, late")
     }
 
+    /// Regression: the release timer armed for an earlier message was reused, so a later message waited up to
+    /// twice the grace.
+    func testLaterStallWaitsOnlyAboutTheGrace() throws {
+        let inbox = IPCTestSupport.Inbox<IPCMessage>()
+        _ = try startServer(configure: { $0.reorderGrace = 0.2 }, inbox: inbox)
+        func stall() throws -> Int32 {
+            let fd = try XCTUnwrap(UnixSocket.connect(path: socketPath, deadline: SocketDeadline(after: 1)))
+            descriptors.append(fd)
+            XCTAssertTrue(UnixSocket.writeAll(fd, Data("{".utf8), deadline: SocketDeadline(after: 1)))
+            usleep(30_000) // let the server accept it before the next client connects
+            return fd
+        }
+        func send(_ name: String) {
+            XCTAssertTrue(EventSocketClient.sendEvent(provider: "claude", line: ["hook_event_name": .string(name)],
+                                                      socketPath: socketPath))
+        }
+
+        // This stall ends well inside the grace, leaving a release timer armed for a message already delivered.
+        let first = try stall()
+        send("PreToolUse")
+        usleep(20_000)
+        shutdown(first, SHUT_WR)
+        XCTAssertTrue(IPCTestSupport.waitUntil(timeout: 1) { inbox.count == 1 })
+
+        _ = try stall()
+        let sent = Date()
+        send("PostToolUse")
+        XCTAssertTrue(IPCTestSupport.waitUntil(timeout: 1) { inbox.count == 2 })
+        let waited = Date().timeIntervalSince(sent)
+        XCTAssertGreaterThanOrEqual(waited, 0.15, "held behind the stalled connection")
+        XCTAssertLessThan(waited, 0.3)
+    }
+
     // MARK: Size limits
 
     private func paddedEvent(size: Int) -> Data {
@@ -280,6 +313,17 @@ final class IPCSocketTests: XCTestCase {
 
         XCTAssertTrue(EventSocketClient.sendEvent(provider: "claude", line: ["hook_event_name": .string("Stop")], socketPath: socketPath))
         XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == 1 })
+    }
+
+    /// Regression: a debug build overflowed the 512 KB stack of the GCD worker parsing a few hundred levels.
+    func testDeeplyNestedMessageIsDroppedAndTheServerKeepsAnswering() throws {
+        let inbox = IPCTestSupport.Inbox<IPCMessage>()
+        _ = try startServer(inbox: inbox)
+        let nested = String(repeating: #"{"a":"#, count: 400) + "1" + String(repeating: "}", count: 400)
+        let message = Data((#"{"provider":"claude","line":"# + nested + "}").utf8)
+        XCTAssertTrue(EventSocketClient.send(message, socketPath: socketPath, timeout: 1))
+        XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: socketPath))
+        XCTAssertEqual(inbox.items, [.command(name: "ping", args: JSONObject())])
     }
 
     func testInvalidPayloadsAreIgnored() throws {
@@ -364,6 +408,80 @@ final class IPCSocketTests: XCTestCase {
             XCTAssertEqual(error as? EventSocketError, .alreadyRunning(socketPath))
         }
         XCTAssertEqual(IPCTestSupport.inode(of: socketPath), inode)
+        XCTAssertTrue(instanceLockIsFree(), "a failed start releases the lock")
+    }
+
+    private func instanceLockIsFree() -> Bool {
+        let fd = open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        defer { close(fd) }
+        return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0
+    }
+
+    /// Regression: the probe, unlink and bind were not atomic across processes, so two starts over a stale
+    /// socket could both succeed and the first one never heard from a hook again.
+    func testConcurrentStartsOverAStaleSocketLeaveExactlyOneServer() throws {
+        for round in 0..<200 {
+            IPCTestSupport.makeStaleSocket(at: socketPath)
+            let contenders = (0..<2).map { index in
+                EventSocketServer(path: socketPath) { message in
+                    guard case .command(name: "ping", _) = message else { return nil }
+                    return Data(#"{"ok":true,"contender":\#(index)}"#.utf8)
+                }
+            }
+            let outcomes = IPCTestSupport.Inbox<(index: Int, error: EventSocketError?)>()
+            let ready = DispatchSemaphore(value: 0)
+            let go = DispatchSemaphore(value: 0)
+            let finished = DispatchGroup()
+            for (index, server) in contenders.enumerated() {
+                finished.enter()
+                Thread {
+                    ready.signal()
+                    go.wait()
+                    do {
+                        try server.start()
+                        outcomes.append((index, nil))
+                    } catch {
+                        outcomes.append((index, error as? EventSocketError ?? .bindFailed("\(error)")))
+                    }
+                    finished.leave()
+                }.start()
+            }
+            ready.wait(); ready.wait()
+            go.signal(); go.signal()
+            XCTAssertEqual(finished.wait(timeout: .now() + 5), .success)
+
+            let winners = outcomes.items.filter { $0.error == nil }.map(\.index)
+            XCTAssertEqual(winners.count, 1, "round \(round): \(outcomes.items)")
+            for outcome in outcomes.items where outcome.error != nil {
+                XCTAssertEqual(outcome.error, .alreadyRunning(socketPath))
+            }
+            let reply = EventSocketClient.request("ping", socketPath: socketPath, timeout: 1)
+            XCTAssertEqual(reply.flatMap { try? JSONValue.parse($0) }?["contender"], winners.first.map { JSONValue($0) },
+                           "round \(round): the survivor must own the socket")
+            contenders.forEach { $0.stop() }
+            if winners.count != 1 { break }
+        }
+    }
+
+    func testHeldInstanceLockRefusesStartAndLeavesTheSocketAlone() throws {
+        IPCTestSupport.makeStaleSocket(at: socketPath)
+        let staleInode = IPCTestSupport.inode(of: socketPath)
+        let holder = open(socketPath + ".lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        XCTAssertEqual(flock(holder, LOCK_EX | LOCK_NB), 0)
+
+        let server = EventSocketServer(path: socketPath) { _ in nil }
+        XCTAssertThrowsError(try server.start()) { error in
+            XCTAssertEqual(error as? EventSocketError, .alreadyRunning(socketPath))
+        }
+        XCTAssertFalse(server.isRunning)
+        XCTAssertEqual(IPCTestSupport.inode(of: socketPath), staleInode)
+
+        close(holder)
+        let running = try startServer()
+        XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: socketPath))
+        XCTAssertFalse(instanceLockIsFree(), "held while serving")
+        running.stop()
+        XCTAssertTrue(instanceLockIsFree(), "released on stop")
     }
 
     func testInstanceWithBusyHandlerIsNotDisplaced() throws {
@@ -405,6 +523,49 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
     }
 
+    private func fallbackSocketPath() -> String {
+        var paths = SidePulsePaths(environment: ["SIDEPULSE_HOME": "/" + String(repeating: "r", count: 120)], home: dir)
+        paths.socketFallbackBase = dir.path
+        precondition(paths.socketPath.hasPrefix(dir.path + "/sidepulse-"), "fallback must live in the scratch dir")
+        return paths.socketPath
+    }
+
+    private func assertBindFails(_ path: String, file: StaticString = #filePath, line: UInt = #line) {
+        let server = EventSocketServer(path: path) { _ in nil }
+        defer { server.stop() } // only matters if start() wrongly succeeds
+        XCTAssertThrowsError(try server.start(), file: file, line: line) { error in
+            guard case .bindFailed? = error as? EventSocketError else { return XCTFail("\(error)", file: file, line: line) }
+        }
+    }
+
+    func testFallbackDirectoryIsCreatedPrivate() throws {
+        let path = fallbackSocketPath()
+        XCTAssertTrue(SidePulsePaths.isFallbackSocket(path))
+        _ = try startServer(path: path)
+        var info = stat()
+        XCTAssertEqual(lstat((path as NSString).deletingLastPathComponent, &info), 0)
+        XCTAssertEqual(info.st_mode & 0o777, 0o700)
+        XCTAssertTrue(EventSocketClient.isServerRunning(socketPath: path))
+    }
+
+    /// Another user could pre-create `/tmp/sidepulse-<uid>` as a symlink to a directory they can write, or as a
+    /// loose directory, and swap in their own socket.
+    func testFallbackDirectoryMustBeARealPrivateDirectory() throws {
+        let path = fallbackSocketPath()
+        let directory = (path as NSString).deletingLastPathComponent
+        let elsewhere = dir.appendingPathComponent("elsewhere").path
+        XCTAssertEqual(mkdir(elsewhere, 0o700), 0)
+        XCTAssertEqual(symlink(elsewhere, directory), 0)
+        assertBindFails(path)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: elsewhere), [])
+
+        XCTAssertEqual(unlink(directory), 0)
+        XCTAssertEqual(mkdir(directory, 0o700), 0)
+        XCTAssertEqual(chmod(directory, 0o777), 0)
+        assertBindFails(path)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory), [])
+    }
+
     /// Clients never deliver records (which contain prompts) to a socket another
     /// user could have planted.
     func testClientOnlyConnectsToOwnSockets() throws {
@@ -422,6 +583,28 @@ final class IPCSocketTests: XCTestCase {
         if let fd = UnixSocket.connect(path: foreign, deadline: SocketDeadline(after: 0.2)) {
             close(fd)
             XCTFail("connected to a socket owned by another user")
+        }
+    }
+
+    /// The file check alone has a window in which another user's socket can be swapped in before `connect`.
+    func testClientRefusesAPeerOwnedByAnotherUser() throws {
+        _ = try startServer()
+        let own = try XCTUnwrap(UnixSocket.connectToOwnPeer(path: socketPath, deadline: SocketDeadline(after: 1)))
+        close(own)
+
+        let foreign = "/var/run/mDNSResponder" // a root-owned stream socket on every Mac
+        var address = try XCTUnwrap(UnixSocket.address(foreign))
+        let probe = socket(AF_UNIX, SOCK_STREAM, 0)
+        let reachable = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        } == 0
+        close(probe)
+        try XCTSkipUnless(reachable, "no reachable root-owned socket to test against")
+        if let fd = UnixSocket.connectToOwnPeer(path: foreign, deadline: SocketDeadline(after: 0.5)) {
+            close(fd)
+            XCTFail("connected to a peer owned by another user")
         }
     }
 
@@ -478,19 +661,15 @@ final class IPCSocketTests: XCTestCase {
 
     func testStopDoesNotUnlinkForeignSocket() throws {
         let first = try startServer()
-        // Another instance replaced our socket file, as after a crash-restart cycle.
+        // An older build that takes no instance lock replaced our socket file.
         unlink(socketPath)
-        let secondInbox = IPCTestSupport.Inbox<IPCMessage>()
-        let second = try startServer(inbox: secondInbox)
+        descriptors.append(IPCTestSupport.makeSilentListener(at: socketPath))
         let foreignInode = IPCTestSupport.inode(of: socketPath)
 
         first.stop()
         XCTAssertEqual(IPCTestSupport.inode(of: socketPath), foreignInode)
-        XCTAssertTrue(EventSocketClient.sendEvent(provider: "claude", line: ["hook_event_name": .string("Stop")], socketPath: socketPath))
-        XCTAssertTrue(IPCTestSupport.waitUntil { secondInbox.count == 1 })
-
-        second.stop()
-        XCTAssertNil(IPCTestSupport.inode(of: socketPath), "a server removes its own socket on stop")
+        let client = try XCTUnwrap(UnixSocket.connect(path: socketPath, deadline: SocketDeadline(after: 1)))
+        close(client)
     }
 
     func testStopThenRestart() throws {

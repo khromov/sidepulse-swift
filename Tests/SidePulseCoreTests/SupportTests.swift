@@ -54,6 +54,66 @@ final class JSONTests: XCTestCase {
         XCTAssertEqual(JSONValue.bool(true).pythonString, "True")
         XCTAssertEqual(JSONValue(3.0, integralAsInt: true), .number("3"))
     }
+
+    func testNestingIsCappedAt128Containers() throws {
+        func arrays(_ depth: Int) -> String { String(repeating: "[", count: depth) + "1" + String(repeating: "]", count: depth) }
+        func objects(_ depth: Int) -> String { String(repeating: #"{"a":"#, count: depth) + "1" + String(repeating: "}", count: depth) }
+        for text in [arrays(128), objects(128), "[" + objects(127) + "]"] {
+            XCTAssertNoThrow(try JSONValue.parse(text))
+        }
+        for text in [arrays(129), objects(129), "[" + objects(128) + "]"] {
+            XCTAssertThrowsError(try JSONValue.parse(text)) { error in
+                XCTAssertEqual((error as? JSONError)?.message, "Nesting too deep")
+            }
+        }
+    }
+}
+
+final class PathsTests: XCTestCase {
+    private let home = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+
+    private func paths(root: String) -> SidePulsePaths {
+        SidePulsePaths(environment: ["SIDEPULSE_HOME": root, "HOME": home.path], home: home)
+    }
+
+    /// Regression: every long data root used to share `/tmp/sidepulse-<uid>/events.sock`, so one root's
+    /// runtime received another root's hooks.
+    func testEachLongRootGetsItsOwnFallbackSocket() {
+        let long = "/Volumes/Data/" + String(repeating: "d", count: 100)
+        let first = paths(root: long + "/one").socketPath
+        let second = paths(root: long + "/two").socketPath
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(first, paths(root: long + "/one").socketPath)
+        XCTAssertEqual(first, "/tmp/sidepulse-\(getuid())/events-\(SidePulsePaths.fnv1a64Hex(long + "/one")).sock")
+        XCTAssertLessThanOrEqual(first.utf8.count, UnixSocket.maxPathBytes)
+        XCTAssertTrue(SidePulsePaths.isFallbackSocket(first))
+
+        XCTAssertEqual(paths(root: "/tmp/sp").socketPath, "/tmp/sp/events.sock")
+        XCTAssertFalse(SidePulsePaths.isFallbackSocket("/tmp/sp/events.sock"))
+        XCTAssertFalse(SidePulsePaths.isFallbackSocket("/tmp/sidepulse-\(getuid())/events.sock"))
+    }
+
+    /// Swift's `Hasher` is seeded per process, so the name must come from a fixed hash (FNV-1a, 64-bit).
+    func testFallbackNameHashIsDeterministic() {
+        XCTAssertEqual(SidePulsePaths.fnv1a64Hex(""), "cbf29ce484222325")
+        XCTAssertEqual(SidePulsePaths.fnv1a64Hex("a"), "af63dc4c8601ec8c")
+        XCTAssertEqual(SidePulsePaths.fnv1a64Hex("foobar"), "85944171f73967e8")
+    }
+
+    /// Regression: hooks run in each project's directory, so a relative `SIDEPULSE_HOME` gave every project
+    /// its own data root.
+    func testRelativeRootResolvesAgainstHomeNotTheWorkingDirectory() {
+        let fm = FileManager.default
+        let original = fm.currentDirectoryPath
+        defer { fm.changeCurrentDirectoryPath(original) }
+        let roots = ["/", "/usr"].map { directory -> String in
+            XCTAssertTrue(fm.changeCurrentDirectoryPath(directory))
+            return paths(root: "sp/data").root.path
+        }
+        XCTAssertEqual(roots, ["/Users/tester/sp/data", "/Users/tester/sp/data"])
+        XCTAssertEqual(paths(root: "./sp/../sp").root.path, "/Users/tester/sp")
+        XCTAssertEqual(paths(root: "/abs/root").root.path, "/abs/root")
+    }
 }
 
 final class TimeFormatTests: XCTestCase {

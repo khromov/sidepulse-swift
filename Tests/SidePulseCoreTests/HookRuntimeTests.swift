@@ -738,6 +738,55 @@ final class HookRuntimeLogStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         XCTAssertThrowsError(try HookLogStore.append(line: "x", to: url))
     }
+
+    /// Regression: a record appended after a torn write was glued onto the fragment, and neither parsed.
+    func testTornLastLineIsEndedBeforeTheNextRecord() throws {
+        let url = dir.appendingPathComponent("claude.jsonl")
+        try Data(#"{"a":"#.utf8).write(to: url)
+        try HookLogStore.append(line: #"{"b":1}"#, to: url)
+        XCTAssertEqual(FileUtil.readText(url), "{\"a\":\n{\"b\":1}\n")
+    }
+
+    /// Regression: opening a FIFO at the log path blocked the hook until something read it.
+    func testFIFOAtTheLogPathFailsFast() throws {
+        let url = dir.appendingPathComponent("claude.jsonl")
+        XCTAssertEqual(mkfifo(url.path, 0o600), 0)
+        let outcome = IPCTestSupport.Inbox<Bool>()
+        let finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            outcome.append((try? HookLogStore.append(line: "x", to: url)) == nil)
+            finished.signal()
+        }
+        let prompt = finished.wait(timeout: .now() + 0.5) == .success
+        if !prompt {
+            // A reader releases the stuck writer so the rest of the suite can run.
+            let reader = open(url.path, O_RDONLY | O_NONBLOCK)
+            _ = finished.wait(timeout: .now() + 2)
+            close(reader)
+        }
+        XCTAssertTrue(prompt, "append blocked on the FIFO")
+        XCTAssertEqual(outcome.items, [true], "a FIFO is not a log file")
+    }
+
+    /// Regression: rotation waited for the lock, so a reader holding it stalled the agent.
+    func testHeldLockSkipsRotationWithoutWaiting() throws {
+        let url = dir.appendingPathComponent("claude.jsonl")
+        let old = String(repeating: "o", count: 40) + "\n"
+        try Data(old.utf8).write(to: url)
+        let holder = open(url.path, O_RDONLY | O_CLOEXEC)
+        XCTAssertEqual(flock(holder, LOCK_EX), 0)
+        let finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            try? HookLogStore.append(line: "new", to: url, rotateAt: 18)
+            finished.signal()
+        }
+        let prompt = finished.wait(timeout: .now() + 0.5) == .success
+        close(holder)
+        if !prompt { _ = finished.wait(timeout: .now() + 2) }
+        XCTAssertTrue(prompt, "append waited for the lock")
+        XCTAssertEqual(FileUtil.readText(url), old + "new\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".1"))
+    }
 }
 
 final class HookRuntimeOriginTests: XCTestCase {
