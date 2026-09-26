@@ -233,22 +233,20 @@ final class LEDProfileTests: XCTestCase {
                        "brightness 128\n#0000FF 320ms cosine")
         XCTAssertEqual(try LedProgram.program(animationID: "ember-complete", ledCount: 2, brightness: 255), "#F23819 320ms cosine")
         XCTAssertEqual(try LedProgram.program(animationID: "red-double-blink", ledCount: 2, brightness: 255), """
-            off 120ms none
-            #FF0000 120ms none
-            off 120ms none
-            #FF0000 120ms none
-            off 120ms none
-            #FF0000 1.5s none
+            off 80ms cosine
+            #FF0000 300ms pulse
+            #FF0000 300ms pulse
+            #FF0000 120ms cosine
+            #FF0000 1.5s linear
             repeat
             """)
         XCTAssertEqual(try LedProgram.program(animationID: "blue-double-blink", ledCount: 8, brightness: 128), """
             brightness 128
-            off 120ms none
-            #0000FF 120ms none
-            off 120ms none
-            #0000FF 120ms none
-            off 120ms none
-            #0000FF 1.5s none
+            off 80ms cosine
+            #0000FF 300ms pulse
+            #0000FF 300ms pulse
+            #0000FF 120ms cosine
+            #0000FF 1.5s linear
             repeat
             """)
     }

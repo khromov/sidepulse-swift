@@ -14,11 +14,10 @@ enum ExtraPrograms {
         "blue-double-blink.LED": doubleBlink("#0000FF"),
     ]
 
-    /// Two quick blinks, then about a second and a half solid. The leading `off` keeps the solid phase from
-    /// running into the next cycle's first blink, and 120 ms differs from the firmware's 150 ms parse-error blink.
+    /// Two short pulses from off, then a hold: a line that sets the color it already shows just keeps it lit.
     private static func doubleBlink(_ color: String) -> String {
-        ["off 120ms none", "\(color) 120ms none", "off 120ms none", "\(color) 120ms none", "off 120ms none",
-         "\(color) 1.5s none", "repeat"].joined(separator: "\n")
+        ["off 80ms cosine", "\(color) 300ms pulse", "\(color) 300ms pulse", "\(color) 120ms cosine",
+         "\(color) 1.5s linear", "repeat"].joined(separator: "\n")
     }
 
     static let profiles: [AnimationProfile] = [
