@@ -25,6 +25,7 @@ scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications
 There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 14+ and no third-party dependencies.
 
 The following tests only run when you opt in with an environment variable. The README's Development section has the full table.
+
 - `SIDEPULSE_INTEGRATION=1`: the end-to-end CLI tests (`CLIIntegrationTests`). Run `swift build` first.
 - `SIDEPULSE_LAUNCHCTL_TESTS=1`: a real launchd round trip.
 - `SIDEPULSE_PYTHON_REPO=<path>`: byte-for-byte comparison of the animations and profiles with the Python checkout. Defaults to `../sidepulse`; skipped if that directory is absent.
@@ -34,11 +35,13 @@ The following tests only run when you opt in with an environment variable. The R
 ## Architecture
 
 Targets (`Package.swift`):
+
 - **`SidePulseCore`**: Foundation, Darwin and IOKit only, and it **must never import AppKit or SwiftUI**. Every agent hook runs the CLI on every tool call, so the hook path must launch fast.
 - **`SidePulseCLI`**: a library holding all the commands, so tests can call it directly. The `sidepulse` executable is a one-line wrapper around `SidePulseCLI.main`.
 - **`SidePulseApp`**: the AppKit/SwiftUI menu-bar app. `scripts/build-app.sh` bundles it as `Contents/MacOS/SidePulse`. The CLI goes into `Contents/Helpers/sidepulse` because the default case-insensitive APFS would treat `MacOS/sidepulse` and `MacOS/SidePulse` as the same file.
 
 Data flow:
+
 1. An agent hook runs `sidepulse hook-log --provider P ; true`.
 2. `HookRuntime` appends a trimmed JSON line to `logs/P.jsonl`.
 3. It then sends `{"provider","line"}` to `events.sock` with a 0.2 s timeout.
@@ -48,10 +51,11 @@ Data flow:
 7. `sidepulse status`/`live` query the runtime over the socket with `{"command":"status"}`. When it isn't running, they rebuild status from `logs/*.jsonl` with the same state machine.
 
 Key design points that span several files:
+
 - **Runtime threading.** Engine state lives on a private serial queue. UI reads such as `snapshot()`, `settings` and `deviceInfos()` come from lock-protected caches and never block. Mutators return at once and apply their effects asynchronously. `onUpdate` is coalesced and delivered on main. LED writes and `latest.json` writes each run on their own queues. The doc comment on `SidePulseRuntime` is the contract.
 - **Event ordering.** `EventSocketServer` reads connections concurrently but delivers them in accept order, so `PreToolUse` is never applied after `PostToolUse`.
 - **CLI dependency injection.** Each command conforms to `CLICommand` (a `spec` plus `run(_:_:)`) and is registered in `SidePulseCLI.commands` or `aliases`. All I/O goes through `CLIEnvironment`: stdout, stderr, stdin, paths, clock, `AppConnection`, `SnapshotLoader` and launch-agent operations. Tests build one with captured output and fakes (`CLITestSupport.swift`) and call `SidePulseCLI.run(args, environment:)`. Exit codes: 0 ok, 1 failure, 2 usage.
-- **Presentation layer.** `SidePulseCore/Presentation/` holds UI-agnostic view models for the menu, session rows and settings, and they are unit tested. Put logic there, not in `SidePulseApp`. `HookCLIPath` is the *single* resolver for which CLI path is written into hooks. Install, setup, doctor and the app all use it.
+- **Presentation layer.** `SidePulseCore/Presentation/` holds UI-agnostic view models for the menu, session rows and settings, and they are unit tested. Put logic there, not in `SidePulseApp`. `HookCLIPath` is the _single_ resolver for which CLI path is written into hooks. Install, setup, doctor and the app all use it.
 - **Shared hook install logic.** `HookInstaller.perform` dispatches install and uninstall for both the CLI and the app.
 - **Paths.** Every path comes from `SidePulsePaths`, and XDG variables are never read. `SIDEPULSE_HOME` overrides the data root (`~/Library/Application Support/SidePulse`).
 - **Python parity.** `CLIGoldenFixtures.swift` and `StatusRegressionFixture` pin output generated from the Python implementation. Intentional deviations are applied explicitly in the tests.
@@ -69,3 +73,12 @@ Key design points that span several files:
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.
 - **Signing and permissions.** An ad-hoc signed rebuild changes the code hash. macOS then asks for removable-volume access again, and LED writes block until someone answers the prompt. Signing with `--sign`/`SIDEPULSE_CODESIGN_IDENTITY` avoids this.
+
+## Comments
+
+Use code comments sparingly.
+
+- Comment the **why**, never the **what** — the code already says what it does, and a comment that restates it just rots. Prefer no comment to an obvious one.
+- **One sentence.** Allow a second only when the why is genuinely incomprehensible without it (a non-obvious constraint, a bug being worked around, an ordering dependency between two calls); never a third. A comment that keeps growing usually means the code needs a better name or a smaller function, not more prose.
+- Do not add comment signatures for new functions unless you need to explain WHY the function is needed.
+- Do not add comments to simple functions.
