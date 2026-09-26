@@ -10,22 +10,16 @@ public enum ExitCode {
 
 public struct OptionSpec: Sendable, Equatable {
     public var name: String
-    public var short: Character?
     public var valueName: String?
     public var help: String
 
-    public init(_ name: String, short: Character? = nil, value valueName: String? = nil, help: String) {
-        self.name = name; self.short = short; self.valueName = valueName; self.help = help
+    public init(_ name: String, value valueName: String? = nil, help: String) {
+        self.name = name; self.valueName = valueName; self.help = help
     }
 
     public var takesValue: Bool { valueName != nil }
 
-    var synopsis: String {
-        var text = short.map { "-\($0), " } ?? ""
-        text += "--\(name)"
-        if let valueName { text += " \(valueName)" }
-        return text
-    }
+    var synopsis: String { valueName.map { "--\(name) \($0)" } ?? "--\(name)" }
 }
 
 public struct PositionalSpec: Sendable, Equatable {
@@ -77,7 +71,6 @@ public struct CommandSpec: Sendable {
     }
 
     func option(named name: String) -> OptionSpec? { options.first { $0.name == name } }
-    func option(short: Character) -> OptionSpec? { options.first { $0.short == short } }
 }
 
 public struct UsageError: Error, Equatable, CustomStringConvertible {
@@ -152,7 +145,9 @@ public enum ArgumentParser {
                 onlyPositionals = true
             } else if argument == "-h" || argument == "--help" {
                 return .help
-            } else if argument.hasPrefix("--") {
+            } else {
+                // No command has short options, so a single-dash argument is only ever -h.
+                guard argument.hasPrefix("--") else { throw UsageError("unrecognized arguments: \(argument)") }
                 let body = argument.dropFirst(2)
                 let name: String
                 let inlineValue: String?
@@ -167,21 +162,6 @@ public enum ArgumentParser {
                     throw UsageError("unrecognized arguments: \(argument)")
                 }
                 try store(option, inlineValue: inlineValue)
-            } else {
-                let letters = Array(argument.dropFirst())
-                var position = 0
-                while position < letters.count {
-                    guard let option = spec.option(short: letters[position]) else {
-                        throw UsageError("unrecognized arguments: \(argument)")
-                    }
-                    if option.takesValue {
-                        let rest = String(letters[(position + 1)...])
-                        try store(option, inlineValue: rest.isEmpty ? nil : rest)
-                        break
-                    }
-                    try store(option, inlineValue: nil)
-                    position += 1
-                }
             }
             index += 1
         }

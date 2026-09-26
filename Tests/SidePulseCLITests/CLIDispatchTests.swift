@@ -27,7 +27,7 @@ final class CLIDispatchTests: XCTestCase {
     }
 
     func testVersion() {
-        for arguments in [["version"], ["--version"], ["-V"], ["agent-monitor", "version"]] {
+        for arguments in [["version"], ["--version"], ["-V"]] {
             let harness = CLIHarness()
             XCTAssertEqual(harness.run(arguments), 0)
             XCTAssertEqual(harness.stdout.text, "sidepulse \(SidePulseConstants.version)\n", "\(arguments)")
@@ -36,7 +36,7 @@ final class CLIDispatchTests: XCTestCase {
 
     func testPerCommandHelp() {
         for name in ["setup", "status", "write", "leds", "run", "install", "uninstall", "doctor",
-                     "app", "status-bar", "settings", "version"] {
+                     "app", "settings", "version"] {
             let harness = CLIHarness()
             XCTAssertEqual(harness.run([name, "--help"]), 0, name)
             XCTAssertTrue(harness.stdout.text.hasPrefix("usage: sidepulse "), name)
@@ -59,20 +59,15 @@ final class CLIDispatchTests: XCTestCase {
                            + "sidepulse status: error: unrecognized arguments: --bogus\n")
     }
 
-    func testBareLegacyPrefixIsUsageError() {
+    /// Only `agent-monitor hook-log`, which Python-era hook commands call, survives from the Python CLI tree.
+    func testLegacyPrefixIsAnUnknownCommand() {
         let harness = CLIHarness()
-        XCTAssertEqual(harness.run(["agent-monitor"]), 2)
-        XCTAssertTrue(harness.stderr.text.contains("the following arguments are required: command"))
-    }
-
-    func testLegacyPrefixIsIgnored() {
-        let harness = CLIHarness()
-        XCTAssertEqual(harness.run(["agent-monitor", "status"]), 0)
-        XCTAssertTrue(harness.stdout.text.hasPrefix("Source: hook logs (app not running)\nAggregate: Idle / Ready"))
+        XCTAssertEqual(harness.run(["agent-monitor", "status"]), 2)
+        XCTAssertTrue(harness.stderr.text.contains("unknown command 'agent-monitor'"))
     }
 
     func testAliases() {
-        XCTAssertTrue(SidePulseCLI.command(named: "status-bar") == AppCommand.self)
+        XCTAssertNil(SidePulseCLI.command(named: "status-bar"))
         XCTAssertNil(SidePulseCLI.command(named: "live"))
         XCTAssertTrue(SidePulseCLI.command(named: "run") == RunCommand.self)
         XCTAssertNil(SidePulseCLI.command(named: "push"))

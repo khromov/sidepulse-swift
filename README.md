@@ -26,8 +26,8 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
   SidePulse's own files, and Python-era state in `~/.local/state/sidepulse` or
   `~/.config/sidepulse` is neither read nor removed.
 - **Flat CLI.** The command is `sidepulse status`, not
-  `sidepulse agent-monitor status`. A leading `agent-monitor` is still accepted
-  and ignored.
+  `sidepulse agent-monitor status`. Only `agent-monitor hook-log`, which
+  Python-era hook commands call, is still accepted.
 - **Separate LaunchAgent.** The app runs from `io.sidepulse.swift`.
   `sidepulse setup` removes the Python install's LaunchAgents and replaces its
   hooks.
@@ -162,8 +162,8 @@ writes anyway.
 
 Exit codes: `0` ok, `1` error, `2` usage error, invalid LED program, or no
 device / ambiguous device. `sidepulse -V` (or `--version`) prints the version,
-and `sidepulse <command> --help` shows a command's options. Aliases:
-`status-bar` = `app`, and `run` = `leds` without `--once`.
+and `sidepulse <command> --help` shows a command's options. `run` is an alias
+for `leds` without `--once`.
 
 | Command | Purpose |
 | --- | --- |

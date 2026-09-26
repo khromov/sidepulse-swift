@@ -8,9 +8,9 @@ final class CLIArgumentParserTests: XCTestCase {
         summary: "Demo command",
         positionals: PositionalSpec(name: "name", maxCount: 2),
         options: [
-            OptionSpec("flag", short: "f", help: "a flag"),
-            OptionSpec("other", short: "o", help: "another flag"),
-            OptionSpec("opt", short: "p", value: "VALUE", help: "an option"),
+            OptionSpec("flag", help: "a flag"),
+            OptionSpec("other", help: "another flag"),
+            OptionSpec("opt", value: "VALUE", help: "an option"),
             OptionSpec("interval", value: "SECONDS", help: "a number"),
         ]
     )
@@ -51,15 +51,6 @@ final class CLIArgumentParserTests: XCTestCase {
         XCTAssertEqual(try parse(["--interval", "-1"]).value("interval"), "-1")
     }
 
-    func testShortOptions() throws {
-        let parsed = try parse(["-f", "-p", "v"])
-        XCTAssertTrue(parsed.has("flag"))
-        XCTAssertEqual(parsed.value("opt"), "v")
-        XCTAssertEqual(try parse(["-pvalue"]).value("opt"), "value")
-        let bundled = try parse(["-fo"])
-        XCTAssertTrue(bundled.has("flag") && bundled.has("other"))
-    }
-
     func testDoubleDashTerminatorAndLoneDash() throws {
         let parsed = try parse(["--", "--flag"])
         XCTAssertEqual(parsed.positionals, ["--flag"])
@@ -76,6 +67,7 @@ final class CLIArgumentParserTests: XCTestCase {
     func testUsageErrors() {
         assertUsageError(["--bogus"], "unrecognized arguments: --bogus")
         assertUsageError(["-z"], "unrecognized arguments: -z")
+        assertUsageError(["-f"], "unrecognized arguments: -f")
         assertUsageError(["--opt"], "argument --opt: expected one argument")
         assertUsageError(["--flag=yes"], "argument --flag: ignored explicit argument 'yes'")
         assertUsageError(["a", "b", "c", "d"], "unrecognized arguments: c d")
@@ -113,8 +105,8 @@ final class CLIArgumentParserTests: XCTestCase {
     func testHelpTextListsOptions() {
         let text = spec.helpText
         XCTAssertTrue(text.hasPrefix("usage: sidepulse demo [NAME]... [--flag] [--opt VALUE]\n\nDemo command"))
-        XCTAssertTrue(text.contains("  -f, --flag"))
-        XCTAssertTrue(text.contains("  -p, --opt VALUE"))
+        XCTAssertTrue(text.contains("  --flag"))
+        XCTAssertTrue(text.contains("  --opt VALUE"))
         XCTAssertTrue(text.contains("  -h, --help"))
     }
 }

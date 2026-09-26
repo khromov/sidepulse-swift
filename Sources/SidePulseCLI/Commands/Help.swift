@@ -41,8 +41,6 @@ enum HelpCommand: CLICommand {
         }
         lines += [
             "",
-            "aliases: status-bar = app, watch = live",
-            "",
             "Run 'sidepulse <command> --help' for the options of a command.",
             "-V, --version prints the version.",
         ]

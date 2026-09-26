@@ -5,7 +5,7 @@ import SidePulseCore
 /// The runtime itself is covered by CLIIntegrationTests.
 final class CLILedsCommandTests: XCTestCase {
     func testForegroundRefusesWhileTheAppDrivesTheLEDs() {
-        for arguments in [["leds"], ["run"], ["leds", "--dry-run", "--interval", "5"], ["agent-monitor", "leds"]] {
+        for arguments in [["leds"], ["run"], ["leds", "--dry-run", "--interval", "5"]] {
             let harness = CLIHarness()
             harness.app.running = true
             XCTAssertEqual(harness.run(arguments), 1, "\(arguments)")

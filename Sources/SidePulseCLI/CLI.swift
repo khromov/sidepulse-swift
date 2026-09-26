@@ -8,7 +8,6 @@ protocol CLICommand {
     static func run(_ arguments: ParsedArguments, _ env: CLIEnvironment) throws -> Int32
 }
 
-/// A leading `agent-monitor` token, the Python CLI's legacy command tree, is accepted and ignored.
 public enum SidePulseCLI {
     /// Commands in the order `sidepulse --help` lists them.
     static let commands: [any CLICommand.Type] = [
@@ -17,11 +16,8 @@ public enum SidePulseCLI {
         SettingsCommand.self, VersionCommand.self, HelpCommand.self,
     ]
 
-    /// Hidden from the help listing, except `run`.
-    static let aliases: [String: any CLICommand.Type] = [
-        "status-bar": AppCommand.self,
-        "run": RunCommand.self,
-    ]
+    /// `run` is `leds` without `--once`.
+    static let aliases: [String: any CLICommand.Type] = ["run": RunCommand.self]
 
     static func command(named name: String) -> (any CLICommand.Type)? {
         commands.first { $0.spec.name == name } ?? aliases[name]
@@ -43,16 +39,7 @@ public enum SidePulseCLI {
                                    environment: env.variables, paths: env.paths)
         }
 
-        var arguments = arguments
-        let legacyPrefix = arguments.first == "agent-monitor"
-        if legacyPrefix { arguments.removeFirst() }
-
         guard let name = arguments.first else {
-            if legacyPrefix {
-                env.stderr.line("usage: sidepulse <command> [options]")
-                env.stderr.line("sidepulse: error: the following arguments are required: command")
-                return ExitCode.usage
-            }
             env.stdout.line(HelpCommand.overview)
             return ExitCode.ok
         }

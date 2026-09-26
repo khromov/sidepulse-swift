@@ -127,7 +127,7 @@ final class CLIAppCommandTests: XCTestCase {
 
         let running = CLIHarness()
         running.app.replies["ping"] = Data(#"{"ok":true,"pid":7,"version":"0.1.0"}"#.utf8)
-        XCTAssertEqual(running.run(["status-bar", "status"]), 0)
+        XCTAssertEqual(running.run(["app", "status"]), 0)
         XCTAssertTrue(running.stdout.text.hasPrefix("app: running\n"))
     }
 
