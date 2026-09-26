@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Lengths and cut points count Unicode scalars, like Python's code points, so
 /// labels match the Python collector exactly.
@@ -141,21 +142,22 @@ public enum DisplayNames {
 }
 
 /// Clearing everything past `limit` entries is fine because cwds are few in practice.
-private final class ProjectNameCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private var names: [String: (name: String, expires: TimeInterval)] = [:]
+private final class ProjectNameCache: Sendable {
+    private let names = Mutex<[String: (name: String, expires: TimeInterval)]>([:])
     private let limit = 1024
     private let lifetime: TimeInterval = 60
 
     func get(_ cwd: String) -> String? {
-        lock.lock(); defer { lock.unlock() }
-        guard let entry = names[cwd], entry.expires > ProcessInfo.processInfo.systemUptime else { return nil }
-        return entry.name
+        names.withLock { names in
+            guard let entry = names[cwd], entry.expires > ProcessInfo.processInfo.systemUptime else { return nil }
+            return entry.name
+        }
     }
 
     func set(_ cwd: String, _ name: String) {
-        lock.lock(); defer { lock.unlock() }
-        if names.count >= limit { names.removeAll(keepingCapacity: true) }
-        names[cwd] = (name, ProcessInfo.processInfo.systemUptime + lifetime)
+        names.withLock { names in
+            if names.count >= limit { names.removeAll(keepingCapacity: true) }
+            names[cwd] = (name, ProcessInfo.processInfo.systemUptime + lifetime)
+        }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import IOKit.ps
+import Synchronization
 
 // MARK: - Battery
 
@@ -96,31 +97,30 @@ public struct KeepAwakePolicy: Sendable {
 
 /// PreventUserIdleSystemSleep still lets the display sleep, and the system drops it when the
 /// process exits so nothing outlives the app.
-public final class KeepAwakeAssertion: @unchecked Sendable {
+public final class KeepAwakeAssertion: Sendable {
     public let reason: String
-    private let lock = NSLock()
-    private var activity: NSObjectProtocol?
+    private let activity = Mutex<NSObjectProtocol?>(nil)
 
     public init(reason: String = "SidePulse keep awake") {
         self.reason = reason
     }
 
     deinit {
-        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity.withLock { if let current = $0 { ProcessInfo.processInfo.endActivity(current) } }
     }
 
     public var isHeld: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return activity != nil
+        activity.withLock { $0 != nil }
     }
 
     public func setHeld(_ held: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        if held, activity == nil {
-            activity = ProcessInfo.processInfo.beginActivity(options: .idleSystemSleepDisabled, reason: reason)
-        } else if !held, let current = activity {
-            activity = nil
-            ProcessInfo.processInfo.endActivity(current)
+        activity.withLock { activity in
+            if held, activity == nil {
+                activity = ProcessInfo.processInfo.beginActivity(options: .idleSystemSleepDisabled, reason: reason)
+            } else if !held, let current = activity {
+                activity = nil
+                ProcessInfo.processInfo.endActivity(current)
+            }
         }
     }
 }

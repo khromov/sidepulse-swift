@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct LatestStore: Sendable {
     public var url: URL
@@ -89,13 +90,16 @@ public enum LogScanner {
     }
 }
 
-public final class CodexSessionIndex: @unchecked Sendable {
+public final class CodexSessionIndex: Sendable {
     public static let maxLines = 5000
 
     public let url: URL
-    private let lock = NSLock()
-    private var signature: FileSignature?
-    private var titles: [String: String] = [:]
+    private let state = Mutex(State())
+
+    private struct State {
+        var signature: FileSignature?
+        var titles: [String: String] = [:]
+    }
 
     public init(url: URL) {
         self.url = url
@@ -107,24 +111,23 @@ public final class CodexSessionIndex: @unchecked Sendable {
 
     public func title(forSession id: String) -> String? {
         guard !id.isEmpty else { return nil }
-        lock.lock()
-        defer { lock.unlock() }
-        refreshIfNeeded()
-        guard let title = titles[id], !title.isEmpty else { return nil }
-        return title
+        return state.withLock { state in
+            refreshIfNeeded(&state)
+            guard let title = state.titles[id], !title.isEmpty else { return nil }
+            return title
+        }
     }
 
-    private func refreshIfNeeded() {
+    private func refreshIfNeeded(_ state: inout State) {
         var info = stat()
         guard stat(url.path, &info) == 0 else {
-            signature = nil
-            titles = [:]
+            state = State()
             return
         }
         let current = FileSignature(size: Int64(info.st_size), seconds: info.st_mtimespec.tv_sec,
                                     nanoseconds: info.st_mtimespec.tv_nsec)
-        guard current != signature else { return }
-        signature = current
+        guard current != state.signature else { return }
+        state.signature = current
         var fresh: [String: String] = [:]
         for line in LogScanner.readRecentLines(url: url, maxLines: Self.maxLines) {
             guard let row = (try? JSONValue.parse(line))?.objectValue,
@@ -133,7 +136,7 @@ public final class CodexSessionIndex: @unchecked Sendable {
             // A blank name is stored as "" so it still replaces an earlier title, like Python.
             fresh[id] = DisplayNames.truncate(PyText.strip(name), DisplayNames.titleLimit)
         }
-        titles = fresh
+        state.titles = fresh
     }
 
     private struct FileSignature: Equatable {

@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "SidePulseApp", targets: ["SidePulseApp"]),
     ],
     targets: [
-        // Foundation/Darwin/IOKit only: every hook runs the CLI, so it must launch fast.
+        // Foundation/Darwin/IOKit/Synchronization only: every hook runs the CLI, so it must launch fast.
         .target(
             name: "SidePulseCore",
             linkerSettings: [.linkedFramework("IOKit")]

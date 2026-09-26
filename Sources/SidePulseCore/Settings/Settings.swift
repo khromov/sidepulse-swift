@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// In "manual" mode SidePulse never writes to the device.
 public enum LedDisplay: String, Sendable, CaseIterable {
@@ -233,10 +234,10 @@ public struct SidePulseSettings: Sendable, Equatable {
 }
 
 /// Writes hold a `flock` on `<settings>.lock` so the CLI and app never clobber each other's changes.
-public final class SettingsStore: @unchecked Sendable {
+public final class SettingsStore: Sendable {
     public let url: URL
     /// Serializes this instance's writers; `flock` covers other instances and processes.
-    private let mutex = NSLock()
+    private let writers = Mutex(())
 
     public init(url: URL) {
         self.url = url
@@ -295,23 +296,23 @@ public final class SettingsStore: @unchecked Sendable {
     static let lockTimeout: TimeInterval = 5
 
     private func withLock<T>(_ body: () throws -> T) throws -> T {
-        mutex.lock()
-        defer { mutex.unlock() }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fd = open(lockURL.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
-        guard fd >= 0 else { throw FileUtil.posixError("open \(lockURL.path)") }
-        defer { close(fd) }
-        // Bounded wait so a process stuck holding the lock (e.g. a suspended
-        // `sidepulse write --manual`) cannot wedge the app forever.
-        let deadline = Date().addingTimeInterval(Self.lockTimeout)
-        while flock(fd, LOCK_EX | LOCK_NB) != 0 {
-            guard errno == EWOULDBLOCK || errno == EINTR else { throw FileUtil.posixError("lock \(lockURL.path)") }
-            guard Date() < deadline else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT),
-                              userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for \(lockURL.path)"])
+        try writers.withLock { _ in
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let fd = open(lockURL.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+            guard fd >= 0 else { throw FileUtil.posixError("open \(lockURL.path)") }
+            defer { close(fd) }
+            // Bounded wait so a process stuck holding the lock (e.g. a suspended
+            // `sidepulse write --manual`) cannot wedge the app forever.
+            let deadline = Date().addingTimeInterval(Self.lockTimeout)
+            while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+                guard errno == EWOULDBLOCK || errno == EINTR else { throw FileUtil.posixError("lock \(lockURL.path)") }
+                guard Date() < deadline else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT),
+                                  userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for \(lockURL.path)"])
+                }
+                usleep(20_000)
             }
-            usleep(20_000)
+            return try body()
         }
-        return try body()
     }
 }

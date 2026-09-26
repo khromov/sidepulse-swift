@@ -1,39 +1,40 @@
 import Foundation
+import Synchronization
 
 /// Replaces the default SIGINT/SIGTERM actions until `cancel()`, so Ctrl-C becomes an event the CLI
 /// can react to.
-final class SignalTrap: @unchecked Sendable {
+final class SignalTrap: Sendable {
     private let signals: [Int32]
-    private var sources: [DispatchSourceSignal] = []
-    private let lock = NSLock()
-    private var receivedSignal: Int32?
-    private var handler: ((Int32) -> Void)?
+    private let state: Mutex<State>
+
+    private struct State {
+        var sources: [DispatchSourceSignal] = []
+        var received: Int32?
+        var handler: ((Int32) -> Void)?
+    }
 
     /// `handler` runs on a background queue for every received signal.
     init(signals: [Int32] = [SIGINT, SIGTERM], handler: ((Int32) -> Void)? = nil) {
         self.signals = signals
-        self.handler = handler
+        state = Mutex(State(handler: handler))
         for number in signals {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
             source.setEventHandler { [weak self] in self?.receive(number) }
             source.resume()
-            sources.append(source)
+            state.withLock { $0.sources.append(source) }
         }
     }
 
     deinit { cancel() }
 
-    var received: Int32? {
-        lock.lock(); defer { lock.unlock() }
-        return receivedSignal
-    }
+    var received: Int32? { state.withLock { $0.received } }
 
     private func receive(_ number: Int32) {
-        lock.lock()
-        if receivedSignal == nil { receivedSignal = number }
-        let handler = self.handler
-        lock.unlock()
+        let handler = state.withLock { state in
+            if state.received == nil { state.received = number }
+            return state.handler
+        }
         handler?(number)
     }
 
@@ -49,11 +50,10 @@ final class SignalTrap: @unchecked Sendable {
     }
 
     func cancel() {
-        lock.lock()
-        let active = sources
-        sources = []
-        handler = nil
-        lock.unlock()
+        let active = state.withLock { state in
+            defer { state.sources = []; state.handler = nil }
+            return state.sources
+        }
         guard !active.isEmpty else { return }
         active.forEach { $0.cancel() }
         signals.forEach { signal($0, SIG_DFL) }

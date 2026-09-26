@@ -1,7 +1,8 @@
 import Darwin
 import Foundation
+import Synchronization
 
-/// Device I/O runs on the serial `ioQueue` while what the UI reads sits behind `lock`,
+/// Device I/O runs on the serial `ioQueue` while what the UI reads sits in the `shared` mutex,
 /// so readers never wait for a slow SD write (see docs/ARCHITECTURE.md, Runtime threading).
 public final class LedSyncService: @unchecked Sendable {
     /// Shown for any stall past `stallNotice`, since that is almost always open()
@@ -24,8 +25,7 @@ public final class LedSyncService: @unchecked Sendable {
     let ioQueue = DispatchQueue(label: "sidepulse.leds.io", qos: .utility)
     private let writesInProgress = DispatchGroup()
 
-    private let lock = NSLock()
-    private var shared = Shared()
+    private let shared = Mutex(Shared())
 
     private struct Shared {
         var devices: [DeviceCandidate] = []
@@ -73,12 +73,6 @@ public final class LedSyncService: @unchecked Sendable {
         self.stallNotice = stallNotice
     }
 
-    private func locked<T>(_ body: (inout Shared) throws -> T) rethrows -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(&shared)
-    }
-
     // MARK: Devices
 
     /// Runs discovery on the calling thread, which a hung mount can block.
@@ -88,7 +82,7 @@ public final class LedSyncService: @unchecked Sendable {
         var signatures: [String: String] = [:]
         for device in found { signatures[device.id] = Self.signature(of: device) }
 
-        let (added, removed, changed) = locked { state -> ([DeviceCandidate], [String], Bool) in
+        let (added, removed, changed) = shared.withLock { state -> ([DeviceCandidate], [String], Bool) in
             let previous = state.signatures
             state.devices = found
             guard previous != signatures else { return ([], [], false) }
@@ -110,7 +104,7 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     public var connectedDevices: [DeviceCandidate] {
-        locked { $0.devices }
+        shared.withLock { $0.devices }
     }
 
     /// Takes `settings` so the runtime can pass the UI's settings, including changes
@@ -145,7 +139,7 @@ public final class LedSyncService: @unchecked Sendable {
     private func shownErrors() -> (devices: [DeviceCandidate], errors: [String: String]) {
         let stalledTouches = keepalive.stalledFiles(after: stallNotice)
         let now = clock()
-        return locked { state in
+        return shared.withLock { state in
             var errors = state.errors
             for device in state.devices {
                 let writeStalled = state.writesStarted[device.id].map { now - $0 > stallNotice } ?? false
@@ -161,7 +155,7 @@ public final class LedSyncService: @unchecked Sendable {
     /// can refresh.
     func checkDeviceStatus() -> Bool {
         let (devices, errors) = shownErrors()
-        let previous = locked { state -> [String: String] in
+        let previous = shared.withLock { state -> [String: String] in
             defer { state.reportedErrors = errors }
             return state.reportedErrors
         }
@@ -212,7 +206,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     /// Coalesced without ever dropping the latest mode, which the Python version could.
     public func requestSync(mode: AgentMode) {
-        let schedule = locked { state -> Bool in
+        let schedule = shared.withLock { state -> Bool in
             state.latestMode = mode
             guard !state.syncScheduled else { return false }
             state.syncScheduled = true
@@ -227,7 +221,7 @@ public final class LedSyncService: @unchecked Sendable {
     @discardableResult
     public func syncNow(mode: AgentMode) -> [String: LedSyncResult] {
         ioQueue.sync {
-            locked { $0.latestMode = mode }
+            shared.withLock { $0.latestMode = mode }
             return performSync(mode: mode)
         }
     }
@@ -240,13 +234,13 @@ public final class LedSyncService: @unchecked Sendable {
             return
         }
         let duration = seconds.isFinite ? min(max(0, seconds), 600) : 3
-        let token = locked { state -> Int in
+        let token = shared.withLock { state -> Int in
             state.previewToken += 1
             state.previewUntil = clock() + duration
             return state.previewToken
         }
         ioQueue.async { [self] in
-            guard locked({ $0.previewToken }) == token else { return }
+            guard shared.withLock({ $0.previewToken }) == token else { return }
             writePreview(animationID)
         }
         ioQueue.asyncAfter(deadline: .now() + duration) { [self] in
@@ -289,7 +283,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     func finishPreviewNow() {
         ioQueue.async { [self] in
-            let (active, mode) = locked { state -> (Bool, AgentMode?) in
+            let (active, mode) = shared.withLock { state -> (Bool, AgentMode?) in
                 let active = state.previewUntil != nil
                 state.previewToken += 1
                 state.previewUntil = nil
@@ -299,14 +293,14 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    var syncPassCount: Int { locked { $0.syncPasses } }
+    var syncPassCount: Int { shared.withLock { $0.syncPasses } }
 
-    var isPreviewing: Bool { locked { $0.previewUntil != nil } }
+    var isPreviewing: Bool { shared.withLock { $0.previewUntil != nil } }
 
     // MARK: I/O queue
 
     private func runScheduledSync() {
-        let (mode, previewing) = locked { state -> (AgentMode?, Bool) in
+        let (mode, previewing) = shared.withLock { state -> (AgentMode?, Bool) in
             state.syncScheduled = false
             return (state.latestMode, state.previewUntil != nil)
         }
@@ -317,7 +311,7 @@ public final class LedSyncService: @unchecked Sendable {
 
     private func performSync(mode: AgentMode) -> [String: LedSyncResult] {
         // Resets are applied here, right before the sync, so a reset never races a write.
-        let (devices, resetIDs) = locked { state -> ([DeviceCandidate], Set<String>) in
+        let (devices, resetIDs) = shared.withLock { state -> ([DeviceCandidate], Set<String>) in
             defer {
                 state.resetIDs = []
                 state.syncPasses += 1
@@ -368,7 +362,7 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     private func record(error: String?, for device: DeviceCandidate) {
-        let previous = locked { state -> String? in
+        let previous = shared.withLock { state -> String? in
             let previous = state.errors[device.id]
             state.errors[device.id] = error
             return previous
@@ -400,7 +394,7 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     private func restoreAfterPreview(token: Int) {
-        let (current, mode) = locked { state -> (Bool, AgentMode?) in
+        let (current, mode) = shared.withLock { state -> (Bool, AgentMode?) in
             guard state.previewToken == token else { return (false, nil) }
             state.previewUntil = nil
             return (true, state.latestMode)
@@ -427,11 +421,11 @@ public final class LedSyncService: @unchecked Sendable {
     /// An `agentOnly` write returns false without writing if the device left Agent mode
     /// while open() was blocked.
     private func write(_ program: String, to device: DeviceCandidate, agentOnly: Bool) throws -> Bool {
-        locked { $0.writesStarted[device.id] = clock() }
+        shared.withLock { $0.writesStarted[device.id] = clock() }
         var entered = false
         defer {
             if entered { writesInProgress.leave() }
-            locked { $0.writesStarted[device.id] = nil }
+            shared.withLock { $0.writesStarted[device.id] = nil }
         }
         do {
             return try LedWriter.write(program, to: device.target) {
@@ -454,7 +448,7 @@ public final class LedSyncService: @unchecked Sendable {
         guard !dryRun, !targets.isEmpty else { return }
         keepalive.poke(targets: targets, now: now)
         let error = keepalive.lastError
-        let previous = locked { state -> String? in
+        let previous = shared.withLock { state -> String? in
             let previous = state.keepaliveError
             state.keepaliveError = error
             return previous

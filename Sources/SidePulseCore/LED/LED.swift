@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum LedError: Error, LocalizedError, Equatable {
     case noDevice
@@ -287,23 +288,26 @@ public enum LedWriter {
 /// Keeps a MacBook SD reader from powering off a SidePulse Pro after about three idle minutes.
 /// Touches run in the background with at most one in flight per path, so a hung FAT mount neither
 /// blocks the caller nor piles up threads.
-public final class KeepaliveToucher: @unchecked Sendable {
+public final class KeepaliveToucher: Sendable {
     public static let fileName = "keepalive"
     /// Targets that sit at the volume root, so their sibling is touched.
     static let volumeFileNames: Set<String> = [DeviceDiscovery.fileName.uppercased(), "KEEPALIVE", "STATUS.TXT"]
 
     public let interval: TimeInterval
     private let touch: @Sendable (URL) throws -> Void
-    private let lock = NSLock()
-    private var lastTouch: [String: Date] = [:]
-    /// Keepalive file → system uptime when its running touch was scheduled.
-    private var inFlight: [String: TimeInterval] = [:]
-    private var storedLastError: String?
+    private let state = Mutex(State())
     private let group = DispatchGroup()
     private let queue = DispatchQueue(label: "sidepulse.keepalive", qos: .utility, attributes: .concurrent)
 
     public convenience init(interval: TimeInterval = 60) {
         self.init(interval: interval, touch: { try KeepaliveToucher.touchFile($0) })
+    }
+
+    private struct State {
+        var lastTouch: [String: Date] = [:]
+        /// Keepalive file → system uptime when its running touch was scheduled.
+        var inFlight: [String: TimeInterval] = [:]
+        var lastError: String?
     }
 
     public init(interval: TimeInterval = 60, touch: @escaping @Sendable (URL) throws -> Void) {
@@ -322,45 +326,44 @@ public final class KeepaliveToucher: @unchecked Sendable {
     /// clock that moved back does not block.
     @discardableResult
     public func poke(targets: [URL], now: Date = Date()) -> [URL] {
-        var scheduled: [URL] = []
         let started = ProcessInfo.processInfo.systemUptime
-        lock.lock()
-        for target in targets {
-            let file = Self.keepaliveFile(for: target)
-            let key = file.path
-            if let last = lastTouch[key] {
-                let elapsed = now.timeIntervalSince(last)
-                if elapsed >= 0 && elapsed < interval { continue }
+        let scheduled = state.withLock { state -> [URL] in
+            var scheduled: [URL] = []
+            for target in targets {
+                let file = Self.keepaliveFile(for: target)
+                let key = file.path
+                if let last = state.lastTouch[key] {
+                    let elapsed = now.timeIntervalSince(last)
+                    if elapsed >= 0 && elapsed < interval { continue }
+                }
+                state.lastTouch[key] = now
+                guard state.inFlight[key] == nil else { continue }
+                state.inFlight[key] = started
+                scheduled.append(file)
             }
-            lastTouch[key] = now
-            guard inFlight[key] == nil else { continue }
-            inFlight[key] = started
-            scheduled.append(file)
+            return scheduled
         }
-        lock.unlock()
 
         for file in scheduled {
             queue.async(group: group) { [self] in
                 var failure: String?
                 do { try touch(file) } catch { failure = "\(file.path): \(error.localizedDescription)" }
-                lock.lock()
-                inFlight[file.path] = nil
-                storedLastError = failure
-                lock.unlock()
+                state.withLock { state in
+                    state.inFlight[file.path] = nil
+                    state.lastError = failure
+                }
             }
         }
         return scheduled
     }
 
     public var lastError: String? {
-        lock.lock(); defer { lock.unlock() }
-        return storedLastError
+        state.withLock { $0.lastError }
     }
 
     func stalledFiles(after seconds: TimeInterval) -> Set<String> {
         let now = ProcessInfo.processInfo.systemUptime
-        lock.lock(); defer { lock.unlock() }
-        return Set(inFlight.filter { now - $0.value > seconds }.keys)
+        return state.withLock { Set($0.inFlight.filter { now - $0.value > seconds }.keys) }
     }
 
     @discardableResult

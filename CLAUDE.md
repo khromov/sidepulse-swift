@@ -36,7 +36,7 @@ The following tests only run when you opt in with an environment variable. The R
 
 Targets (`Package.swift`):
 
-- **`SidePulseCore`**: Foundation, Darwin and IOKit only, and it **must never import AppKit or SwiftUI**. Every agent hook runs the CLI on every tool call, so the hook path must launch fast.
+- **`SidePulseCore`**: Foundation, Darwin, IOKit and Synchronization only, and it **must never import AppKit or SwiftUI**. Shared state goes behind a `Mutex` rather than an `NSLock`. Every agent hook runs the CLI on every tool call, so the hook path must launch fast.
 - **`SidePulseCLI`**: a library holding all the commands, so tests can call it directly. The `sidepulse` executable is a one-line wrapper around `SidePulseCLI.main`.
 - **`SidePulseApp`**: the AppKit/SwiftUI menu-bar app. `scripts/build-app.sh` bundles it as `Contents/MacOS/SidePulse`. The CLI goes into `Contents/Helpers/sidepulse` because the default case-insensitive APFS would treat `MacOS/sidepulse` and `MacOS/SidePulse` as the same file.
 

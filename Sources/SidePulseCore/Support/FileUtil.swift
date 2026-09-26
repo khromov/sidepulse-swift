@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum TimeFormat {
     private static let fractional = Date.ISO8601FormatStyle(timeZoneSeparator: .colon, includingFractionalSeconds: true)
@@ -159,25 +160,23 @@ public enum FileUtil {
     }
 }
 
-public final class DiagnosticsLog: @unchecked Sendable {
+public final class DiagnosticsLog: Sendable {
     public static let shared = DiagnosticsLog()
     private let queue = DispatchQueue(label: "sidepulse.diagnostics")
-    private let stateLock = NSLock()
-    private var _url: URL?
-    private var _echo = false
+    private let state: Mutex<(url: URL?, echo: Bool)>
 
     public var url: URL? {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _url }
-        set { stateLock.lock(); _url = newValue; stateLock.unlock() }
+        get { state.withLock { $0.url } }
+        set { state.withLock { $0.url = newValue } }
     }
 
     /// Mirrors lines to stderr for foreground runs.
     public var echo: Bool {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _echo }
-        set { stateLock.lock(); _echo = newValue; stateLock.unlock() }
+        get { state.withLock { $0.echo } }
+        set { state.withLock { $0.echo = newValue } }
     }
 
-    public init(url: URL? = nil) { self._url = url }
+    public init(url: URL? = nil) { state = Mutex((url, false)) }
 
     /// Call before exiting, since lines are written asynchronously.
     public func flush() {
@@ -186,8 +185,7 @@ public final class DiagnosticsLog: @unchecked Sendable {
 
     public func log(_ message: String) {
         let line = Data("\(TimeFormat.iso8601Seconds(Date())) \(message)\n".utf8)
-        let echo = self.echo
-        let url = self.url
+        let (url, echo) = state.withLock { ($0.url, $0.echo) }
         queue.async {
             // POSIX calls only: FileHandle's legacy write APIs raise uncatchable
             // ObjC exceptions on ENOSPC/EIO, which would crash-loop the app.

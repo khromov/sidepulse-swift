@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct DeviceInfo: Sendable, Equatable, Identifiable {
     public var id: String
@@ -106,10 +107,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private let readBattery: @Sendable () -> BatteryState
     /// Only touched on the persist queue.
     private var latestSaveFailing = false
-    /// Mirrors `running` behind a lock so `preview` can check it without waiting for
-    /// the state queue.
-    private let outputLock = NSLock()
-    private var outputsOpen = false
+    /// Mirrors `running` so `preview` can check it without waiting for the state queue.
+    private let outputsOpen = Mutex(false)
     private var ingestCount = 0
 
     public init(paths: SidePulsePaths, options: RuntimeOptions = RuntimeOptions()) {
@@ -329,17 +328,14 @@ public final class SidePulseRuntime: @unchecked Sendable {
     }
 
     public func preview(animationID: String, seconds: TimeInterval = 3) {
-        outputLock.lock()
-        defer { outputLock.unlock() }
-        guard outputsOpen else { return }
-        // Queued while holding the lock, so stop() (which closes it first) drains it.
-        leds.preview(animationID: animationID, seconds: seconds)
+        outputsOpen.withLock { open in
+            // Queued while holding the lock, so stop() (which closes it first) drains it.
+            if open { leds.preview(animationID: animationID, seconds: seconds) }
+        }
     }
 
     private func setOutputsOpen(_ open: Bool) {
-        outputLock.lock()
-        outputsOpen = open
-        outputLock.unlock()
+        outputsOpen.withLock { $0 = open }
     }
 
     // MARK: Socket
@@ -623,7 +619,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
     }
 }
 
-private final class RuntimeCache: @unchecked Sendable {
+private final class RuntimeCache: Sendable {
     struct Values {
         /// Includes UI changes that are still being saved, unlike `ledSettings`.
         var uiSettings: SidePulseSettings
@@ -640,22 +636,17 @@ private final class RuntimeCache: @unchecked Sendable {
         var onOpenSettings: (() -> Void)?
     }
 
-    private let lock = NSLock()
-    private var values: Values
+    private let values: Mutex<Values>
 
     init(settings: SidePulseSettings) {
-        values = Values(uiSettings: settings, ledSettings: settings, config: settings.monitorConfig)
+        values = Mutex(Values(uiSettings: settings, ledSettings: settings, config: settings.monitorConfig))
     }
 
     func read<T>(_ body: (Values) -> T) -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(values)
+        values.withLock { body($0) }
     }
 
     func write<T>(_ body: (inout Values) -> T) -> T {
-        lock.lock()
-        defer { lock.unlock() }
-        return body(&values)
+        values.withLock { body(&$0) }
     }
 }
