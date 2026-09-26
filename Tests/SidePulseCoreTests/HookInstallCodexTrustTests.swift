@@ -302,7 +302,7 @@ final class HookInstallCodexTrustTests: XCTestCase {
         XCTAssertNil(result.backupPath)
         XCTAssertEqual(result.notes, ["Codex not found; approve hooks with /hooks in Codex"])
         let text = try box.read(box.paths.codexConfigFile)
-        XCTAssertEqual(text, "[features]\nhooks = true\n\n" + CodexHookInstaller.block(command: T.codexCommand))
+        XCTAssertEqual(text, CodexHookInstaller.block(command: T.codexCommand))
     }
 
     func testInstallTrustsHooksWithFakeCodexAndIsIdempotent() throws {
@@ -328,7 +328,7 @@ final class HookInstallCodexTrustTests: XCTestCase {
 
         let removed = try CodexHookInstaller.uninstall(paths: paths, dryRun: false)
         XCTAssertTrue(removed.changed)
-        XCTAssertEqual(try box.read(config), "[features]\nhooks = true\n")
+        XCTAssertEqual(try box.read(config), "")
         XCTAssertEqual(box.backups(of: config).count, 1)
         XCTAssertEqual(try box.read(removed.backupPath!), text)
     }

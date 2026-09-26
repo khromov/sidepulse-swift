@@ -144,13 +144,9 @@ final class HookInstallLegacyTests: XCTestCase {
         XCTAssertFalse(installed.contains("hook_entry.py"), label)
         XCTAssertEqual(CodexHookInstaller.installing(into: installed, command: T.codexCommand, configPath: configPath), installed, label)
 
-        // Uninstall after install = uninstall alone, except that install may have
-        // added `hooks = true` to [features], which uninstall leaves in place.
+        // Uninstall after install = uninstall alone.
         let removed = CodexHookInstaller.uninstalling(from: original, configPath: configPath)
-        var roundTrip = TOMLLines(CodexHookInstaller.uninstalling(from: installed, configPath: configPath)).lines
-        if !CodexHookInstaller.hooksFeatureEnabled(in: original), let added = roundTrip.firstIndex(of: "hooks = true") {
-            roundTrip.remove(at: added)
-        }
+        let roundTrip = TOMLLines(CodexHookInstaller.uninstalling(from: installed, configPath: configPath)).lines
         XCTAssertEqual(roundTrip, TOMLLines(removed).lines, label)
         XCTAssertFalse(removed.contains("hook-log"), label)
         XCTAssertFalse(removed.contains("sidepulse hooks"), label)

@@ -263,7 +263,7 @@ hooks, and the log file. A hook CLI equal to `$SIDEPULSE_CLI_PATH` is only
 checked for existence. For Codex it also reports `trust: n/11 hooks trusted`,
 with advice to approve them with `/hooks` or run `sidepulse install codex` when
 entries are missing and the hooks feature is on. When the feature is off it
-reports `hooks feature: disabled ([features] hooks is not true, so Codex runs
+reports `hooks feature: disabled ([features] turns hooks off, so Codex runs
 no hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
 events the installed plugin emits. It reports `error:` for a `sidepulse.js`
 that SidePulse did not write, for a plugin that differs from the one this
@@ -534,9 +534,10 @@ success. Each handler also gets a 10 s timeout.
   one `[[hooks.<Event>]]` group each for `SessionStart`, `UserPromptSubmit`,
   `PreToolUse`, `PostToolUse`, `PermissionRequest`, `PreCompact`,
   `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop` and `Interrupt`. The
-  installer adds `[features] hooks = true` when it is missing. An explicit
-  `hooks = false` is left alone; install notes it, and Codex runs no hooks
-  until you set it to true. Uninstall leaves `[features]` as it is.
+  installer does not touch `[features]`, because Codex enables hooks by
+  default. An explicit `hooks = false` (or the deprecated `codex_hooks = false`
+  without `hooks`) is left alone; install notes it, doctor reports the hooks
+  feature as disabled, and Codex runs no hooks until you turn them back on.
 - **Codex trust.** After writing the block, the installer finds `codex` in
   `$CODEX_CLI_PATH`, `ChatGPT.app` or `Codex.app`, `PATH`, then
   `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.bun/bin`,

@@ -5,7 +5,7 @@ public struct ProviderDoctorInfo: Sendable, Equatable {
     public var configPath: URL
     public var configExists: Bool
     public var agentDetected: Bool
-    /// Codex: `[features] hooks = true`; Claude: always true when the file parses; OpenCode: always true.
+    /// Codex: false only when `[features]` turns hooks off; Claude: always true when the file parses; OpenCode: always true.
     public var hooksEnabled: Bool
     public var installedEvents: [String]
     public var missingEvents: [String]
@@ -141,7 +141,7 @@ public enum HookDoctor {
                     : "  trust: \(count); approve them with /hooks in Codex, or run 'sidepulse install codex'")
             }
             if info.provider == .codex && info.configExists && info.error == nil && !info.hooksEnabled {
-                lines.append("  hooks feature: disabled ([features] hooks is not true, so Codex runs no hooks)")
+                lines.append("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)")
             }
             if info.provider != .opencode { lines.append("  legacy python hooks: \(info.legacyHooks)") }
             lines.append("  log: \(info.logPath.path) (\(info.logExists ? "found" : "missing"))")

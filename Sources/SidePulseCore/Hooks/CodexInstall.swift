@@ -36,8 +36,7 @@ public enum CodexHookInstaller {
         let original = TOMLLines(text)
         let removal = removeSidePulse(from: original)
         var lines = removal.lines
-        var anchor = removal.anchor.flatMap { $0 < lines.count && isTableBoundary(lines, at: $0) ? $0 : nil }
-        ensureHooksFeature(&lines, anchor: &anchor)
+        let anchor = removal.anchor.flatMap { $0 < lines.count && isTableBoundary(lines, at: $0) ? $0 : nil }
         insertBlock(TOMLLines(block(command: command)).lines, into: &lines, at: anchor)
         if let configPath {
             lines = reconcileTrustState(old: original, new: lines, configPath: configPath)
@@ -100,13 +99,14 @@ public enum CodexHookInstaller {
         hookGroups(in: TOMLLines(text)).filter { $0.commands.contains(where: HookCommand.isLegacyCommand) }.count
     }
 
+    /// Codex enables hooks by default, and the deprecated `codex_hooks` only counts when `hooks` is absent.
     public static func hooksFeatureEnabled(in text: String) -> Bool {
         let doc = TOMLLines(text)
-        guard let location = hooksFeatureLine(in: doc) else { return false }
-        return doc.rawValue(at: location) == "true"
+        guard let line = featureLine("hooks", in: doc) ?? featureLine("codex_hooks", in: doc) else { return true }
+        return doc.rawValue(at: line) != "false"
     }
 
-    /// Trust is skipped under `[features] hooks = false` because Codex lists no hooks then.
+    /// Trust is skipped while `[features]` turns hooks off because Codex lists no hooks then.
     public static func install(paths: SidePulsePaths, cliPath: String, dryRun: Bool, trust: Bool = true, now: Date = Date()) throws -> InstallResult {
         let config = paths.codexConfigFile
         let command = HookCommand.command(cliPath: cliPath, provider: .codex)
@@ -125,11 +125,10 @@ public enum CodexHookInstaller {
         if changed && !dryRun {
             backup = try HookConfigFile.write(updated, to: config, now: now)
         }
-        let updatedDoc = TOMLLines(updated)
-        let turnedOff = hooksFeatureLine(in: updatedDoc).map { updatedDoc.rawValue(at: $0) == "false" } ?? false
+        let turnedOff = !hooksFeatureEnabled(in: updated)
         if turnedOff {
-            notes.append("Codex hooks are turned off ([features] hooks = false); SidePulse left that alone, "
-                + "so Codex runs no hooks until you set it to true")
+            notes.append("Codex hooks are turned off in [features]; SidePulse left that alone, "
+                + "so Codex runs no hooks until you turn them back on")
         } else if !trust && !dryRun && !untrustedEvents(in: updated, configPath: config.path).isEmpty {
             notes.append("hooks not marked trusted; approve them with /hooks in Codex")
         }
@@ -275,7 +274,7 @@ public enum CodexHookInstaller {
 
     // MARK: - Features and block placement
 
-    static func hooksFeatureLine(in doc: TOMLLines) -> Int? {
+    static func featureLine(_ name: String, in doc: TOMLLines) -> Int? {
         var table: (path: [String], isArray: Bool)?   // nil = root table
         for i in doc.lines.indices {
             if let header = doc.headerPath(at: i) {
@@ -283,44 +282,10 @@ public enum CodexHookInstaller {
                 continue
             }
             guard let key = doc.keyPath(at: i) else { continue }
-            if let table, !table.isArray, table.path == ["features"], key == ["hooks"] { return i }
-            if table == nil && key == ["features", "hooks"] { return i }
+            if let table, !table.isArray, table.path == ["features"], key == [name] { return i }
+            if table == nil && key == ["features", name] { return i }
         }
         return nil
-    }
-
-    /// An explicit `hooks = false` stays, because enabling it would also turn on every hook the
-    /// user switched off with it, and uninstall could not undo that.
-    static func ensureHooksFeature(_ lines: inout [String], anchor: inout Int?) {
-        let doc = TOMLLines(lines: lines)
-        if let i = hooksFeatureLine(in: doc) {
-            guard doc.rawValue(at: i) != "true", doc.rawValue(at: i) != "false" else { return }
-            let indent = String(lines[i].prefix(while: { $0 == " " || $0 == "\t" }))
-            let key = doc.keyPath(at: i) == ["hooks"] ? "hooks" : "features.hooks"
-            lines[i] = "\(indent)\(key) = true"
-            return
-        }
-        if let header = lines.indices.first(where: { doc.headerPath(at: $0).map { !$0.isArray && $0.path == ["features"] } ?? false }) {
-            let insertAt = doc.contentEnd(start: header, end: doc.nextHeader(after: header)) + 1
-            lines.insert("hooks = true", at: insertAt)
-            if let a = anchor, a >= insertAt { anchor = a + 1 }
-            return
-        }
-        for i in lines.indices {
-            if case .header = doc.kinds[i] { break }
-            guard let key = doc.keyPath(at: i), key.first == "features" else { continue }
-            // An inline `features = { … }` table cannot take another key without rewriting it.
-            if key.count == 1 { return }
-            // A `[features]` header would redeclare the table these dotted keys define, and
-            // inserting before the first one keeps clear of multi-line values.
-            lines.insert("features.hooks = true", at: i)
-            if let a = anchor, a >= i { anchor = a + 1 }
-            return
-        }
-        while let last = lines.last, TOMLLines.isBlank(last) { lines.removeLast() }
-        if let a = anchor, a >= lines.count { anchor = nil }
-        if !lines.isEmpty { lines.append("") }
-        lines += ["[features]", "hooks = true"]
     }
 
     /// Tables inserted before key/value lines would capture them, such as after a stray marker

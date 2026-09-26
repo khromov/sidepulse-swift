@@ -108,7 +108,7 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertTrue(text.contains("  hooks: partial (2/12)\n  missing events: UserPromptSubmit, PreToolUse, PostToolUse,"))
         XCTAssertTrue(text.contains("  legacy python hooks: 1\n"))
         XCTAssertTrue(text.contains("  hooks: installed (11/11 events)\n"))
-        XCTAssertTrue(text.contains("  hooks feature: disabled ([features] hooks is not true, so Codex runs no hooks)\n"))
+        XCTAssertTrue(text.contains("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)\n"))
 
         try box.write("{ broken", to: box.paths.claudeSettingsFile)
         let broken = HookDoctor.inspect(paths: box.paths, provider: .claude)

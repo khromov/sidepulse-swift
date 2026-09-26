@@ -45,59 +45,24 @@ final class HookInstallCodexTests: XCTestCase {
     }
 
     func testFreshInstallExactText() {
-        XCTAssertEqual(CodexHookInstaller.installing(into: "", command: cmd), "[features]\nhooks = true\n\n" + block)
+        XCTAssertEqual(CodexHookInstaller.installing(into: "", command: cmd), block)
     }
 
     func testInstallAppendsAfterExactlyOneBlankLine() {
         XCTAssertEqual(CodexHookInstaller.installing(into: "model = \"x\"", command: cmd),
-                       "model = \"x\"\n\n[features]\nhooks = true\n\n" + block)
+                       "model = \"x\"\n\n" + block)
         XCTAssertEqual(CodexHookInstaller.installing(into: "model = \"x\"\n\n\n\n[features]\nhooks = true\n\n\n", command: cmd),
                        "model = \"x\"\n\n\n\n[features]\nhooks = true\n\n" + block)
     }
 
-    // MARK: [features] hooks = true
+    // MARK: [features]
 
-    func testFeatureFlagVariants() {
-        func features(_ input: String) -> String {
-            let out = CodexHookInstaller.installing(into: input, command: cmd)
-            return String(out[..<(out.range(of: CodexHookInstaller.managedStart)?.lowerBound ?? out.endIndex)])
+    /// Codex enables hooks by default, so install leaves `[features]` exactly as it was.
+    func testInstallLeavesFeaturesAlone() {
+        for input in ["[features]\njs_repl = false\n", "[features]\nhooks = false\n", "features.js_repl = false\n",
+                      "features = { js_repl = false }\n", "[features]\ncodex_hooks = false\n"] {
+            XCTAssertEqual(CodexHookInstaller.installing(into: input, command: cmd), input + "\n" + block, input)
         }
-        XCTAssertEqual(features("[features]\njs_repl = false\n\n[tui]\nx = 1\n"),
-                       "[features]\njs_repl = false\nhooks = true\n\n[tui]\nx = 1\n\n")
-        // An explicit `false` is the user's choice (see testExplicitHooksFalseIsLeftAlone).
-        XCTAssertEqual(features("[features]\nhooks = false\n"), "[features]\nhooks = false\n\n")
-        XCTAssertEqual(features("[features]\n  hooks=false # off\n"), "[features]\n  hooks=false # off\n\n")
-        XCTAssertEqual(features("[features]\n  hooks = 1\n"), "[features]\n  hooks = true\n\n")
-        XCTAssertEqual(features("[features]\nhooks = true # keep my comment\n"), "[features]\nhooks = true # keep my comment\n\n")
-        XCTAssertEqual(features("[features] # flags\n"), "[features] # flags\nhooks = true\n\n")
-        XCTAssertEqual(features("features.hooks = false\n[tui]\n"), "features.hooks = false\n[tui]\n\n")
-        // An inline table cannot be extended safely; it is left alone.
-        XCTAssertEqual(features("features = { js_repl = false }\n"), "features = { js_repl = false }\n\n")
-        // `hooks = …` in another table is not the feature flag.
-        XCTAssertEqual(features("[profiles.x]\nhooks = false\n"), "[profiles.x]\nhooks = false\n\n[features]\nhooks = true\n\n")
-    }
-
-    /// Regression: a `[features]` header next to root dotted `features.*` keys is invalid TOML,
-    /// so Codex could not load its config.
-    func testRootDottedFeaturesGetASiblingKey() {
-        let input = "model = 1\nfeatures.js_repl = false\n\n[tui]\nx = 1\n"
-        let installed = CodexHookInstaller.installing(into: input, command: cmd)
-        XCTAssertEqual(installed, "model = 1\nfeatures.hooks = true\nfeatures.js_repl = false\n\n[tui]\nx = 1\n\n" + block)
-        XCTAssertFalse(installed.contains("[features]"))
-        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: installed))
-        XCTAssertEqual(CodexHookInstaller.installing(into: installed, command: cmd), installed)
-        XCTAssertEqual(CodexHookInstaller.uninstalling(from: installed, configPath: cfg),
-                       "model = 1\nfeatures.hooks = true\nfeatures.js_repl = false\n\n[tui]\nx = 1\n")
-    }
-
-    func testLinesInsideMultilineValuesAreNotKeys() {
-        let input = "[features]\nnote = \"\"\"\nhooks = false\n\"\"\"\n"
-        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: input))
-        XCTAssertEqual(CodexHookInstaller.installing(into: input, command: cmd),
-                       "[features]\nnote = \"\"\"\nhooks = false\n\"\"\"\nhooks = true\n\n" + block)
-        let rootString = "prompt = '''\nfeatures.hooks = false\n'''\n"
-        XCTAssertEqual(CodexHookInstaller.installing(into: rootString, command: cmd),
-                       rootString + "\n[features]\nhooks = true\n\n" + block)
     }
 
     /// Regression: rewriting it to `true` enabled the user's disabled hooks for good, since
@@ -111,7 +76,7 @@ final class HookInstallCodexTests: XCTestCase {
         let installed = try box.read(box.paths.codexConfigFile)
         XCTAssertTrue(installed.hasPrefix("[features]\nhooks = false # disabled for now\n"))
         XCTAssertEqual(CodexHookInstaller.installedEvents(in: installed), HookProvider.codex.events)
-        XCTAssertTrue(result.notes.contains { $0.contains("hooks = false") && $0.contains("left that alone") }, "\(result.notes)")
+        XCTAssertTrue(result.notes.contains { $0.contains("turned off") && $0.contains("left that alone") }, "\(result.notes)")
         // Codex lists no hooks while they are off, so trust is not attempted.
         XCTAssertFalse(result.notes.contains { $0.contains("Codex not found") || $0.contains("trusted") }, "\(result.notes)")
         _ = try CodexHookInstaller.uninstall(paths: box.paths, dryRun: false)
@@ -126,14 +91,21 @@ final class HookInstallCodexTests: XCTestCase {
         XCTAssertEqual(dry.notes, [])
     }
 
+    /// Regression: a config without the key reported hooks as disabled, although Codex enables them by default.
     func testHooksFeatureEnabled() {
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: ""))
         XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nhooks = true\n"))
         XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\njs_repl = false\n\nhooks = true # x\n[a]\n"))
-        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "features.hooks = true\n"))
         XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nhooks = false\n"))
-        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\n[a]\nhooks = true\n"))
-        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: ""))
-        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "x = \"\"\"\n[features]\nhooks = true\n\"\"\"\n"))
+        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\n  hooks=false # off\n"))
+        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "features.hooks = false\n[tui]\n"))
+        XCTAssertFalse(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\ncodex_hooks = false\n"))
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\ncodex_hooks = false\nhooks = true\n"))
+        // `hooks = false` in another table or inside a multi-line string is not the feature flag.
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\n[a]\nhooks = false\n"))
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[profiles.x]\nhooks = false\n"))
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nnote = \"\"\"\nhooks = false\n\"\"\"\n"))
+        XCTAssertTrue(CodexHookInstaller.hooksFeatureEnabled(in: "prompt = '''\nfeatures.hooks = false\n'''\n"))
     }
 
     // MARK: Idempotency and placement
@@ -173,21 +145,20 @@ final class HookInstallCodexTests: XCTestCase {
     /// Regression: a stray marker used as the insertion point pulled the keys after it into our
     /// last hook table, and uninstall deleted them.
     func testStrayMarkerNeverSplitsATable() {
-        let features = "\n[features]\nhooks = true\n"
         let inTable = "[tui]\na = 1\n# >>> sidepulse hooks >>>\nb = 2\n"
         let installed = CodexHookInstaller.installing(into: inTable, command: cmd, configPath: cfg)
-        XCTAssertEqual(installed, "[tui]\na = 1\nb = 2\n" + features + "\n" + block)
-        XCTAssertEqual(CodexHookInstaller.uninstalling(from: installed, configPath: cfg), "[tui]\na = 1\nb = 2\n" + features)
+        XCTAssertEqual(installed, "[tui]\na = 1\nb = 2\n\n" + block)
+        XCTAssertEqual(CodexHookInstaller.uninstalling(from: installed, configPath: cfg), "[tui]\na = 1\nb = 2\n")
 
         let aboveRootKeys = "# >>> agent-monitor hooks >>>\nmodel = 1\n[tui]\nx = 1\n"
         let top = CodexHookInstaller.installing(into: aboveRootKeys, command: cmd, configPath: cfg)
-        XCTAssertEqual(top, "model = 1\n[tui]\nx = 1\n" + features + "\n" + block)
+        XCTAssertEqual(top, "model = 1\n[tui]\nx = 1\n\n" + block)
         XCTAssertTrue(CodexHookInstaller.uninstalling(from: top, configPath: cfg).hasPrefix("model = 1\n"))
 
         // At a table boundary the old position is still reused.
         let boundary = "[tui]\na = 1\n\n# >>> agent-monitor hooks >>>\n# a note\n\n[mcp_servers.x]\nurl = \"u\"\n"
         XCTAssertEqual(CodexHookInstaller.installing(into: boundary, command: cmd, configPath: cfg),
-                       "[tui]\na = 1\n\n" + block + "\n# a note\n\n[mcp_servers.x]\nurl = \"u\"\n" + features)
+                       "[tui]\na = 1\n\n" + block + "\n# a note\n\n[mcp_servers.x]\nurl = \"u\"\n")
     }
 
     /// Regression: TOML cannot extend a hook event defined inline or as a plain table, so
@@ -255,7 +226,7 @@ final class HookInstallCodexTests: XCTestCase {
             "[hooks.state]", "source = \"keep-me\"", "",
         ].joined(separator: "\n")
         let text = CodexHookInstaller.installing(into: input, command: cmd, configPath: cfg)
-        XCTAssertTrue(text.contains("[features]\njs_repl = false\nhooks = true\n"))
+        XCTAssertTrue(text.hasPrefix("[features]\njs_repl = false\n\n[[hooks.PreToolUse]]\n"))
         XCTAssertTrue(text.contains("[hooks.state]\nsource = \"keep-me\"\n"))
         XCTAssertTrue(text.contains("echo old >>"))
         XCTAssertTrue(text.contains("--provider codex"))
@@ -270,7 +241,7 @@ final class HookInstallCodexTests: XCTestCase {
         let input = "[features]\njs_repl = false\n\n[hooks.state]\nsource = \"keep-me\"\n"
         let installed = CodexHookInstaller.installing(into: input, command: cmd, configPath: cfg)
         let removed = CodexHookInstaller.uninstalling(from: installed, configPath: cfg)
-        XCTAssertEqual(removed, "[features]\njs_repl = false\nhooks = true\n\n[hooks.state]\nsource = \"keep-me\"\n")
+        XCTAssertEqual(removed, input)
         XCTAssertFalse(removed.contains("sidepulse hooks"))
         XCTAssertFalse(removed.contains("hook-log"))
     }
@@ -282,9 +253,9 @@ final class HookInstallCodexTests: XCTestCase {
         }
     }
 
-    func testUninstallOfFreshInstallLeavesOnlyFeatures() {
+    func testUninstallOfFreshInstallLeavesNothing() {
         let installed = CodexHookInstaller.installing(into: "", command: cmd)
-        XCTAssertEqual(CodexHookInstaller.uninstalling(from: installed, configPath: cfg), "[features]\nhooks = true\n")
+        XCTAssertEqual(CodexHookInstaller.uninstalling(from: installed, configPath: cfg), "")
     }
 
     // MARK: Legacy Python configs
