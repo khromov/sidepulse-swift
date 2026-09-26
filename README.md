@@ -6,10 +6,17 @@ macOS-native CLI and app with support for Claude Code, Codex and OpenCode for Si
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
 
+Please uninstall the official version using `sidepulse agent-monitor uninstall all` before installing this version.
+
 ## Features
 
+- 4.4MB app size (1.4MB zipped download)
 - Under 100MB in memory usage vs >1GB for the official implementation.
-- 9MB app size
+
+<p>
+  <img src=".github/dropdown.png" alt="Menu-bar dropdown listing agent sessions, devices and Keep Awake options" width="270">
+  <img src=".github/settings.png" alt="Settings window, Animations tab, showing the profile and per-state animations" width="459">
+</p>
 
 ## Spec
 
