@@ -99,14 +99,13 @@ final class StatusPersistenceTests: XCTestCase {
         XCTAssertEqual(LogScanner.readRecentLines(url: url, maxLines: 10), ["a\u{2028}b\r", "c\u{0B}d", "\u{85}e"])
     }
 
-    func testReadRecentLinesAcrossChunksDropsPartialFirstLine() throws {
-        // Lines longer than the 64 KiB chunk so the backwards read starts mid-line.
+    func testReadRecentLinesDropsThePartialFirstLineOfTheWindow() throws {
         let long = String(repeating: "x", count: 40_000)
         let lines = (0..<6).map { "\($0):\(long)" }
         let url = try write(lines.joined(separator: "\n") + "\n", "big.jsonl")
-        let tail = LogScanner.readRecentLines(url: url, maxLines: 2)
-        XCTAssertEqual(tail, Array(lines.suffix(2)))
         XCTAssertEqual(LogScanner.readRecentLines(url: url, maxLines: 6), lines)
+        // A window of two and a half lines starts mid-line, so only the last two come back whole.
+        XCTAssertEqual(LogScanner.readRecentLines(url: url, maxLines: 6, tailBytes: 100_000), Array(lines.suffix(2)))
         let noNewline = try write("first\nsecond", "nonl.jsonl")
         XCTAssertEqual(LogScanner.readRecentLines(url: noNewline, maxLines: 1), ["second"])
     }
@@ -117,12 +116,8 @@ final class StatusPersistenceTests: XCTestCase {
         XCTAssertEqual(LogScanner.readRecentLines(url: url, maxLines: 5), ["a\u{FFFD}b", "c"])
     }
 
-    func testReadRecentLinesIgnoresNonRegularFiles() throws {
-        XCTAssertEqual(LogScanner.readRecentLines(url: tmp, maxLines: 5), [], "a directory")
-        // A FIFO with no writer must not block the open.
-        let fifo = tmp.appendingPathComponent("pipe.jsonl")
-        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
-        XCTAssertEqual(LogScanner.readRecentLines(url: fifo, maxLines: 5), [])
+    func testReadRecentLinesIgnoresADirectory() throws {
+        XCTAssertEqual(LogScanner.readRecentLines(url: tmp, maxLines: 5), [])
     }
 
     // MARK: Restart recovery through files

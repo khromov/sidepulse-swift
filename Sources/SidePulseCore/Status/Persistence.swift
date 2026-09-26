@@ -27,67 +27,23 @@ public struct LatestStore: Sendable {
 }
 
 public enum LogScanner {
-    static let chunkSize = 64 * 1024
+    /// About 6,000 of today's 650-byte records, well past the 2,000-line recovery window.
+    static let tailBytes: UInt64 = 4 << 20
 
     public static func readRecentLines(url: URL, maxLines: Int) -> [String] {
-        recentLineBytes(url: url, maxLines: maxLines).map { String(decoding: $0, as: UTF8.self) }
+        readRecentLines(url: url, maxLines: maxLines, tailBytes: tailBytes)
     }
 
-    static func recentLineBytes(url: URL, maxLines: Int) -> [ArraySlice<UInt8>] {
-        guard maxLines > 0 else { return [] }
-        // O_NONBLOCK keeps a FIFO at the path from hanging the open; O_CLOEXEC keeps
-        // the descriptor out of processes spawned meanwhile.
-        let fd = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
-        guard fd >= 0 else { return [] }
-        defer { close(fd) }
-        var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return [] }
-
-        var position = Int(info.st_size)
-        var chunks: [[UInt8]] = []
-        var newlines = 0
-        while position > 0 && newlines <= maxLines {
-            let size = min(chunkSize, position)
-            position -= size
-            var chunk = [UInt8](repeating: 0, count: size)
-            let read = chunk.withUnsafeMutableBytes { pread(fd, $0.baseAddress, size, off_t(position)) }
-            guard read == size else { return [] }
-            newlines += newlineOffsets(in: chunk).count
-            chunks.append(chunk)
-        }
-
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(chunks.reduce(0) { $0 + $1.count })
-        for chunk in chunks.reversed() { bytes.append(contentsOf: chunk) }
-
-        // A read that began mid-file starts with a partial line, which is skipped.
-        var lines: [ArraySlice<UInt8>] = []
-        var lineStart = 0
-        var skipFirst = position > 0
-        for offset in newlineOffsets(in: bytes) + [bytes.count] {
-            if skipFirst {
-                skipFirst = false
-            } else if offset > lineStart {
-                lines.append(bytes[lineStart..<offset])
-            }
-            lineStart = offset + 1
-        }
-        return Array(lines.suffix(maxLines))
-    }
-
-    static func newlineOffsets(in bytes: [UInt8]) -> [Int] {
-        bytes.withUnsafeBufferPointer { buffer -> [Int] in
-            guard let base = buffer.baseAddress else { return [] }
-            var offsets: [Int] = []
-            var cursor = base
-            let end = base + buffer.count
-            while cursor < end, let hit = memchr(cursor, 0x0A, end - cursor) {
-                let found = UnsafePointer<UInt8>(hit.assumingMemoryBound(to: UInt8.self))
-                offsets.append(found - base)
-                cursor = found + 1
-            }
-            return offsets
-        }
+    static func readRecentLines(url: URL, maxLines: Int, tailBytes: UInt64) -> [String] {
+        guard maxLines > 0, let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return [] }
+        let start = size > tailBytes ? size - tailBytes : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return [] }
+        var lines = data.split(separator: UInt8(ascii: "\n"))
+        // A read that began mid-file starts with a partial line.
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+        return lines.suffix(maxLines).map { String(decoding: $0, as: UTF8.self) }
     }
 
     public static func events(provider: String, url: URL, maxLines: Int) -> [HookEvent] {
@@ -95,9 +51,7 @@ public enum LogScanner {
     }
 
     static func events(provider: String, url: URL, maxLines: Int, now: Date) -> [HookEvent] {
-        recentLineBytes(url: url, maxLines: maxLines).compactMap { bytes in
-            EventParser.parseLine(provider: provider, line: String(decoding: bytes, as: UTF8.self), now: now)
-        }
+        readRecentLines(url: url, maxLines: maxLines).compactMap { EventParser.parseLine(provider: provider, line: $0, now: now) }
     }
 
     public static func scan(sources: [SourceInfo], maxLines: Int = SidePulseConstants.recoveryMaxLines,
@@ -110,25 +64,13 @@ public enum LogScanner {
         }
     }
 
-    /// Hook timestamps have (milli)second resolution, so ties are common and source
-    /// and line order must break them.
+    /// Hook timestamps have millisecond resolution, so ties are common; `sorted` is stable, so source and
+    /// line order break them.
     static func orderedEvents(sources: [SourceInfo], maxLines: Int, now: Date = Date()) -> [HookEvent] {
         var seen = Set<String>()
-        let unique = sources.filter { seen.insert("\($0.provider)\u{0}\($0.path)").inserted }
-        var perSource = [[HookEvent]](repeating: [], count: unique.count)
-        // Parsing dominates; sources are independent, so parse them concurrently.
-        perSource.withUnsafeMutableBufferPointer { buffer in
-            let results = buffer
-            DispatchQueue.concurrentPerform(iterations: unique.count) { index in
-                let source = unique[index]
-                results[index] = events(provider: source.provider, url: URL(fileURLWithPath: source.path),
-                                        maxLines: maxLines, now: now)
-            }
-        }
-        let all = perSource.flatMap { $0 }
-        return all.indices
-            .sorted { all[$0].loggedAt != all[$1].loggedAt ? all[$0].loggedAt < all[$1].loggedAt : $0 < $1 }
-            .map { all[$0] }
+        return sources.filter { seen.insert("\($0.provider)\u{0}\($0.path)").inserted }
+            .flatMap { events(provider: $0.provider, url: URL(fileURLWithPath: $0.path), maxLines: maxLines, now: now) }
+            .sorted { $0.loggedAt < $1.loggedAt }
     }
 
     /// Codex precedes Claude (Python's tie order) and each rotated `.1` log precedes

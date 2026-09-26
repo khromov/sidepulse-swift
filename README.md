@@ -636,7 +636,7 @@ same runtime without UI. The runtime does the following, per
 - **Start.** It binds `events.sock` before writing anything, and refuses to
   start if another process already listens there. It then applies
   `settings.json`, loads `latest.json`, and reconciles the rows with the tail
-  of the provider logs (the last 2000 lines of each). Finally it starts a 15 s
+  of the provider logs (the last 2000 lines of each, within its last 4 MB). Finally it starts a 15 s
   status refresh and a 2 s device poll. The first device discovery runs in the
   background, and the LEDs are synced as soon as it finds them.
 - **Event order.** Connections are read in parallel, but events are applied in
