@@ -562,20 +562,22 @@ On every event, `sidepulse hook-log`:
 1. Reads the JSON payload from stdin, up to 16 MiB and 3 s (nothing when stdin
    is a terminal).
 2. Builds a **trimmed record**. The record keeps:
-   - the event name, session, turn and agent ids, cwd and tool name;
+   - the event name, session and agent ids, cwd and tool name (snake_case
+     keys only);
    - `tool_input.command` (up to 2000 characters);
    - the `interrupted`, `success` and `exit_code` fields of the tool response,
      plus a `tool_response_failed` flag;
    - `prompt` (up to 4000 characters);
    - `last_assistant_message` (fenced code blocks removed, then up to 16000:
      the first 4000 plus the last 12000);
-   - `message`, and notification and error fields;
+   - `message`, `notification_type` and `error_details`;
    - `background_task_ids`: the ids of the tasks Claude lists as still running
      on `Stop`/`SubagentStop` (up to 32 ids of up to 128 characters; omitted
      when the list does not fit);
    - the detected origin.
 
-   Invalid JSON becomes a `ParseError` record.
+   Invalid JSON becomes a `ParseError` record. A payload without an event
+   name, such as a hand-run command with no input, is dropped here.
 3. Appends the record as one line to `logs/<provider>.jsonl`.
 4. Sends `{"provider": …, "line": {…}}` to `events.sock` with a 0.2 s timeout.
 

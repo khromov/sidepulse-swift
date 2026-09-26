@@ -50,9 +50,9 @@ final class StatusPersistenceTests: XCTestCase {
     func testLatestStoreReloadReproducesModeAndOrigin() throws {
         let engine = StatusEngine()
         engine.ingest(provider: "codex", line: [
-            "logged_at": .string(TimeFormat.pythonISO(t0)),
-            "event": .object(["hook_event_name": .string("PreToolUse"), "session_id": .string("codex-session"),
-                              "cwd": .string("/tmp/project"), "tool_name": .string("Bash"), "agent_origin": .string("Codex UI")]),
+            "logged_at": .string(TimeFormat.pythonISO(t0)), "hook_event_name": .string("PreToolUse"),
+            "session_id": .string("codex-session"), "cwd": .string("/tmp/project"), "tool_name": .string("Bash"),
+            "agent_origin": .string("Codex UI"),
         ])
         let snapshot = engine.snapshot(now: t0)
         XCTAssertEqual(snapshot.aggregate.mode, .toolRunning)
@@ -147,7 +147,7 @@ final class StatusPersistenceTests: XCTestCase {
 
         let latest = LatestStore(url: tmp.appendingPathComponent("recover/latest.json"))
         try latest.save([cached(.working, "UserPromptSubmit", -10)], now: now)
-        let log = try write(#"{"logged_at":"\#(stamp(-5))","event":{"hook_event_name":"Stop","session_id":"codex-session","cwd":"/tmp/project","last_assistant_message":"Done."}}"#,
+        let log = try write(#"{"logged_at":"\#(stamp(-5))","hook_event_name":"Stop","session_id":"codex-session","cwd":"/tmp/project","last_assistant_message":"Done."}"#,
                             "recover/codex.jsonl")
         let recovered = try restart(latest: latest, log: log)
         XCTAssertEqual(recovered?.mode, .completed)
@@ -156,7 +156,7 @@ final class StatusPersistenceTests: XCTestCase {
 
         let newer = LatestStore(url: tmp.appendingPathComponent("newer/latest.json"))
         try newer.save([cached(.completed, "Stop", -5)], now: now)
-        let olderLog = try write(#"{"logged_at":"\#(stamp(-10))","event":{"hook_event_name":"UserPromptSubmit","session_id":"codex-session","cwd":"/tmp/project","prompt":"Restart recovery"}}"#,
+        let olderLog = try write(#"{"logged_at":"\#(stamp(-10))","hook_event_name":"UserPromptSubmit","session_id":"codex-session","cwd":"/tmp/project","prompt":"Restart recovery"}"#,
                                  "newer/codex.jsonl")
         XCTAssertEqual(try restart(latest: newer, log: olderLog)?.mode, .completed)
         XCTAssertEqual(newer.load().first?.mode, .completed)
@@ -227,8 +227,8 @@ final class StatusPersistenceTests: XCTestCase {
     func testScanSortsStablyAcrossSources() throws {
         // Same-second events from two sources: ties keep source order, then line order.
         let codex = try write(#"""
-        {"logged_at":"2026-09-20T10:00:05Z","event":{"hook_event_name":"UserPromptSubmit","session_id":"shared","prompt":"codex prompt"}}
-        {"logged_at":"2026-09-20T10:00:01Z","event":{"hook_event_name":"Stop","session_id":"c1","last_assistant_message":"Done."}}
+        {"logged_at":"2026-09-20T10:00:05Z","hook_event_name":"UserPromptSubmit","session_id":"shared","prompt":"codex prompt"}
+        {"logged_at":"2026-09-20T10:00:01Z","hook_event_name":"Stop","session_id":"c1","last_assistant_message":"Done."}
         """#, "logs/codex.jsonl")
         let claude = try write(#"""
         {"logged_at":"2026-09-20T10:00:05Z","hook_event_name":"PreToolUse","session_id":"k1","tool_name":"Bash"}
@@ -248,7 +248,7 @@ final class StatusPersistenceTests: XCTestCase {
     }
 
     func testScanPassesCodexTitleLookup() throws {
-        let codex = try write(#"{"logged_at":"2026-09-20T10:00:05Z","event":{"hook_event_name":"UserPromptSubmit","session_id":"abcdef123456","prompt":"x"}}"#,
+        let codex = try write(#"{"logged_at":"2026-09-20T10:00:05Z","hook_event_name":"UserPromptSubmit","session_id":"abcdef123456","prompt":"x"}"#,
                               "codex.jsonl")
         let rows = LogScanner.scan(sources: [SourceInfo(provider: "codex", path: codex.path)],
                                    codexTitle: { $0 == "abcdef123456" ? "Indexed title" : nil })

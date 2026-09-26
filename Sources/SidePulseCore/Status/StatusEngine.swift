@@ -330,7 +330,7 @@ struct StatusMetadata: Equatable {
     fileprivate mutating func update(with event: HookEvent, title: EventTitle?) {
         if let cwd = event.cwd, !cwd.isEmpty { self.cwd = cwd }
         if let title, self.title == nil || title.overrides { self.title = title.text }
-        if let origin = event.origin ?? EventParser.originLabel(event.raw) { self.origin = origin }
+        if let origin = event.origin { self.origin = origin }
         lastSeen = max(lastSeen, event.loggedAt)
     }
 

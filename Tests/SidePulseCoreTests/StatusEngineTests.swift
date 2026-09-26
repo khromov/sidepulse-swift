@@ -9,9 +9,7 @@ final class StatusEngineTests: XCTestCase {
     }
 
     private func codexLine(_ event: String, at offset: TimeInterval, _ fields: JSONObject = [:]) -> JSONObject {
-        var inner: JSONObject = ["hook_event_name": .string(event)]
-        for (key, value) in fields { inner[key] = value }
-        return ["logged_at": stamp(offset), "event": .object(inner)]
+        claudeLine(event, at: offset, fields)
     }
 
     private func claudeLine(_ event: String, at offset: TimeInterval, _ fields: JSONObject = [:]) -> JSONObject {
@@ -433,18 +431,16 @@ final class StatusEngineTests: XCTestCase {
     func testSessionDisplayNameKeepsInitialPromptTitle() throws {
         let engine = StatusEngine()
         let session = "019ffd37-1458-7d92-b077-3d0f92aedde4"
-        let base: JSONObject = ["sessionId": .string(session), "workspaceRoot": .string("/Users/pero/temp/msdosfs")]
+        let base: JSONObject = ["session_id": .string(session), "cwd": .string("/Users/pero/temp/msdosfs")]
         func line(_ event: String, _ offset: TimeInterval, _ prompt: String?) -> JSONObject {
-            var o = base
-            o["logged_at"] = stamp(offset)
-            o["hookEventName"] = .string(event)
-            if let prompt { o["prompt"] = .string(prompt) }
-            return o
+            var fields = base
+            if let prompt { fields["prompt"] = .string(prompt) }
+            return claudeLine(event, at: offset, fields)
         }
-        engine.ingest(provider: "grok", line: line("user_prompt_submit", 0, "<user_query>\nWhat is here\n</user_query>"))
-        engine.ingest(provider: "grok", line: line("user_prompt_submit", 30, "<user_query>\nNow check permissions\n</user_query>"))
-        engine.ingest(provider: "grok", line: line("stop", 60, nil))
-        let status = try XCTUnwrap(engine.statuses["grok:session:\(session)"])
+        engine.ingest(provider: "claude", line: line("UserPromptSubmit", 0, "<user_query>\nWhat is here\n</user_query>"))
+        engine.ingest(provider: "claude", line: line("UserPromptSubmit", 30, "<user_query>\nNow check permissions\n</user_query>"))
+        engine.ingest(provider: "claude", line: line("Stop", 60, nil))
+        let status = try XCTUnwrap(engine.statuses["claude:session:\(session)"])
         XCTAssertEqual(status.displayName, "msdosfs: What is here (019ffd37)")
         XCTAssertEqual(status.mode, .completed)
     }

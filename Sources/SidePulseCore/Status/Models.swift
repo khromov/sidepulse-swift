@@ -80,11 +80,9 @@ public struct HookEvent: Sendable, Equatable {
     public var provider: String
     public var loggedAt: Date
     public var eventName: String
-    /// Not the original payload: snake_case aliases, `hook_event_name` and
-    /// `logged_at` are filled in.
+    /// The record as `HookRuntime.makeRecord` logged it.
     public var raw: JSONObject
     public var sessionID: String?
-    public var turnID: String?
     public var agentID: String?
     public var cwd: String?
     public var toolName: String?
@@ -92,10 +90,10 @@ public struct HookEvent: Sendable, Equatable {
     public var origin: String?
 
     public init(provider: String, loggedAt: Date, eventName: String, raw: JSONObject,
-                sessionID: String? = nil, turnID: String? = nil, agentID: String? = nil,
+                sessionID: String? = nil, agentID: String? = nil,
                 cwd: String? = nil, toolName: String? = nil, message: String? = nil, origin: String? = nil) {
         self.provider = provider; self.loggedAt = loggedAt; self.eventName = eventName; self.raw = raw
-        self.sessionID = sessionID; self.turnID = turnID; self.agentID = agentID; self.cwd = cwd
+        self.sessionID = sessionID; self.agentID = agentID; self.cwd = cwd
         self.toolName = toolName; self.message = message; self.origin = origin
     }
 

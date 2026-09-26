@@ -25,12 +25,12 @@ final class HookRuntimeRecordTests: XCTestCase {
         """
         let result = hookRecord(.claude, payload, origin: fixedOrigin)
         XCTAssertEqual(result.keys, [
-            "logged_at", "hook_event_name", "session_id", "turn_id", "agent_id", "agent_type", "cwd", "tool_name",
+            "logged_at", "hook_event_name", "session_id", "agent_id", "cwd", "tool_name",
             "tool_input", "tool_response", "tool_response_failed", "prompt", "last_assistant_message", "message",
-            "notification_type", "error", "error_details", "source", "reason", "sidepulse_status", "sidepulse_mode",
+            "notification_type", "error_details", "sidepulse_status", "sidepulse_mode",
             "agent_origin", "agent_origin_kind", "agent_origin_source", "agent_origin_confidence",
         ])
-        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","turn_id":"t1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error":"Exit code 1","error_details":"details","source":"startup","reason":"clear","sidepulse_status":"ask","sidepulse_mode":"working","agent_origin":"Claude Code CLI","agent_origin_kind":"claude_cli","agent_origin_source":"process:claude","agent_origin_confidence":"inferred"}"#)
+        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"PostToolUse","session_id":"s1","agent_id":"a1","cwd":"/Users/k/src/app","tool_name":"Bash","tool_input":{"command":"ls -la"},"tool_response":{"interrupted":false},"tool_response_failed":false,"prompt":"hi","last_assistant_message":"done","message":"m","notification_type":"idle_prompt","error_details":"details","sidepulse_status":"ask","sidepulse_mode":"working","agent_origin":"Claude Code CLI","agent_origin_kind":"claude_cli","agent_origin_source":"process:claude","agent_origin_confidence":"inferred"}"#)
     }
 
     func testAbsentValuesAreOmitted() {
@@ -134,7 +134,6 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(value("prompt", 5000), .string(String(repeating: "z", count: 4000)))
         XCTAssertEqual(value("prompt", 4000), .string(String(repeating: "z", count: 4000)))
         XCTAssertEqual(value("message", 3000), .string(String(repeating: "z", count: 2000)))
-        XCTAssertEqual(value("error", 600), .string(String(repeating: "z", count: 500)))
         XCTAssertEqual(value("error_details", 700), .string(String(repeating: "z", count: 500)))
         XCTAssertEqual(value("session_id", 5000), .string(String(repeating: "z", count: HookRuntime.defaultFieldLimit)))
         XCTAssertEqual(value("cwd", 300), .string(String(repeating: "z", count: 300)))
@@ -210,10 +209,9 @@ final class HookRuntimeRecordTests: XCTestCase {
                     #"{"id":"a"}"#, "null"] {
             XCTAssertNil(ids(bad), bad)
         }
-        XCTAssertEqual(hookRecord(.claude, #"{"backgroundTasks":[{"id":"a"}]}"#)["background_task_ids"], .array([.string("a")]))
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["background_task_ids"])
-        XCTAssertEqual(hookRecord(.claude, #"{"sidepulse_status":"done","background_tasks":[],"reason":"r"}"#).keys,
-                       ["logged_at", "reason", "background_task_ids", "sidepulse_status"])
+        XCTAssertEqual(hookRecord(.claude, #"{"sidepulse_status":"done","background_tasks":[]}"#).keys,
+                       ["logged_at", "background_task_ids", "sidepulse_status"])
     }
 
     func testLengthsCountUnicodeScalars() {
@@ -225,7 +223,7 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testCodexWrappedPayloadIsUnwrapped() {
         let wrapped = #"{"logged_at":"2026-09-17T17:41:23Z","event":{"session_id":"c1","turn_id":"t1","hook_event_name":"UserPromptSubmit","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}}"#
         XCTAssertEqual(jsonString(hookRecord(.codex, wrapped, origin: fixedOrigin)),
-                       #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"UserPromptSubmit","session_id":"c1","turn_id":"t1","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}"#)
+                       #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"UserPromptSubmit","session_id":"c1","prompt":"hi","agent_origin":"Codex CLI","agent_origin_kind":"codex_cli","agent_origin_source":"process:codex","agent_origin_confidence":"inferred"}"#)
         XCTAssertEqual(hookRecord(.codex, #"{"hook_event_name":"Stop","session_id":"c2"}"#)["session_id"], .string("c2"))
         // Only Codex payloads are unwrapped.
         XCTAssertNil(hookRecord(.claude, #"{"event":{"hook_event_name":"Stop"}}"#)["hook_event_name"])
@@ -264,15 +262,13 @@ final class HookRuntimeRecordTests: XCTestCase {
         XCTAssertEqual(result["agent_origin"], .string("Claude in VS Code"))
         XCTAssertEqual(result["agent_origin_kind"], .string("claude_vscode"))
         XCTAssertNil(result["agent_origin_source"])
-        XCTAssertEqual(hookRecord(.claude, #"{"agentOrigin":"Custom"}"#, origin: fixedOrigin)["agent_origin"], .string("Custom"))
         XCTAssertEqual(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#, origin: fixedOrigin)["agent_origin_source"], .string("process:claude"))
         XCTAssertNil(hookRecord(.claude, #"{"hook_event_name":"Stop"}"#)["agent_origin"])
     }
 
-    func testCamelCaseFallbacks() {
-        let result = hookRecord(.claude, #"{"hookEventName":"stop","sessionId":"g1","turnId":"t","agentId":"a","toolName":"Read","toolInput":{"command":"x"},"toolResponse":"Traceback","lastAssistantMessage":"bye","notificationType":"idle_prompt"}"#)
-        XCTAssertEqual(jsonString(result), #"{"logged_at":"2026-09-26T00:31:49.125Z","hook_event_name":"stop","session_id":"g1","turn_id":"t","agent_id":"a","tool_name":"Read","tool_input":{"command":"x"},"tool_response":"Traceback","tool_response_failed":true,"last_assistant_message":"bye","notification_type":"idle_prompt"}"#)
-        XCTAssertEqual(hookRecord(.claude, #"{"sessionId":"camel","session_id":"snake"}"#)["session_id"], .string("snake"))
+    /// Claude, Codex and the OpenCode plugin all send snake_case keys.
+    func testCamelCaseKeysAreIgnored() {
+        XCTAssertEqual(hookRecord(.claude, #"{"hookEventName":"Stop","sessionId":"g1","toolName":"Read"}"#).keys, ["logged_at"])
     }
 
     func testWrongTypesAreDroppedOrKept() {
@@ -288,12 +284,12 @@ final class HookRuntimeRecordTests: XCTestCase {
     /// cap, so a hostile payload produced a 600 KB "trimmed" record.
     func testHostileValuesCannotBloatTheRecord() {
         let digits = String(repeating: "7", count: 200_000)
-        let payload = #"{"hook_event_name":"PostToolUse","session_id":\#(digits),"sessionId":"fallback","turn_id":12,"#
+        let payload = #"{"hook_event_name":"PostToolUse","session_id":\#(digits),"cwd":12,"#
             + #""agent_id":\#(String(repeating: "9", count: HookRuntime.defaultFieldLimit)),"#
             + #""tool_response":{"exit_code":"\#(String(repeating: "e", count: 300_000))","interrupted":[1,2,3],"success":\#(digits)}}"#
         let record = hookRecord(.claude, payload)
-        XCTAssertEqual(record["session_id"], .string("fallback"), "an oversized number counts as absent")
-        XCTAssertEqual(record["turn_id"], .number("12"))
+        XCTAssertNil(record["session_id"], "an oversized number counts as absent")
+        XCTAssertEqual(record["cwd"], .number("12"))
         XCTAssertEqual(record["agent_id"], .number(String(repeating: "9", count: HookRuntime.defaultFieldLimit)), "at the limit is kept")
         XCTAssertEqual(record["tool_response"],
                        .object(["exit_code": .string(String(repeating: "e", count: HookRuntime.defaultFieldLimit))]))
@@ -320,9 +316,8 @@ final class HookRuntimeRecordTests: XCTestCase {
     func testWorstCaseRecordFitsInOneSocketMessage() {
         let nasty = String(repeating: "\u{1}", count: 40_000)
         var payload = JSONObject()
-        for key in ["hook_event_name", "session_id", "turn_id", "agent_id", "agent_type", "cwd", "tool_name", "prompt",
-                    "last_assistant_message", "message", "notification_type", "error", "error_details", "source", "reason",
-                    "sidepulse_status", "sidepulse_mode", "agent_origin", "agent_origin_kind", "agent_origin_source",
+        for key in ["hook_event_name", "session_id", "agent_id", "cwd", "tool_name", "prompt",
+                    "last_assistant_message", "message", "notification_type", "error_details", "sidepulse_status", "sidepulse_mode", "agent_origin", "agent_origin_kind", "agent_origin_source",
                     "agent_origin_confidence", "tool_response"] {
             payload[key] = .string(nasty)
         }
@@ -493,6 +488,16 @@ final class HookRuntimeRunTests: XCTestCase {
         XCTAssertEqual(JSONValue.object(line), logged)
     }
 
+    /// Regression: a benchmark that ran the hook without input appended 1,000 empty records to the real log.
+    func testPayloadWithoutEventNameWritesNothing() throws {
+        let inbox = IPCTestSupport.Inbox<IPCMessage>()
+        try startServer(inbox)
+        for payload in ["", "{}", #"{"session_id":"s1"}"#] { XCTAssertEqual(runHook(payload), 0) }
+        usleep(200_000)
+        XCTAssertTrue(logLines().isEmpty)
+        XCTAssertEqual(inbox.count, 0)
+    }
+
     func testDisabledSocketSkipsSend() throws {
         let inbox = IPCTestSupport.Inbox<IPCMessage>()
         try startServer(inbox)
@@ -587,6 +592,13 @@ final class HookRuntimeRunTests: XCTestCase {
         return payloads
     }
 
+    /// Payloads whose record has no event name are skipped, so they write nothing.
+    private static func loggedHostilePayloads() -> [(String, Data)] {
+        hostilePayloads().filter {
+            HookRuntime.makeRecord(provider: .claude, payload: $0.1, now: fixedNow, origin: nil)["hook_event_name"] != nil
+        }
+    }
+
     func testHostilePayloadsNeverWriteToStdoutOrStderr() throws {
         let payloads = Self.hostilePayloads()
         let output = IPCTestSupport.captureStandardStreams(in: root) {
@@ -598,9 +610,11 @@ final class HookRuntimeRunTests: XCTestCase {
         }
         XCTAssertEqual(output.count, 0, String(decoding: output.prefix(500), as: UTF8.self))
 
+        let logged = Self.loggedHostilePayloads()
+        XCTAssertGreaterThan(logged.count, payloads.count / 2)
         let lines = logLines()
-        XCTAssertEqual(lines.count, payloads.count, "exactly one line per payload")
-        for (line, (name, _)) in zip(lines, payloads) {
+        XCTAssertEqual(lines.count, logged.count, "exactly one line per payload with an event name")
+        for (line, (name, _)) in zip(lines, logged) {
             let value = try JSONValue.parse(line)
             XCTAssertNotNil(value.objectValue, name)
             XCTAssertEqual(value["logged_at"], .string("2026-09-26T00:31:49.125Z"), name)
@@ -615,7 +629,8 @@ final class HookRuntimeRunTests: XCTestCase {
         for (_, payload) in payloads {
             XCTAssertEqual(HookRuntime.run(arguments: ["--provider=codex"], stdin: payload, environment: env, paths: paths, now: fixedNow), 0)
         }
-        XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == payloads.count }, "\(inbox.count)")
+        let logged = Self.loggedHostilePayloads().count
+        XCTAssertTrue(IPCTestSupport.waitUntil { inbox.count == logged }, "\(inbox.count)")
     }
 
     // MARK: Latency

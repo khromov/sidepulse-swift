@@ -10,6 +10,8 @@ public enum HookRuntime {
         let record = makeRecord(provider: provider, payload: stdin, now: now) {
             OriginDetector.detect(provider: provider, environment: environment)
         }
+        // A payload without an event name, such as a hand-run command with no input, carries no status.
+        guard record["hook_event_name"] != nil else { return 0 }
         let line = JSONValue.object(record).serialized()
 
         // The log is the durable record, independent of the socket, so a dead runtime never loses the event.
@@ -108,35 +110,29 @@ public enum HookRuntime {
         guard case .object(var raw) = parsed else {
             return parseErrorRecord(record, message: "Expected a JSON object, got \(typeName(parsed))")
         }
-        if provider == .codex, case .object(let inner)? = raw["event"],
-           raw["hook_event_name"] == nil, raw["hookEventName"] == nil {
+        if provider == .codex, case .object(let inner)? = raw["event"], raw["hook_event_name"] == nil {
             raw = inner
         }
 
-        func scalar(_ keys: String..., limit: Int = defaultFieldLimit) -> JSONValue? {
-            for key in keys {
-                switch raw[key] {
-                case .string(let s)? where !s.isEmpty: return .string(truncated(s, to: limit))
-                case .number(let n)? where n.utf8.count <= limit: return .number(n)
-                default: continue
-                }
+        func scalar(_ key: String, limit: Int = defaultFieldLimit) -> JSONValue? {
+            switch raw[key] {
+            case .string(let s)? where !s.isEmpty: return .string(truncated(s, to: limit))
+            case .number(let n)? where n.utf8.count <= limit: return .number(n)
+            default: return nil
             }
-            return nil
         }
 
-        record["hook_event_name"] = scalar("hook_event_name", "hookEventName")
-        record["session_id"] = scalar("session_id", "sessionId")
-        record["turn_id"] = scalar("turn_id", "turnId")
-        record["agent_id"] = scalar("agent_id", "agentId")
-        record["agent_type"] = scalar("agent_type", "agentType")
+        record["hook_event_name"] = scalar("hook_event_name")
+        record["session_id"] = scalar("session_id")
+        record["agent_id"] = scalar("agent_id")
         record["cwd"] = scalar("cwd")
-        record["tool_name"] = scalar("tool_name", "toolName")
+        record["tool_name"] = scalar("tool_name")
 
-        if case .string(let command)? = (raw["tool_input"] ?? raw["toolInput"])?["command"] {
+        if case .string(let command)? = raw["tool_input"]?["command"] {
             record["tool_input"] = .object(["command": .string(truncated(command, to: 2000))])
         }
 
-        if let response = raw["tool_response"] ?? raw["toolResponse"], !response.isNull {
+        if let response = raw["tool_response"], !response.isNull {
             switch response {
             case .object(let object):
                 var kept = JSONObject()
@@ -153,29 +149,26 @@ public enum HookRuntime {
         }
 
         record["prompt"] = scalar("prompt", limit: 4000)
-        if case .string(let text)? = raw["last_assistant_message"] ?? raw["lastAssistantMessage"] {
+        if case .string(let text)? = raw["last_assistant_message"] {
             // Strip code before the cut, since a cut through a code block would pair the remaining fences
             // differently and expose code to the classifier.
             let prose = stripFencedCodeBlocks(text)
             if !prose.isEmpty { record["last_assistant_message"] = .string(headAndTail(prose)) }
         }
         record["message"] = scalar("message", limit: 2000)
-        record["notification_type"] = scalar("notification_type", "notificationType")
-        record["error"] = scalar("error", limit: 500)
+        record["notification_type"] = scalar("notification_type")
         record["error_details"] = scalar("error_details", limit: 500)
-        record["source"] = scalar("source")
-        record["reason"] = scalar("reason")
-        if let ids = backgroundTaskIDs(raw["background_tasks"] ?? raw["backgroundTasks"]) {
+        if let ids = backgroundTaskIDs(raw["background_tasks"]) {
             record["background_task_ids"] = .array(ids.map(JSONValue.string))
         }
         record["sidepulse_status"] = scalar("sidepulse_status")
         record["sidepulse_mode"] = scalar("sidepulse_mode")
 
-        if let own = scalar("agent_origin", "agentOrigin") {
+        if let own = scalar("agent_origin") {
             record["agent_origin"] = own
-            record["agent_origin_kind"] = scalar("agent_origin_kind", "agentOriginKind")
-            record["agent_origin_source"] = scalar("agent_origin_source", "agentOriginSource")
-            record["agent_origin_confidence"] = scalar("agent_origin_confidence", "agentOriginConfidence")
+            record["agent_origin_kind"] = scalar("agent_origin_kind")
+            record["agent_origin_source"] = scalar("agent_origin_source")
+            record["agent_origin_confidence"] = scalar("agent_origin_confidence")
         } else if let origin = detectOrigin() {
             record["agent_origin"] = .string(origin.label)
             record["agent_origin_kind"] = .string(origin.kind)
