@@ -3,20 +3,41 @@
 #
 # Sign with SIDEPULSE_CODESIGN_IDENTITY to keep macOS's removable-volume permission
 # across rebuilds; an ad-hoc signature changes every build, so macOS asks again.
+#
+# --distribution signs with the hardened runtime and a secure timestamp because
+# notarization (scripts/release.sh) rejects the app without them.
 set -eu
 
 usage() {
-    echo "usage: scripts/build-app.sh [--debug]" >&2
+    echo "usage: scripts/build-app.sh [--debug | --distribution]" >&2
 }
 
 CONFIG=release
+DISTRIBUTION=0
 for arg in "$@"; do
     case "$arg" in
         --debug) CONFIG=debug ;;
+        --distribution) DISTRIBUTION=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $arg" >&2; usage; exit 2 ;;
     esac
 done
+
+IDENTITY=${SIDEPULSE_CODESIGN_IDENTITY:--}
+ARCH_FLAGS=
+SIGN_FLAGS=--timestamp=none
+if [ "$DISTRIBUTION" -eq 1 ]; then
+    if [ "$CONFIG" = debug ]; then
+        echo "error: --distribution builds release binaries; drop --debug" >&2
+        exit 2
+    fi
+    if [ "$IDENTITY" = "-" ]; then
+        echo "error: --distribution needs SIDEPULSE_CODESIGN_IDENTITY (a \"Developer ID Application: …\" identity)" >&2
+        exit 1
+    fi
+    ARCH_FLAGS="--arch arm64 --arch x86_64"
+    SIGN_FLAGS="--options runtime --timestamp"
+fi
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -28,10 +49,11 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-echo "Building SidePulse $VERSION ($CONFIG)..."
-swift build -c "$CONFIG" --product sidepulse
-swift build -c "$CONFIG" --product SidePulseApp
-BIN=$(swift build -c "$CONFIG" --show-bin-path)
+echo "Building SidePulse $VERSION ($CONFIG${ARCH_FLAGS:+, universal})..."
+# ARCH_FLAGS is unquoted on purpose: it holds zero or more separate arguments.
+swift build -c "$CONFIG" $ARCH_FLAGS --product sidepulse
+swift build -c "$CONFIG" $ARCH_FLAGS --product SidePulseApp
+BIN=$(swift build -c "$CONFIG" $ARCH_FLAGS --show-bin-path)
 
 APP="$ROOT/build/SidePulse.app"
 rm -rf "$APP"
@@ -49,13 +71,14 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 # Extended attributes such as FinderInfo make codesign fail; the bundle needs none.
 xattr -cr "$APP" 2>/dev/null || true
 # Nested code first, then the bundle (which seals Info.plist and the helper).
-IDENTITY=${SIDEPULSE_CODESIGN_IDENTITY:--}
-codesign --force --timestamp=none --sign "$IDENTITY" --identifier io.sidepulse.swift.cli "$APP/Contents/Helpers/sidepulse"
-codesign --force --timestamp=none --sign "$IDENTITY" "$APP"
+codesign --force $SIGN_FLAGS --sign "$IDENTITY" --identifier io.sidepulse.swift.cli "$APP/Contents/Helpers/sidepulse"
+codesign --force $SIGN_FLAGS --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 
 if [ "$IDENTITY" = "-" ]; then
     echo "Built $APP (signed ad hoc; set SIDEPULSE_CODESIGN_IDENTITY to sign with a certificate)"
+elif [ "$DISTRIBUTION" -eq 1 ]; then
+    echo "Built $APP (universal, signed for distribution with $IDENTITY)"
 else
     echo "Built $APP (signed with $IDENTITY)"
 fi

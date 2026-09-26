@@ -20,6 +20,7 @@ swift run sidepulse --help
 SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline   # CLI against a throwaway data root
 scripts/build-app.sh [--debug]                # build/SidePulse.app (ad-hoc signed unless SIDEPULSE_CODESIGN_IDENTITY)
 scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications, link ~/.local/bin/sidepulse, run setup
+scripts/release.sh [--sign ID] [--notary-profile NAME]   # Developer ID + notarize + staple → dist/SidePulse-VERSION.zip
 ```
 
 There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode, macOS 14+ and no third-party dependencies.

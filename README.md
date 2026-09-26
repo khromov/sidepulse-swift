@@ -494,7 +494,8 @@ Environment overrides:
 | `SIDEPULSE_DISABLE_EVENT_SOCKET=1` | The hook only logs and does not notify the app |
 | `SIDEPULSE_AGENT_ORIGIN`, `SIDEPULSE_AGENT_ORIGIN_KIND` | Override the detected origin label, for example "Claude in VS Code" |
 | `CODEX_HOME`, `CODEX_CLI_PATH` | Codex config directory, and the `codex` binary used for hook trust |
-| `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh` and `scripts/install.sh` (default: ad hoc) |
+| `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
+| `SIDEPULSE_NOTARY_PROFILE` | notarytool keychain profile for `scripts/release.sh` (default: `notary`) |
 
 The app started by the LaunchAgent does not see variables exported in your
 shell, except `PATH`, which is copied into the plist at install time.
@@ -613,6 +614,7 @@ swift test                                    # XCTest suites
 swift run sidepulse --help
 scripts/build-app.sh [--debug]                # build/SidePulse.app
 SIDEPULSE_CODESIGN_IDENTITY="…" scripts/build-app.sh   # sign with a certificate
+scripts/release.sh                            # notarized dist/SidePulse-VERSION.zip (see Releasing)
 SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline
 ```
 
@@ -639,6 +641,42 @@ Opt-in and environment-dependent tests:
 | `SIDEPULSE_REGENERATE_BUILTINS=1` | `LEDBuiltInProgramsSourceTests` | Regenerates `Sources/SidePulseCore/LED/BuiltInPrograms.swift` from the Python checkout |
 | `SIDEPULSE_STATUS_DIFF_DIR=<dir>` | `StatusDifferentialTests` | Scans copies of the provider logs in `<dir>/logs/` and writes `swift.json` for comparison with the Python collector. `SIDEPULSE_STATUS_DIFF_MAX_LINES` sets the scan depth (default 5000) |
 | `SIDEPULSE_SKIP_CODEX_TESTS=1` | `HookInstallRealCodexTests` | Skips the trust check against a real `codex` binary, which otherwise runs whenever Codex is installed |
+
+### Releasing
+
+```sh
+scripts/release.sh                              # dist/SidePulse-VERSION.zip, notarized
+scripts/release.sh --sign "Developer ID Application: …" --notary-profile NAME
+```
+
+`scripts/release.sh` builds a notarized app for a GitHub release. It needs a
+"Developer ID Application" certificate and a notarytool keychain profile. Store
+the profile once with the following command. notarytool asks for an
+app-specific password, which you create at account.apple.com:
+
+```sh
+xcrun notarytool store-credentials notary --apple-id YOU@EXAMPLE.COM --team-id TEAMID
+```
+
+The script runs these steps:
+
+1. **Checks** the signing identity and the notary profile before building. The
+   identity comes from `--sign` / `$SIDEPULSE_CODESIGN_IDENTITY`, else from the
+   only Developer ID Application identity in the keychain. The profile comes
+   from `--notary-profile` / `$SIDEPULSE_NOTARY_PROFILE` (default `notary`).
+   If the working tree has uncommitted changes, it prints a warning.
+2. **Builds** `build/SidePulse.app` with `scripts/build-app.sh --distribution`.
+   It uses universal (arm64 and x86_64) binaries and signs them with the
+   hardened runtime and a secure timestamp.
+3. **Notarizes** the app with `notarytool` and waits for Apple's verdict. When
+   the status is not Accepted, it prints Apple's log and exits 1. Otherwise it
+   staples the ticket to the app and checks it with `spctl`.
+4. **Zips** the stapled app to `dist/SidePulse-VERSION.zip` with `ditto` and
+   prints the SHA-256. An existing zip for the same version is replaced.
+
+It uploads nothing, creates no tag and pushes nothing. You attach the zip to a
+GitHub release yourself, for example with
+`gh release create vVERSION dist/SidePulse-VERSION.zip`.
 
 ## Uninstall
 

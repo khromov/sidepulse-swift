@@ -150,7 +150,10 @@ Bundle: `Resources/Info.plist` is the template for
 writes LED programs to your SidePulse device.", is the reason macOS shows when
 it asks for removable-volume access on the first device write. `build-app.sh`
 signs ad hoc unless `SIDEPULSE_CODESIGN_IDENTITY` is set (`install.sh --sign`);
-an ad-hoc grant does not survive a rebuild.
+an ad-hoc grant does not survive a rebuild. `release.sh` uses
+`build-app.sh --distribution` (universal binaries, hardened runtime, secure
+timestamp) with a Developer ID identity. It then notarizes and staples the app
+and zips it to `dist/SidePulse-VERSION.zip`.
 
 ## Module map (`Sources/`)
 
