@@ -1,12 +1,14 @@
-# SidePulse (Swift)
+# sidepulse-swift
 
-A lightweight Swift replacement for the Python
-[`sidepulse`](https://github.com/inteliwear/sidepulse) project: a `sidepulse`
-CLI plus a native macOS menu-bar app that show Claude Code, Codex and OpenCode
-agent status on SidePulse LEDs.
+A lightweight replacement for the official Python [`sidepulse`](https://github.com/inteliwear/sidepulse) project.
+macOS-native CLI and app with support for Claude Code, Codex and OpenCode for SidePulse LEDs:
 
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
+
+Under 100MB in memory usage vs >1GB for the official implementation.
+
+## Spec
 
 Both mount as FAT volumes. You drive the LEDs by writing a small program to
 `LEDS.LED` on the volume. The DSL is documented in the Python repo's
@@ -176,22 +178,23 @@ for `leds` without `--once`. An option that takes a value never takes the next
 `--flag` as its value (`argument --file-name: expected one argument`); write
 `--file-name=--x` for a value that starts with `--`.
 
-| Command | Purpose |
-| --- | --- |
-| `setup` | Install agent hooks and start the menu-bar app |
-| `status` | Show the current agent status |
-| `write` | Write an LED program to a SidePulse device |
-| `leds` | Mirror agent status to the LEDs (headless) |
-| `run` | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
-| `install` | Install agent hooks (Claude Code, Codex, OpenCode) |
-| `uninstall` | Remove agent hooks |
-| `doctor` | Check hook installation and the app |
-| `app` | Start, stop or inspect the menu-bar app |
-| `settings` | Open the SidePulse settings window (starts the app if needed) |
-| `version` | Print the version |
-| `help` | Show help for sidepulse or one command |
+| Command     | Purpose                                                                        |
+| ----------- | ------------------------------------------------------------------------------ |
+| `setup`     | Install agent hooks and start the menu-bar app                                 |
+| `status`    | Show the current agent status                                                  |
+| `write`     | Write an LED program to a SidePulse device                                     |
+| `leds`      | Mirror agent status to the LEDs (headless)                                     |
+| `run`       | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
+| `install`   | Install agent hooks (Claude Code, Codex, OpenCode)                             |
+| `uninstall` | Remove agent hooks                                                             |
+| `doctor`    | Check hook installation and the app                                            |
+| `app`       | Start, stop or inspect the menu-bar app                                        |
+| `settings`  | Open the SidePulse settings window (starts the app if needed)                  |
+| `version`   | Print the version                                                              |
+| `help`      | Show help for sidepulse or one command                                         |
 
 **`sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]`**
+
 - `--no-app`: only install hooks. Do not install or start the menu-bar app.
 - `--dry-run`: show what would change without changing anything.
 - `--no-trust`: do not mark the Codex hooks trusted.
@@ -200,6 +203,7 @@ for `leds` without `--once`. An option that takes a value never takes the next
 Asks the running app. If the app is not running, or with `--offline`, the
 status is rebuilt from the hook logs with the same state machine and Codex
 thread titles as the app.
+
 - `--json`: print the snapshot as JSON.
 - `--all`: also list stale agents.
 - `--offline`: read the hook logs instead of asking the app.
@@ -208,6 +212,7 @@ thread titles as the app.
 **`sidepulse write [PROGRAM|-] [--device PATH] [--file-name NAME] [--dry-run] [--manual]`**
 `-` reads the program from stdin. Piped stdin is also read when no program
 argument is given.
+
 - `--device PATH`: device volume or its `LEDS.LED` (default: auto-discover).
 - `--file-name NAME`: file to write on the volume (default `LEDS.LED`).
 - `--dry-run`: validate and print the program without writing.
@@ -223,6 +228,7 @@ This is the menu-bar app without UI. It refuses to start while the app, or
 another headless run, owns the socket. For a headless owner the error names its
 pid: `a headless 'sidepulse run' (pid N) already drives the LEDs; stop it with
 Ctrl-C in its terminal or 'kill N', or use 'sidepulse leds --once'.`
+
 - `--once`: sync once and exit. Every connected Agent-mode device is synced.
   Exits 2 on error.
 - `--device PATH`: requires `--once`. Syncs only this device, whatever its
@@ -243,6 +249,7 @@ call `~/.local/bin/sidepulse` when it links to the CLI inside a `SidePulse.app`,
 else that bundled CLI directly (or the running CLI for a development build).
 A `~/.local/bin/sidepulse` that is anything else, such as the Python install's,
 is ignored with a note. `$SIDEPULSE_CLI_PATH` overrides all of this.
+
 - `--dry-run`: show what would change without writing.
 - `--no-trust`: do not mark the Codex hooks trusted. Install then reminds you to
   approve them with `/hooks` in Codex.
@@ -251,6 +258,7 @@ is ignored with a note. `$SIDEPULSE_CLI_PATH` overrides all of this.
 Removes SidePulse hooks, current and Python-era, from every provider by
 default, and deletes the SidePulse OpenCode plugin. Other hooks are left
 untouched, and a `sidepulse.js` that SidePulse did not write stays with a note.
+
 - `--dry-run`: show what would change without writing.
 
 **`sidepulse doctor [--json]`**
@@ -278,20 +286,21 @@ whether the app is running (pid and version, labelled `headless 'sidepulse run'`
 for a headless owner) and the socket path. It ends with
 `cli: <path> (written by install)` (or `not found`), plus a note when
 `~/.local/bin/sidepulse` is not the SidePulse CLI.
+
 - `--json`: print the report as JSON. Each provider adds `hook_cli_paths`,
   `hook_cli_problems`, `untrusted_events`, `disabled_events` and `notes`. `app` adds `cli_note`, and its
   `cli_path` may be null.
 
 **`sidepulse app [start|stop|restart|status|install|uninstall] [--foreground]`**
 
-| Action | Effect |
-| --- | --- |
+| Action            | Effect                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start` (default) | Starts the app: through the LaunchAgent when its plist exists (a plist that runs another binary is started as is, with a note to run `sidepulse app install`), otherwise opens `SidePulse.app` for this session only, without turning on launch at login. A running app is left alone ("already running (pid N)"). Fails while a headless `sidepulse run` owns the socket |
-| `stop` | Boots the app out. The plist stays, so the app returns at next login ("kept" is printed only when the plist exists). When the socket owner is not the LaunchAgent's instance, it changes nothing and fails: an app running outside launchd must be quit from the menu bar, and a headless `sidepulse run` must be stopped with Ctrl-C or `kill` |
-| `restart` | `launchctl kickstart -k` of the LaunchAgent's instance. Fails when the app runs outside launchd or a headless `sidepulse run` owns the socket |
-| `status` | Shows plist, launchd and socket state. Exits 0 only when the app answers; a headless `sidepulse run` shows as `app: not running (a headless 'sidepulse run' (pid N) owns the socket)` |
-| `install` | Writes the LaunchAgent and starts it. If SidePulse already runs outside launchd, or a headless `sidepulse run` owns the socket, only writes the plist |
-| `uninstall` | Boots the LaunchAgent out and deletes the plist |
+| `stop`            | Boots the app out. The plist stays, so the app returns at next login ("kept" is printed only when the plist exists). When the socket owner is not the LaunchAgent's instance, it changes nothing and fails: an app running outside launchd must be quit from the menu bar, and a headless `sidepulse run` must be stopped with Ctrl-C or `kill`                           |
+| `restart`         | `launchctl kickstart -k` of the LaunchAgent's instance. Fails when the app runs outside launchd or a headless `sidepulse run` owns the socket                                                                                                                                                                                                                             |
+| `status`          | Shows plist, launchd and socket state. Exits 0 only when the app answers; a headless `sidepulse run` shows as `app: not running (a headless 'sidepulse run' (pid N) owns the socket)`                                                                                                                                                                                     |
+| `install`         | Writes the LaunchAgent and starts it. If SidePulse already runs outside launchd, or a headless `sidepulse run` owns the socket, only writes the plist                                                                                                                                                                                                                     |
+| `uninstall`       | Boots the LaunchAgent out and deletes the plist                                                                                                                                                                                                                                                                                                                           |
 
 - `--foreground`: only with `start`. Runs the app in this terminal instead of
   via launchd. Refuses while the app or a headless `sidepulse run` owns the
@@ -314,15 +323,15 @@ point that agent hooks and the OpenCode plugin call. See
 Every hook event maps to a mode. The mode decides the menu-bar icon and the LED
 animation.
 
-| Mode | Priority | Menu bar | Default LED (Signal profile) | Set by |
-| --- | --- | --- | --- | --- |
-| Blocked / Error | 1 | Ask | `solid-red` | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response |
-| Waiting for Input | 2 | Ask | `ember-complete` | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` or `idle_prompt` Notification |
-| Tool Running | 3 | Working | `ember-tide` | `PreToolUse` |
-| Long Task Progress | 4 | Working | `ember-tide` | Not produced by any event today |
-| Working | 5 | Working | `ember-tide` | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse` |
-| Completed | 6 | Done | `solid-green` | `Stop`/`SubagentStop`, `SessionEnd`, a subagent closed along with its session or its parent's turn (see Subagents below) |
-| Idle / Ready | 7 | Idle | `solid-blue` | `SessionStart`, `Interrupt` (Codex, OpenCode) |
+| Mode               | Priority | Menu bar | Default LED (Signal profile) | Set by                                                                                                                                        |
+| ------------------ | -------- | -------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blocked / Error    | 1        | Ask      | `solid-red`                  | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response                                            |
+| Waiting for Input  | 2        | Ask      | `ember-complete`             | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` or `idle_prompt` Notification |
+| Tool Running       | 3        | Working  | `ember-tide`                 | `PreToolUse`                                                                                                                                  |
+| Long Task Progress | 4        | Working  | `ember-tide`                 | Not produced by any event today                                                                                                               |
+| Working            | 5        | Working  | `ember-tide`                 | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`                                                  |
+| Completed          | 6        | Done     | `solid-green`                | `Stop`/`SubagentStop`, `SessionEnd`, a subagent closed along with its session or its parent's turn (see Subagents below)                      |
+| Idle / Ready       | 7        | Idle     | `solid-blue`                 | `SessionStart`, `Interrupt` (Codex, OpenCode)                                                                                                 |
 
 How the global display state is chosen:
 
@@ -392,23 +401,23 @@ asks the running one to show Settings and exits. Only when the socket belongs
 to a headless `sidepulse run` or `sidepulse leds` does it show an alert. A copy
 started by the LaunchAgent exits quietly (see `app.log`).
 
-| Menu item | What it does |
-| --- | --- |
-| `SidePulse — Working (2 active)` | Header: aggregate state and number of active agents |
-| **Agents** | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. Titles longer than 22 characters (project names over 16) are shortened with "…" so the menu stays narrow. The tooltip shows the full title when shortened, then state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
-| **Devices** | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected |
-| **Keep Awake** | One centered row of three buttons: **Never** / **When Agents Work** / **Always**, with the active one in the accent color. "Keeping Mac awake" appears below while the Mac is held awake |
-| **Settings...** (⌘,) | Opens the settings window |
-| **Quit SidePulse** (⌘Q) | Quits the app |
+| Menu item                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SidePulse — Working (2 active)` | Header: aggregate state and number of active agents                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Agents**                       | Up to 10 recent sessions (subagents fold into their session), by priority then recency. Includes Completed sessions from the last 48 hours by default. Titles longer than 22 characters (project names over 16) are shortened with "…" so the menu stays narrow. The tooltip shows the full title when shortened, then state, event, tool, age and origin (for example "Claude Code CLI"). Click a session to open its working directory in Finder |
+| **Devices**                      | One submenu per connected or remembered device: **Agent Status** / **Manual**, a **Brightness** slider, the last write error or permission notice (see **Permission** below), and **Remove** for devices that are not connected                                                                                                                                                                                                                    |
+| **Keep Awake**                   | One centered row of three buttons: **Never** / **When Agents Work** / **Always**, with the active one in the accent color. "Keeping Mac awake" appears below while the Mac is held awake                                                                                                                                                                                                                                                           |
+| **Settings...** (⌘,)             | Opens the settings window                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Quit SidePulse** (⌘Q)          | Quits the app                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 The Settings window has four tabs:
 
-| Tab | Contents |
-| --- | --- |
-| General | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder) |
-| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status |
-| Devices | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected |
-| Hooks | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
+| Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder)                                                                                                                                                                                                                                    |
+| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid ember when waiting, solid red on error, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                   |
+| Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                        |
+| Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
 Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, KITT Scanner,
@@ -477,35 +486,35 @@ variants.
 
 ## Files & paths
 
-| Path | Contents |
-| --- | --- |
-| `~/Library/Application Support/SidePulse/settings.json` | Settings: devices, animations, timeouts, keep-awake. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced |
-| `…/SidePulse/latest.json` | Restart snapshot of agent rows, written with a short delay |
-| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB |
-| `…/SidePulse/events.sock`, `events.sock.lock` | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700 |
-| `…/SidePulse/app.log`, `app.out.log`, `app.err.log` | App diagnostics, and the LaunchAgent's stdout and stderr |
-| `~/Library/LaunchAgents/io.sidepulse.swift.plist` | Launch at login |
-| `~/Applications/SidePulse.app` | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications` |
-| `~/.local/bin/sidepulse` | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly |
-| `~/.claude/settings.json`, `~/.codex/config.toml` | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
-| `~/.config/opencode/plugins/sidepulse.js` | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted |
-| `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive` | Device files (`keepalive` on 8-LED devices only) |
+| Path                                                                       | Contents                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/Library/Application Support/SidePulse/settings.json`                    | Settings: devices, animations, timeouts, keep-awake. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced                                                                                                                                                                                                                     |
+| `…/SidePulse/latest.json`                                                  | Restart snapshot of agent rows, written with a short delay                                                                                                                                                                                                                                                                                                                   |
+| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB                                                                                                                                                                                                                                                                                                                     |
+| `…/SidePulse/events.sock`, `events.sock.lock`                              | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700                                                                                                                  |
+| `…/SidePulse/app.log`, `app.out.log`, `app.err.log`                        | App diagnostics, and the LaunchAgent's stdout and stderr                                                                                                                                                                                                                                                                                                                     |
+| `~/Library/LaunchAgents/io.sidepulse.swift.plist`                          | Launch at login                                                                                                                                                                                                                                                                                                                                                              |
+| `~/Applications/SidePulse.app`                                             | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications`                                                                                                                                                                                                                                                                                     |
+| `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                                                                                                       |
+| `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
+| `~/.config/opencode/plugins/sidepulse.js`                                  | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted       |
+| `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive`                | Device files (`keepalive` on 8-LED devices only)                                                                                                                                                                                                                                                                                                                             |
 
 Environment overrides:
 
-| Variable | Effect |
-| --- | --- |
-| `SIDEPULSE_HOME` | Replaces the data root (`~/Library/Application Support/SidePulse`). A relative path is relative to `HOME`, not to the working directory |
-| `SIDEPULSE_MOUNT_ROOTS` | Colon-separated directories to scan for devices, instead of `/Volumes` |
-| `SIDEPULSE_CLI_PATH` | CLI path to write into hook commands, taken as is (doctor only checks that it exists) |
-| `SIDEPULSE_APP_PATH` | App bundle or binary used by `app`, `setup`, `settings` and `doctor` |
-| `SIDEPULSE_DISABLE_EVENT_SOCKET=1` | The hook only logs and does not notify the app |
-| `SIDEPULSE_AGENT_ORIGIN` | Override the detected origin label, for example "Claude in VS Code" |
-| `CLAUDE_CONFIG_DIR` | Claude Code config directory, where the hooks go (`settings.json`) |
-| `CODEX_HOME`, `CODEX_CLI_PATH` | Codex config directory, and the `codex` binary used for hook trust |
-| `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses) |
-| `SIDEPULSE_CODESIGN_IDENTITY` | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
-| `SIDEPULSE_NOTARY_PROFILE` | notarytool keychain profile for `scripts/release.sh` (default: `notary`) |
+| Variable                                 | Effect                                                                                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIDEPULSE_HOME`                         | Replaces the data root (`~/Library/Application Support/SidePulse`). A relative path is relative to `HOME`, not to the working directory                                         |
+| `SIDEPULSE_MOUNT_ROOTS`                  | Colon-separated directories to scan for devices, instead of `/Volumes`                                                                                                          |
+| `SIDEPULSE_CLI_PATH`                     | CLI path to write into hook commands, taken as is (doctor only checks that it exists)                                                                                           |
+| `SIDEPULSE_APP_PATH`                     | App bundle or binary used by `app`, `setup`, `settings` and `doctor`                                                                                                            |
+| `SIDEPULSE_DISABLE_EVENT_SOCKET=1`       | The hook only logs and does not notify the app                                                                                                                                  |
+| `SIDEPULSE_AGENT_ORIGIN`                 | Override the detected origin label, for example "Claude in VS Code"                                                                                                             |
+| `CLAUDE_CONFIG_DIR`                      | Claude Code config directory, where the hooks go (`settings.json`)                                                                                                              |
+| `CODEX_HOME`, `CODEX_CLI_PATH`           | Codex config directory, and the `codex` binary used for hook trust                                                                                                              |
+| `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses)                                                                                       |
+| `SIDEPULSE_CODESIGN_IDENTITY`            | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
+| `SIDEPULSE_NOTARY_PROFILE`               | notarytool keychain profile for `scripts/release.sh` (default: `notary`)                                                                                                        |
 
 The app started by the LaunchAgent does not see variables exported in your
 shell, except `PATH`, which is copied into the plist from the process that
@@ -543,8 +552,8 @@ success. Each handler also gets a 10 s timeout.
   append below the block lands in SidePulse's last table (a hook or its trust
   entry), where Codex ignores it. Install and uninstall would remove it with
   that table, so they refuse to edit the file, with `TOML puts <key> in
-  SidePulse's <table> table; move it above the SidePulse block; fix it by
-  hand, then retry`. They do the same for any other key SidePulse did not write
+SidePulse's <table> table; move it above the SidePulse block; fix it by
+hand, then retry`. They do the same for any other key SidePulse did not write
   in its own groups or trust tables. When `~/.codex/hooks.json` also defines hooks,
   install notes that Codex warns about loading hooks from both files, which is
   harmless.
@@ -593,6 +602,7 @@ On every event, `sidepulse hook-log`:
    Invalid JSON, including JSON nested more than 128 levels deep, becomes a
    `ParseError` record. A payload without an event name, such as a hand-run
    command with no input, is dropped here.
+
 3. Appends the record as one line to `logs/<provider>.jsonl`. If an
    interrupted write left the last line unfinished, the record starts on a
    new line. The append never waits: a log path that is not a regular file
@@ -627,19 +637,19 @@ record. When the event stream ends or fails, the plugin subscribes again after
 a pause that starts at 0.5 s and doubles up to 30 s; events sent in that gap
 are lost.
 
-| OpenCode event | Record |
-| --- | --- |
-| `session.created` | `SessionStart` |
-| `session.execution.started` | `UserPromptSubmit`, with the prompt from `session.inbox.enqueued`. A prompt sent while the session is busy is reported at once |
-| `session.tool.called` | `PreToolUse`, with the tool name and, for `shell`, the command |
-| `session.tool.success` | `PostToolUse`, with the shell exit code. A non-zero exit shows Blocked / Error |
-| `session.tool.failed` (declined permission, Ctrl-C, dismissed question) | `PostToolUseFailure` |
-| `permission.asked`, `form.created` (the question tool) | `PermissionRequest` |
-| `session.compaction.started`, `session.compaction.ended` | `PreCompact`, `PostCompact` |
-| `session.execution.succeeded` | `Stop`, with the text of the turn's last assistant message as the row's message |
-| `session.execution.failed` | `StopFailure`, with the error type and message |
-| `session.execution.interrupted` | `Interrupt` |
-| `session.deleted` | `SessionEnd`, only for a session the plugin has seen since OpenCode started, so deleting old sessions adds no rows |
+| OpenCode event                                                          | Record                                                                                                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `session.created`                                                       | `SessionStart`                                                                                                                 |
+| `session.execution.started`                                             | `UserPromptSubmit`, with the prompt from `session.inbox.enqueued`. A prompt sent while the session is busy is reported at once |
+| `session.tool.called`                                                   | `PreToolUse`, with the tool name and, for `shell`, the command                                                                 |
+| `session.tool.success`                                                  | `PostToolUse`, with the shell exit code. A non-zero exit shows Blocked / Error                                                 |
+| `session.tool.failed` (declined permission, Ctrl-C, dismissed question) | `PostToolUseFailure`                                                                                                           |
+| `permission.asked`, `form.created` (the question tool)                  | `PermissionRequest`                                                                                                            |
+| `session.compaction.started`, `session.compaction.ended`                | `PreCompact`, `PostCompact`                                                                                                    |
+| `session.execution.succeeded`                                           | `Stop`, with the text of the turn's last assistant message as the row's message                                                |
+| `session.execution.failed`                                              | `StopFailure`, with the error type and message                                                                                 |
+| `session.execution.interrupted`                                         | `Interrupt`                                                                                                                    |
+| `session.deleted`                                                       | `SessionEnd`, only for a session the plugin has seen since OpenCode started, so deleting old sessions adds no rows             |
 
 - **Subagents.** A subagent session reports under its parent session with its
   own `agent_id` (`SubagentStart`, `SubagentStop`), like a Claude subagent.
@@ -754,12 +764,12 @@ test process for a moment.
 
 Opt-in and environment-dependent tests:
 
-| Variable | Test | What it does |
-| --- | --- | --- |
-| `SIDEPULSE_INTEGRATION=1` | `CLIIntegrationTests` | End-to-end CLI against the real core. `swift build` first for the hook-binary test. Run with `SIDEPULSE_INTEGRATION=1 swift test --filter CLIIntegration` |
-| `SIDEPULSE_LAUNCHCTL_TESTS=1` | `LaunchAgentLaunchctlTests` | Real launchd round trip with a throwaway `/bin/sleep` agent |
-| `SIDEPULSE_SKIP_CODEX_TESTS=1` | `HookInstallRealCodexTests` | Skips the trust check against a real `codex` binary, which otherwise runs whenever Codex is installed |
-| `bun` or `node` on `PATH` | `HookInstallOpenCodeTests.testPluginTurnsOpenCodeEventsIntoHookRecords` | Runs the generated OpenCode plugin on recorded event shapes with a fake CLI. Skipped when neither is installed |
+| Variable                       | Test                                                                    | What it does                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIDEPULSE_INTEGRATION=1`      | `CLIIntegrationTests`                                                   | End-to-end CLI against the real core. `swift build` first for the hook-binary test. Run with `SIDEPULSE_INTEGRATION=1 swift test --filter CLIIntegration` |
+| `SIDEPULSE_LAUNCHCTL_TESTS=1`  | `LaunchAgentLaunchctlTests`                                             | Real launchd round trip with a throwaway `/bin/sleep` agent                                                                                               |
+| `SIDEPULSE_SKIP_CODEX_TESTS=1` | `HookInstallRealCodexTests`                                             | Skips the trust check against a real `codex` binary, which otherwise runs whenever Codex is installed                                                     |
+| `bun` or `node` on `PATH`      | `HookInstallOpenCodeTests.testPluginTurnsOpenCodeEventsIntoHookRecords` | Runs the generated OpenCode plugin on recorded event shapes with a fake CLI. Skipped when neither is installed                                            |
 
 ### Releasing
 
@@ -794,7 +804,7 @@ The script runs these steps:
    `xcrun notarytool info ID --keychain-profile PROFILE` command and the
    commands that finish the release by hand (staple, `spctl`, zip), and exits
    1. Run those without rebuilding: the ticket covers these exact binaries.
-   Otherwise it staples the ticket to the app and checks it with `spctl`.
+      Otherwise it staples the ticket to the app and checks it with `spctl`.
 4. **Zips** the stapled app to `dist/SidePulse-VERSION.zip` with `ditto` and
    prints the SHA-256. The zip holds no extended attributes (`._` files), so
    the signature stays valid when it is extracted with `unzip` too. An existing zip for the same version is replaced.
