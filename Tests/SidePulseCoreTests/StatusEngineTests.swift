@@ -218,11 +218,10 @@ final class StatusEngineTests: XCTestCase {
         XCTAssertEqual(engine.statuses["claude:session:s"]?.mode, .toolRunning)
     }
 
-    func testDeniedPermissionStaysStickyUntilNextPrompt() {
+    func testPendingPermissionStaysStickyUntilNextPrompt() {
         let engine = StatusEngine()
         let fields: JSONObject = ["session_id": .string("s"), "tool_name": .string("Bash"), "tool_input": bash("rm -rf build")]
         engine.ingest(provider: "claude", line: claudeLine("PermissionRequest", at: 0, fields))
-        XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("PermissionDenied", at: 1, fields)))
         XCTAssertNil(engine.ingest(provider: "claude", line: claudeLine("PreToolUse", at: 2, ["session_id": .string("s"), "tool_name": .string("Read")])))
         XCTAssertEqual(engine.statuses["claude:session:s"]?.mode, .waitingForInput)
         engine.ingest(provider: "claude", line: claudeLine("UserPromptSubmit", at: 3, ["session_id": .string("s"), "prompt": .string("never mind")]))

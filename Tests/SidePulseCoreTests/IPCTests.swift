@@ -85,8 +85,11 @@ final class IPCSocketTests: XCTestCase {
     private func startServer(path: String? = nil, configure: (EventSocketServer) -> Void = { _ in },
                              inbox: IPCTestSupport.Inbox<IPCMessage> = .init(),
                              reply: @escaping @Sendable (IPCMessage) -> Data? = { message in
-                                 if case .command(name: "status", _) = message { return Data(#"{"aggregate":{"mode":"working"}}"#.utf8) }
-                                 return nil
+                                 switch message {
+                                 case .command(name: "ping", _): return IPCReply.ping()
+                                 case .command(name: "status", _): return Data(#"{"aggregate":{"mode":"working"}}"#.utf8)
+                                 default: return nil
+                                 }
                              }) throws -> EventSocketServer {
         let server = EventSocketServer(path: path ?? socketPath) { message in
             inbox.append(message)
@@ -133,15 +136,10 @@ final class IPCSocketTests: XCTestCase {
         XCTAssertTrue(inbox.items.contains(.command(name: "preview", args: ["animation": .string("x")])))
     }
 
-    func testServerAnswersPingItselfWhenHandlerDoesNot() throws {
+    func testCommandWithoutReplyJustCloses() throws {
         _ = try startServer(reply: { _ in nil })
-        let reply = try XCTUnwrap(EventSocketClient.request("ping", socketPath: socketPath))
-        let value = try JSONValue.parse(reply)
-        XCTAssertEqual(value["ok"], .bool(true))
-        XCTAssertEqual(value["pid"]?.intValue, Int(getpid()))
-        XCTAssertEqual(value["version"], .string(SidePulseConstants.version))
-        // Other commands without a reply: the server just closes.
-        XCTAssertEqual(EventSocketClient.request("reload-settings", socketPath: socketPath), Data())
+        XCTAssertEqual(EventSocketClient.request("ping", socketPath: socketPath), Data())
+        XCTAssertFalse(EventSocketClient.isServerRunning(socketPath: socketPath), "the handler owns ping")
     }
 
     func testCommandsNeverReachEventPath() throws {

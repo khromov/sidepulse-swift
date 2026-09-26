@@ -7,7 +7,6 @@ let package = Package(
     products: [
         .executable(name: "sidepulse", targets: ["sidepulse"]),
         .executable(name: "SidePulseApp", targets: ["SidePulseApp"]),
-        .library(name: "SidePulseCore", targets: ["SidePulseCore"]),
     ],
     targets: [
         // Foundation/Darwin/IOKit only: every hook runs the CLI, so it must launch fast.

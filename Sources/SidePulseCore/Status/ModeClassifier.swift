@@ -8,7 +8,7 @@ public enum ModeClassifier {
         if let explicit = explicitMode(raw: raw) { return explicit }
 
         switch event.eventName {
-        case "PostToolUseFailure", "PermissionDenied", "StopFailure":
+        case "PostToolUseFailure", "StopFailure":
             return .blockedError
         case "PermissionRequest":
             return .waitingForInput

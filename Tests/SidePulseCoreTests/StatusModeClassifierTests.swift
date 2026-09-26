@@ -13,7 +13,6 @@ final class StatusModeClassifierTests: XCTestCase {
     func testEventMappingTable() {
         XCTAssertEqual(mode("Interrupt"), .idleReady)
         XCTAssertEqual(mode("PostToolUseFailure"), .blockedError)
-        XCTAssertEqual(mode("PermissionDenied"), .blockedError)
         XCTAssertEqual(mode("StopFailure"), .blockedError)
         XCTAssertEqual(mode("PermissionRequest"), .waitingForInput)
         XCTAssertEqual(mode("Notification"), .working)

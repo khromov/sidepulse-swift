@@ -5,7 +5,7 @@ public enum EventParser {
     public static let knownEvents: [String] = [
         "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
         "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop", "Interrupt",
-        "PostToolUseFailure", "Notification", "SessionEnd", "PermissionDenied", "StopFailure",
+        "PostToolUseFailure", "Notification", "SessionEnd", "StopFailure",
     ]
 
     private static let knownEventsByLowercase = Dictionary(uniqueKeysWithValues: knownEvents.map { ($0.lowercased(), $0) })

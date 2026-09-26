@@ -103,13 +103,6 @@ public enum CodexTrust {
         return result == text ? text : result
     }
 
-    @discardableResult
-    public static func refresh(configFile: URL, codexPath: String, timeout: TimeInterval = 8,
-                               environment: [String: String]? = nil) throws -> Int {
-        try refreshConfig(configFile: configFile, codexPath: codexPath, timeout: timeout,
-                          environment: environment, backupAt: Date()).trusted
-    }
-
     struct RefreshOutcome {
         var trusted: Int
         var changed: Bool

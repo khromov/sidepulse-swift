@@ -252,8 +252,7 @@ public final class StatusEngine {
 
     /// Unlike Python, PostToolUseFailure releases a prompt (a denial logs no
     /// PostToolUse*, so the command ran) and SubagentStop clears its subagent's
-    /// prompts, since turn-ending events never carry an agent_id. PermissionDenied
-    /// deliberately stays sticky until Stop or the next prompt.
+    /// prompts, since turn-ending events never carry an agent_id.
     private func trackPendingPermissions(_ event: HookEvent) {
         let key = event.statusKey
         let signature = Self.permissionSignature(event)

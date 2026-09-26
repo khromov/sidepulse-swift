@@ -370,9 +370,7 @@ public final class EventSocketServer: @unchecked Sendable {
     private func dispatch(_ item: Completed, cycle: Int) {
         let fd = item.fd
         guard let message = item.message, isServing(cycle) else { close(fd); return }
-        var reply = handler(message)
-        if reply == nil, case .command(name: "ping", _) = message { reply = IPCReply.ping() }
-        guard let reply, !reply.isEmpty else { close(fd); return }
+        guard let reply = handler(message), !reply.isEmpty else { close(fd); return }
         let timeout = writeTimeout
         connectionQueue.async {
             _ = UnixSocket.writeAll(fd, reply, deadline: SocketDeadline(after: timeout))
