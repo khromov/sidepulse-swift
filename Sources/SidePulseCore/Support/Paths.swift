@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SidePulseConstants {
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
     public static let launchAgentLabel = "io.sidepulse.swift"
     /// Intentionally differs from the Python app bundle's identifier.
     public static let bundleIdentifier = "io.sidepulse.swift"
