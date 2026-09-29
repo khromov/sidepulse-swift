@@ -32,7 +32,8 @@ In scope:
   - status icon;
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
-  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder, updates).
+  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder, command-line tool, updates).
+- The `~/.local/bin/sidepulse` link, which the app keeps pointed at its own CLI, and a check that the user's shell finds it.
 - Updates of release builds with Sparkle 2, from a feed published with each GitHub release.
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
 
@@ -171,9 +172,23 @@ Files under the root (`~/Library/Application Support/SidePulse/`):
 
 Stable CLI path: `~/.local/bin/sidepulse` (`SidePulsePaths.defaultCLILink`). It
 is a symlink to `SidePulse.app/Contents/Helpers/sidepulse`, created by
-`scripts/install.sh`. The CLI lives in `Helpers/` because APFS is usually
+`scripts/install.sh` and by the app. The CLI lives in `Helpers/` because APFS is usually
 case-insensitive, so `MacOS/sidepulse` would collide with the app binary
 `MacOS/SidePulse`.
+
+`CLILink` (`System/CLILink.swift`) maintains the link from the app. At launch
+(`installAtLaunch`) it links the running bundle's `Helpers/sidepulse` when the
+link is missing, dangling or points into another `.app`'s `Helpers/sidepulse`,
+so the command and the hooks that call the link follow the running app.
+Anything else there (the Python CLI, a plain file) is replaced only by the
+Settings **Install** button, which moves a non-symlink to `sidepulse.previous`.
+The new link is created under a temporary name and renamed over the old one,
+because hooks may run it at any moment. A SwiftPM build or a translocated app
+never links. `ShellPATH` reads the login shell's `PATH` (`$SHELL -i -l -c`,
+output through a temporary file, 5 s timeout, off the main thread and only when
+Settings opens) and looks `sidepulse` up in it. `ShellProfile` appends the
+`~/.local/bin` `PATH` line to `~/.zprofile` (or bash's first existing profile)
+with `FileUtil.atomicWrite` and a backup.
 
 `HookCLIPath` (`Presentation/HookCLIPath.swift`) is the one resolver for the
 hook CLI (install, setup, doctor and the app). Order: `$SIDEPULSE_CLI_PATH` as
@@ -260,9 +275,9 @@ menu and Settings show no update controls.
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
-| System | `SidePulseCore/System/{Power,LaunchAgent,SDEjectGuardRule}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, the eject guard's card match |
+| System | `SidePulseCore/System/{Power,LaunchAgent,SDEjectGuardRule,CLILink}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, the eject guard's card match, the `~/.local/bin/sidepulse` link (`CLILink`, `ShellPATH`, `ShellProfile`) |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
-| Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
+| Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested, including `CLILinkPresentation`), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
 | App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings, `SDEjectGuard` (DiskArbitration) and `AppUpdater`, the only file that imports Sparkle |
 

@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let services = AppServices(runtime: runtime, updater: AppUpdater.startIfConfigured())
         self.services = services
+        services.linkCLIAtLaunch()
         settingsController = SettingsWindowController(model: SettingsModel(services: services))
         let statusController = StatusItemController(
             services: services,
