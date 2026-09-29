@@ -104,7 +104,9 @@ public enum CLILink {
                 change.previousTarget = try? fm.destinationOfSymbolicLink(atPath: link.path)
             } else {
                 let aside = dir.appendingPathComponent("sidepulse.previous")
-                guard rename(link.path, aside.path) == 0 else {
+                // A hard link keeps the old file in place until the rename below replaces it; directories need a move.
+                unlink(aside.path)
+                guard Darwin.link(link.path, aside.path) == 0 || rename(link.path, aside.path) == 0 else {
                     throw FileUtil.posixError("could not move \(link.path) to \(aside.path)")
                 }
                 change.movedAside = aside
@@ -171,7 +173,8 @@ public enum ShellPATH {
             process.terminationHandler = { _ in exited.signal() }
             do { try process.run() } catch { return nil }
             guard exited.wait(timeout: .now() + timeout) == .success else {
-                process.terminate()
+                // Interactive shells ignore SIGTERM.
+                kill(process.processIdentifier, SIGKILL)
                 return nil
             }
             return FileUtil.readText(output).flatMap(parse)
