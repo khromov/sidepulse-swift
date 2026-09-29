@@ -83,6 +83,9 @@ private struct GeneralTab: View {
                     Button(MenuText.openLogsFolder) { model.services.openLogsFolder() }
                 }
             }
+            Section("Command Line") {
+                CommandLineRows(model: model)
+            }
             Section("Updates") {
                 if let updates = model.updates {
                     Toggle("Check for updates automatically", isOn: Binding(
@@ -104,6 +107,39 @@ private struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct CommandLineRows: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        let paths = model.services.paths
+        let summary = CLILinkPresentation.summary(model.cliLink, link: paths.defaultCLILink, home: paths.home)
+        LabeledContent {
+            HStack {
+                Text(summary.status).foregroundStyle(.secondary)
+                if summary.canInstall {
+                    Button(HookAction.install.label) { model.installCLI() }
+                }
+            }
+        } label: {
+            Text(CLILinkPresentation.title)
+            Text(summary.detail).textSelection(.enabled)
+        }
+        if model.cliLink == .installed {
+            let note = CLILinkPresentation.pathNote(model.cliPathCheck, profile: model.shellProfile, home: paths.home)
+            HStack {
+                Text(note.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Spacer()
+                if note.offersFix {
+                    Button(CLILinkPresentation.addToPath) { model.addLocalBinToPATH() }
+                }
+            }
+        }
     }
 }
 

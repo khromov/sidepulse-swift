@@ -66,6 +66,52 @@ final class AppServices {
         }
     }
 
+    // MARK: Command line
+
+    func cliLinkState() -> CLILinkState {
+        CLILink.state(paths: paths)
+    }
+
+    func installCLILink() throws -> CLILinkChange {
+        let change = try CLILink.install(paths: paths)
+        DiagnosticsLog.shared.log("settings: \(Self.describe(change))")
+        return change
+    }
+
+    /// Keeps the command, and the hooks that call the link, on this app's version.
+    func linkCLIAtLaunch() {
+        do {
+            if let change = try CLILink.installAtLaunch(paths: paths) {
+                DiagnosticsLog.shared.log("app: \(Self.describe(change))")
+            }
+        } catch {
+            DiagnosticsLog.shared.log("app: could not link \(paths.defaultCLILink.path): \(ErrorText.describe(error))")
+        }
+    }
+
+    /// Runs off the main thread because it starts the user's login shell.
+    func checkShellPATH(completion: @escaping @MainActor (CLIPathCheck) -> Void) {
+        let link = paths.defaultCLILink
+        let home = paths.home
+        DispatchQueue.global(qos: .utility).async {
+            let check = ShellPATH.check(searchPath: ShellPATH.read(), link: link, home: home)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(check) }
+            }
+        }
+    }
+
+    var shellProfile: URL? {
+        ShellProfile.file(shell: ShellPATH.loginShell(), paths: paths)
+    }
+
+    private static func describe(_ change: CLILinkChange) -> String {
+        var text = "linked \(change.link.path) -> \(change.target)"
+        if let previous = change.previousTarget { text += " (was \(previous))" }
+        if let aside = change.movedAside { text += " (moved the old file to \(aside.path))" }
+        return text
+    }
+
     // MARK: Launch at login
 
     private var launchAgent: LaunchAgentManager { LaunchAgentManager(paths: paths) }

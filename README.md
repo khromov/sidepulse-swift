@@ -129,8 +129,11 @@ From a release zip (see [Releasing](#releasing)), move `SidePulse.app` to
 `~/Applications` or `/Applications` before you open it. macOS runs an app
 opened straight from `~/Downloads` from a temporary read-only location (App
 Translocation) that is gone after a restart. SidePulse then refuses to write
-that location into hooks or the login item, and says "SidePulse is running from
-a temporary location; move SidePulse.app to Applications and reopen it."
+that location into hooks, the login item or the `sidepulse` command, and says
+"SidePulse is running from a temporary location; move SidePulse.app to
+Applications and reopen it." Once it runs from its final location, the app
+links the `sidepulse` command into `~/.local/bin` by itself (see
+**Command-line tool** under [Menu-bar app](#menu-bar-app)).
 A release app keeps itself up to date (see [Updates](#updates)); an app built
 with `scripts/install.sh` does not, so upgrade it by running the script again.
 
@@ -435,12 +438,12 @@ started by the LaunchAgent exits quietly (see `app.log`).
 
 The Settings window has four tabs:
 
-| Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
-| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                     |
-| Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh**                            |
+| Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Command-line tool**: whether `~/.local/bin/sidepulse` runs this app, **Install**, and a check that your shell finds it, with **Add to PATH** when it does not (see Command-line tool below). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
+| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                                                                                                                                                                                                    |
+| Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh**                                                                                                                                                                                                                           |
 
 The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
 Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, Red Double
@@ -520,6 +523,24 @@ locked`. The Settings window's Devices tab shows the same text. A write that
   refuses while the app runs from a temporary App Translocation location (see
   [Install](#install)).
   `sidepulse app uninstall` removes the plist.
+- **Command-line tool.** Each time it starts, the app points
+  `~/.local/bin/sidepulse` at its own `Contents/Helpers/sidepulse`, the same
+  link `scripts/install.sh` makes. It creates a missing link and replaces a
+  dangling one or one into another `SidePulse.app` (an older copy or a build
+  from source), so the command and the hooks that call the link always match
+  the running app. Each change is logged in `app.log` (`app: linked … -> …`).
+  Anything else at that path, such as the Python CLI's link or a plain file, is
+  left alone: Settings › General › Command Line then shows it with an
+  **Install** button, which replaces a symlink and moves a file to
+  `~/.local/bin/sidepulse.previous`. An app built with SwiftPM or running from
+  a translocated location never links. Once the link is in place, Settings runs
+  your login shell (`$SHELL -i -l`, the way Terminal starts it, up to 5 s) to
+  read its `PATH`, and says whether the shell finds the command, finds another
+  `sidepulse` first, or does not have `~/.local/bin` on `PATH`. In the last
+  case, for zsh and bash, **Add to PATH** appends
+  `export PATH="$HOME/.local/bin:$PATH"` to `~/.zprofile` (bash: the first of
+  `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists), with a
+  backup of the old file. New terminal windows then find `sidepulse`.
 
 ### Updates
 
@@ -570,7 +591,7 @@ and failed checks (`app: update failed: …`) to `app.log`.
 | `~/Library/Preferences/io.sidepulse.swift.plist`                           | Sparkle's update settings and state: automatic checks and downloads, last check time, a skipped version (`defaults read io.sidepulse.swift`)                                                                                                                                                                                                                              |
 | `~/Library/Caches/io.sidepulse.swift/`                                     | Update downloads, kept only until the update is installed                                                                                                                                                                                                                                                                                                                  |
 | `~/Applications/SidePulse.app`                                             | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications`                                                                                                                                                                                                                                                                                     |
-| `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`. This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                                                                                                       |
+| `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`, kept pointed at the running app at each launch (and made by `scripts/install.sh`). This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                    |
 | `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
 | `~/.config/opencode/plugins/sidepulse.js`                                  | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted       |
 | `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive`                | Device files (`keepalive` on 8-LED devices only)                                                                                                                                                                                                                                                                                                                             |
@@ -830,7 +851,9 @@ For the layout, the module map and the project conventions, see
 AppKit, so the hook process starts fast. An app run from a SwiftPM build
 (`.build/debug/SidePulseApp`) installs hooks only when `~/.local/bin/sidepulse`
 links into a `SidePulse.app` (or `$SIDEPULSE_CLI_PATH` is set), never with the
-sibling `.build` CLI.
+sibling `.build` CLI, and it never changes that link. Opening a bundle such as
+`build/SidePulse.app` does: it points the link at that bundle until another
+copy of SidePulse starts.
 
 The tests use temporary homes and `SIDEPULSE_HOME`. They never modify your real
 `~/.claude`, `~/.codex`, `~/.config/opencode`, `~/Library/LaunchAgents` or data directory (a few
@@ -945,6 +968,10 @@ scripts/uninstall.sh --app-dir DIR   # remove the app from DIR (overrides the li
    `latest.json` and `app.log` as it quits. The script then warns and exits 1:
    quit SidePulse from the menu bar and run `scripts/uninstall.sh --purge`
    again.
+
+If you used **Add to PATH**, your shell's startup file keeps its
+`# Added by SidePulse for the sidepulse command` comment and the `export PATH`
+line below it; delete them by hand.
 
 To remove only parts of the install, use `sidepulse uninstall [claude|codex|opencode]`
 for the hooks, and `sidepulse app uninstall` for launch at login.

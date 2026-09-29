@@ -17,6 +17,7 @@ final class SettingsWindowController {
     func show() {
         let window = self.window ?? makeWindow()
         model.reload(includeHooks: true)
+        model.refreshCommandLine()
         if window.isMiniaturized {
             window.deminiaturize(nil)
         } else if !window.isVisible {

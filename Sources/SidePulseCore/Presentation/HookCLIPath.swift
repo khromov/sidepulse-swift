@@ -31,15 +31,18 @@ public enum HookCLIPath {
     public static func problem(with path: String,
                                runningExecutable: String = SidePulsePaths.currentExecutablePath) -> String? {
         guard FileManager.default.isExecutableFile(atPath: path) else { return "missing" }
+        if isBundledCLI(path) { return nil }
+        if isCLIBinary(runningExecutable), sameFile(path, runningExecutable) { return nil }
+        return "not the SidePulse CLI"
+    }
+
+    /// A `sidepulse` inside `<X>.app/Contents/Helpers/`, once symlinks are resolved.
+    static func isBundledCLI(_ path: String) -> Bool {
         let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let helpers = resolved.deletingLastPathComponent()
         let contents = helpers.deletingLastPathComponent()
-        if resolved.lastPathComponent == "sidepulse", helpers.lastPathComponent == "Helpers",
-           contents.lastPathComponent == "Contents", contents.deletingLastPathComponent().pathExtension == "app" {
-            return nil
-        }
-        if isCLIBinary(runningExecutable), sameFile(path, runningExecutable) { return nil }
-        return "not the SidePulse CLI"
+        return resolved.lastPathComponent == "sidepulse" && helpers.lastPathComponent == "Helpers"
+            && contents.lastPathComponent == "Contents" && contents.deletingLastPathComponent().pathExtension == "app"
     }
 
     public static func foreignLinkNote(paths: SidePulsePaths,
@@ -53,7 +56,7 @@ public enum HookCLIPath {
         let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) ?? link
         let reason = problem == "missing" ? "does not exist" : "is not the SidePulse CLI"
         let what = target == link ? "\(link) \(reason)" : "\(link) points at \(target), which \(reason)"
-        return "\(what); hooks do not use it. Run scripts/install.sh to relink it."
+        return "\(what); hooks do not use it. \(CLILink.relinkHint)"
     }
 
     /// Case-insensitive because the app binary is `SidePulse`.

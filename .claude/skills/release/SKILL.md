@@ -105,7 +105,7 @@ Write two files in the scratchpad. Summarize the user-visible changes since the 
 ### Install
 1. If you use the official Python version, uninstall it first: `sidepulse agent-monitor uninstall all`.
 2. Download `SidePulse-X.Y.Z.zip`, unzip it, and move `SidePulse.app` to `~/Applications` or `/Applications` **before** opening it.
-3. On a first install, open SidePulse and install the agent hooks from **Settings › Hooks**.
+3. On a first install, open SidePulse and install the agent hooks from **Settings › Hooks**. SidePulse links the `sidepulse` command to `~/.local/bin`; **Settings › General** shows whether your shell finds it.
 
 **Upgrading:** SidePulse updates itself: use **Check for Updates...** in the menu, or wait for the daily check. Version 0.1.0 has no updater, so from 0.1.0 quit SidePulse and replace the app by hand once.
 

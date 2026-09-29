@@ -11,6 +11,10 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var busyProviders: Set<HookProvider> = []
     @Published private(set) var hookNotes: [HookProvider: [String]] = [:]
+    @Published private(set) var cliLink: CLILinkState = .missing
+    /// Nil until the shell's PATH has been read once.
+    @Published private(set) var cliPathCheck: CLIPathCheck?
+    @Published private(set) var shellProfile: URL?
     /// Nil in builds made from source, which have no updater.
     @Published private(set) var updates: UpdatePreferences?
     @Published var message: String?
@@ -117,6 +121,42 @@ final class SettingsModel: ObservableObject {
 
     func refreshHooks() {
         hooks = services.hookStates()
+    }
+
+    // MARK: Command line
+
+    /// Keeps the last PATH result while checking again, so the note does not flicker each time Settings opens.
+    func refreshCommandLine() {
+        let state = services.cliLinkState()
+        assignIfChanged(\.cliLink, state)
+        assignIfChanged(\.shellProfile, services.shellProfile)
+        guard state == .installed else { return }
+        services.checkShellPATH { [weak self] check in
+            self?.assignIfChanged(\.cliPathCheck, check)
+        }
+    }
+
+    func installCLI() {
+        do {
+            let change = try services.installCLILink()
+            message = CLILinkPresentation.installedMessage(change, home: services.paths.home)
+        } catch {
+            message = CLILinkPresentation.failureMessage(error)
+        }
+        refreshCommandLine()
+        hooks = services.hookStates()
+    }
+
+    func addLocalBinToPATH() {
+        guard let profile = shellProfile else { return }
+        do {
+            let changed = try ShellProfile.addLocalBin(to: profile)
+            message = CLILinkPresentation.addedToPathMessage(profile: profile, changed: changed, home: services.paths.home)
+            DiagnosticsLog.shared.log("settings: added ~/.local/bin to PATH in \(profile.path) (changed: \(changed))")
+        } catch {
+            message = CLILinkPresentation.pathFailureMessage(error)
+        }
+        refreshCommandLine()
     }
 
     // MARK: Updates
