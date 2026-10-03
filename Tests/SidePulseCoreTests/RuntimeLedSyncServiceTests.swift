@@ -565,6 +565,21 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(logs.items.filter { $0.contains("for sleep") }.count, 1, "\(logs.items)")
     }
 
+    /// Regression: a program without `brightness N` plays at 255, so a dimmed device flashed bright as it faded.
+    func testOffForSleepKeepsTheDeviceBrightness() {
+        world.addDevice("PulseDot")
+        box.update { $0.setBrightness(15, forDevice: world.deviceID("PulseDot")) }
+        let service = makeService()
+        service.pollDevices()
+        service.syncNow(mode: .working)
+
+        service.turnOffForSleep(timeout: 2)
+        XCTAssertEqual(world.program("PulseDot"), "brightness 15\n" + LedSyncService.sleepProgram)
+        service.turnOnAfterSleep()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2, brightness: 15))
+    }
+
     func testSleepEndsAPreviewWithoutItsRestore() {
         world.addDevice("PulseDot")
         let service = makeService()

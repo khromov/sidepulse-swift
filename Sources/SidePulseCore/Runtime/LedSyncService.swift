@@ -515,8 +515,10 @@ public final class LedSyncService: @unchecked Sendable {
                 log("leds: would turn off \(device.displayName) at \(device.target.path) for sleep")
                 continue
             }
+            // Without the device's brightness the fade would start at full brightness.
+            let program = LedProgram.applyBrightness(Self.sleepProgram, settings.brightness(forDevice: device.id))
             do {
-                if try write(Self.sleepProgram, to: device, display: .agent, generation: generation,
+                if try write(program, to: device, display: .agent, generation: generation,
                              when: { shared.withLock { $0.sleepToken == token } }) {
                     log("leds: turned off \(device.displayName) at \(device.target.path) for sleep")
                 }

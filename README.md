@@ -499,7 +499,8 @@ locked`. The Settings window's Devices tab shows the same text. A write that
 - **Sleep.** A device keeps playing its program for as long as it has power,
   and USB stays powered while the Mac sleeps. So when the Mac goes to sleep
   with the lid closed, SidePulse fades every Agent Status device to off
-  (`off 320ms cosine`) and only then lets macOS sleep. The LEDs stay off,
+  (`off 320ms cosine`, at the device's brightness) and only then lets macOS
+  sleep. The LEDs stay off,
   including through Power Nap wakes, until the Mac wakes and is in use again,
   with the lid open or closed on an external display. Then they show the live
   status again. Closing the lid on an external display doesn't sleep the Mac,
