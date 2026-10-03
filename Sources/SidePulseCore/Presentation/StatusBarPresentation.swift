@@ -19,6 +19,10 @@ public enum MenuText {
     public static let ejectPreventionHelp =
         "Keeps a card in the built-in SD reader attached when macOS ejects it after waking from hibernation on a "
         + "locked screen. While this is on, a card in that reader cannot be ejected from Finder."
+    public static let ledsOffOnAnySleep = "Turn off LEDs whenever the Mac sleeps"
+    public static let ledsOffOnAnySleepHelp =
+        "The LEDs always turn off when you close the lid and the Mac sleeps. Turn this on to also turn them off "
+        + "when it sleeps with the lid open."
     public static let quit = "Quit SidePulse"
     public static let alreadyRunning = "SidePulse is already running"
     public static let settingsWindowTitle = "SidePulse Settings"

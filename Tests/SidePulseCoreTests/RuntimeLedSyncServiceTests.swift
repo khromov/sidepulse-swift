@@ -536,6 +536,110 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), "boot")
     }
 
+    // MARK: Sleep
+
+    func testOffForSleepHoldsBackEveryWriteUntilTurnedOn() {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        box.update { $0.setDisplay(.manual, forDevice: world.deviceID("SidePulsePro")) }
+        let service = makeService()
+        service.pollDevices()
+        service.syncNow(mode: .working)
+
+        XCTAssertTrue(service.turnOffForSleep(timeout: 2))
+        XCTAssertTrue(service.isOffForSleep)
+        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+        XCTAssertEqual(world.program("SidePulsePro"), "boot", "Manual devices are left alone")
+
+        service.requestSync(mode: .completed)
+        XCTAssertEqual(service.syncNow(mode: .completed), [:])
+        service.preview(animationID: "kitt", seconds: 0)
+        runtimeSpin(0.1)
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+
+        XCTAssertTrue(service.turnOnAfterSleep())
+        XCTAssertFalse(service.turnOnAfterSleep())
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
+        XCTAssertEqual(logs.items.filter { $0.contains("for sleep") }.count, 1, "\(logs.items)")
+    }
+
+    func testSleepEndsAPreviewWithoutItsRestore() {
+        world.addDevice("PulseDot")
+        let service = makeService()
+        service.pollDevices()
+        service.syncNow(mode: .working)
+        service.preview(animationID: "kitt", seconds: 0.2)
+        XCTAssertTrue(runtimeWait { self.world.program("PulseDot") == RuntimePrograms.program("kitt", ledCount: 2) })
+
+        service.turnOffForSleep(timeout: 2)
+        XCTAssertFalse(service.isPreviewing)
+        runtimeSpin(0.4)
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+
+        service.turnOnAfterSleep()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
+    }
+
+    /// A status write stuck in open() when the Mac sleeps must not light the LEDs once it returns.
+    func testStatusWriteBlockedAtSleepIsSkipped() {
+        world.addDevice("PulseDot")
+        let gate = LedWriteGate()
+        let service = makeService(writer: gate.writer)
+        service.pollDevices()
+        gate.arm(.inOpen)
+        service.requestSync(mode: .working)
+        XCTAssertTrue(gate.waitForHeldWrite())
+
+        XCTAssertFalse(service.turnOffForSleep(timeout: 0.1), "the sleep write waits behind the stuck one")
+        gate.release()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+    }
+
+    /// A sleep write that only gets its turn after the wake must not turn the LEDs off.
+    func testLateSleepWriteAfterWakeIsSkipped() {
+        world.addDevice("PulseDot")
+        let gate = LedWriteGate()
+        let service = makeService(writer: gate.writer)
+        service.pollDevices()
+        service.syncNow(mode: .idleReady)
+        gate.arm(.inOpen)
+        service.requestSync(mode: .working)
+        XCTAssertTrue(gate.waitForHeldWrite())
+
+        XCTAssertFalse(service.turnOffForSleep(timeout: 0.1))
+        XCTAssertTrue(service.turnOnAfterSleep())
+        gate.release()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
+    }
+
+    func testDryRunNeverWritesForSleep() {
+        world.addDevice("PulseDot")
+        let service = makeService(dryRun: true)
+        service.pollDevices()
+        service.syncNow(mode: .working)
+        XCTAssertTrue(service.turnOffForSleep(timeout: 2))
+        XCTAssertEqual(world.program("PulseDot"), "boot")
+        XCTAssertTrue(logs.items.contains { $0.contains("would turn off") }, "\(logs.items)")
+    }
+
+    func testReopenEndsSleep() {
+        world.addDevice("PulseDot")
+        let service = makeService()
+        service.pollDevices()
+        service.turnOffForSleep(timeout: 2)
+        service.close(generation: service.currentGeneration)
+        service.reopen()
+        XCTAssertFalse(service.isOffForSleep)
+        service.syncNow(mode: .working)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
+    }
+
     func testFinishPreviewNowRestoresImmediately() {
         world.addDevice("PulseDot")
         let service = makeService()

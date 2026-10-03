@@ -44,6 +44,8 @@ public struct SidePulseSettings: Sendable, Equatable {
     public var sleepPolicy: SleepPolicy = .agents
     public var minBatteryPercent: Double = 20
     public var sdEjectGuard = true
+    /// Closing the lid always turns the LEDs off; this also does it when the Mac sleeps with the lid open.
+    public var ledsOffOnAnySleep = false
 
     public init() {}
 
@@ -76,6 +78,9 @@ public struct SidePulseSettings: Sendable, Equatable {
         if let enabled = root["sd_eject_guard"]?.objectValue?["enabled"]?.boolValue {
             settings.sdEjectGuard = enabled
         }
+        if let enabled = root["sleep_leds"]?.objectValue?["off_on_any_sleep"]?.boolValue {
+            settings.ledsOffOnAnySleep = enabled
+        }
         return settings
     }
 
@@ -107,6 +112,7 @@ public struct SidePulseSettings: Sendable, Equatable {
             "policy": .string(sleepPolicy.rawValue),
         ])
         root["sd_eject_guard"] = .object(["enabled": .bool(sdEjectGuard)])
+        root["sleep_leds"] = .object(["off_on_any_sleep": .bool(ledsOffOnAnySleep)])
         return JSONValue.object(root).sortedKeys()
     }
 

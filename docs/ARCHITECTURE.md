@@ -27,12 +27,13 @@ In scope:
 - SidePulse Pro Eject Prevention, in the app only: a DiskArbitration eject-approval callback vetoes ejects of
   cards in the built-in SD reader and retries their mount every 5 s (`SDEjectGuard`, ported from Python's
   `sd_eject_guard.c`). The hook CLI never links DiskArbitration.
+- LEDs off while the Mac sleeps: `SystemSleepWatcher` (IOKit system-power and lid notifications) turns Agent Status devices off before a sleep with the lid closed, or any sleep with the opt-in setting, and back on once the Mac is in use again. Python did this by polling `ioreg` for the lid every second.
 - Keep-awake while agents work: a `ProcessInfo` activity (`.idleSystemSleepDisabled`, which holds PreventUserIdleSystemSleep) with the Never / When Agents Work / Always policy, plus a low-battery safeguard.
 - Menu-bar app:
   - status icon;
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
-  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, eject prevention, launch at login, logs folder, command-line tool, updates).
+  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, LEDs off on any sleep, eject prevention, launch at login, logs folder, command-line tool, updates).
 - The `~/.local/bin/sidepulse` link, which the app keeps pointed at its own CLI, and a check that the user's shell finds it.
 - Updates of release builds with Sparkle 2, from a feed published with each GitHub release.
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
@@ -42,7 +43,7 @@ Out of scope (dropped on purpose):
 - remote relay
 - the headless service and Linux support
 - battery LED mode
-- closed-lid helper and lid animations
+- closed-lid helper and the configurable Lid Closed / Lid Open animations (the LEDs still go off while the Mac sleeps)
 - status history and charts
 - audit export
 - the virtual notch device
@@ -139,6 +140,16 @@ serial state queue. Callers rely on these rules:
   stuck in `open()` is dropped and no LED write lands after `stop()` returns;
   only a keepalive touch already inside `open()` cannot be recalled. `start()`
   opens a new generation. The LEDs keep their last program.
+- `SystemSleepWatcher` delivers sleep, wake and lid events on its own queue.
+  macOS waits for the `.willSleep` handler before it sleeps, so the handler
+  never waits for the state queue: it reads the applied settings from the cache
+  and waits (bounded, 2 s) only for the `off` writes. While the LEDs are off for
+  sleep, every other LED write is skipped, including one that was stuck in
+  `open()`, and a late `off` from an earlier sleep is skipped once they are back
+  on. They come back on only after a wake event, once the Mac is in use
+  (`SleepState.inUse`). The device poll re-checks every 2 s, because a dark
+  wake that turns into a full wake sends no event. `start()` and `stop()` start
+  and stop the watcher, and `start()` also ends an earlier sleep.
 
 ## Paths
 
@@ -275,7 +286,7 @@ menu and Settings show no update controls.
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
-| System | `SidePulseCore/System/{Power,LaunchAgent,SDEjectGuardRule,CLILink}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), launchd, the eject guard's card match, the `~/.local/bin/sidepulse` link (`CLILink`, `ShellPATH`, `ShellProfile`) |
+| System | `SidePulseCore/System/{Power,SleepWatcher,LaunchAgent,SDEjectGuardRule,CLILink}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), sleep, wake and lid notifications (`SystemSleepWatcher`), launchd, the eject guard's card match, the `~/.local/bin/sidepulse` link (`CLILink`, `ShellPATH`, `ShellProfile`) |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested, including `CLILinkPresentation`), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
