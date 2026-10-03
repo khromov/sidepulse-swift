@@ -48,11 +48,15 @@ public enum StatusBarPresentation {
     }
 
     /// `paused` means the displays are asleep or the login session switched away, so nobody can see it.
-    public static func shouldAnimate(iconState: DisplayState, iconVisible: Bool = true,
-                                     openMenuRowStates: [DisplayState] = [], reduceMotion: Bool,
+    public static func shouldAnimate(iconState: DisplayState, iconVisible: Bool = true, reduceMotion: Bool,
                                      paused: Bool = false) -> Bool {
         guard !reduceMotion, !paused else { return false }
-        return (iconVisible && animates(iconState)) || openMenuRowStates.contains(where: animates)
+        return iconVisible && animates(iconState)
+    }
+
+    public static func shouldAnimateMenuRows(_ states: [DisplayState], reduceMotion: Bool, paused: Bool = false) -> Bool {
+        guard !reduceMotion, !paused else { return false }
+        return states.contains(where: animates)
     }
 }
 
@@ -69,8 +73,10 @@ public struct IconFrame: Sendable, Equatable {
     public static let identity = IconFrame(rotationDegrees: 0, scale: 1, opacity: 1)
 }
 
-/// Two frames a second apart, because every new image makes AppKit redraw the status item on each display.
+/// The status icon animates with Core Animation over `cycleSeconds`. Open menu rows swap images instead, two
+/// frames a second apart, because every new image makes AppKit redraw the item.
 public enum IconAnimation {
+    public static let cycleSeconds: Double = 1.5
     public static let framesPerSecond: Double = 1
     public static let frameCount = 2
     public static let canvasSize: Double = 18
