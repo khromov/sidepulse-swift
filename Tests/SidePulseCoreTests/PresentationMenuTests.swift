@@ -49,21 +49,21 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertTrue(StatusBarPresentation.shouldAnimate(iconState: .ask, reduceMotion: false))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, reduceMotion: true))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .idle, reduceMotion: false))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.done, .idle],
-                                                           reduceMotion: false))
-        XCTAssertTrue(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.done, .ask],
-                                                          reduceMotion: false))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, iconVisible: false, reduceMotion: false))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .idle, openMenuRowStates: [.working],
-                                                           reduceMotion: true))
+    }
+
+    func testShouldAnimateMenuRows() {
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.done, .idle], reduceMotion: false))
+        XCTAssertTrue(StatusBarPresentation.shouldAnimateMenuRows([.done, .ask], reduceMotion: false))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([], reduceMotion: false))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.working], reduceMotion: true))
     }
 
     /// Regression: the icon kept redrawing while the displays slept or another user
     /// session was in front.
     func testAnimationPausesWhenNobodyCanSeeIt() {
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, reduceMotion: false, paused: true))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.ask],
-                                                           reduceMotion: false, paused: true))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.ask], reduceMotion: false, paused: true))
     }
 
     /// Regression: 8 fps redraws of the status item still cost about 8 % CPU (4 displays)

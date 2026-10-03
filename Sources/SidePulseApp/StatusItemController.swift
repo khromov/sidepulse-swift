@@ -1,15 +1,17 @@
 import AppKit
 import SidePulseCore
 
-/// The animation timer runs only while someone can see it animate, because each frame makes AppKit redraw the
-/// item on every display.
+/// Animations run only while someone can see them. Core Animation animates the icon, and a timer swaps the open
+/// menu's row images.
 @MainActor
 final class StatusItemController: NSObject {
     let menuController: StatusMenuController
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let animatedIcon = AnimatedIconView()
     private var state: DisplayState = .idle
-    private var animationTimer: Timer?
+    private var animatingState: DisplayState?
+    private var rowTimer: Timer?
     private var frame = 0
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     private var screensAsleep = false
@@ -19,7 +21,12 @@ final class StatusItemController: NSObject {
         menuController = StatusMenuController(services: services, openSettings: openSettings, quit: quit)
         super.init()
         statusItem.menu = menuController.menu
-        statusItem.button?.title = ""
+        if let button = statusItem.button {
+            button.title = ""
+            animatedIcon.frame = button.bounds
+            animatedIcon.autoresizingMask = [.width, .height]
+            button.addSubview(animatedIcon)
+        }
         menuController.onAnimationStateChange = { [weak self] in self?.updateAnimation() }
         let center = NSWorkspace.shared.notificationCenter
         let observed: [(Notification.Name, Selector)] = [
@@ -30,7 +37,7 @@ final class StatusItemController: NSObject {
             (NSWorkspace.sessionDidBecomeActiveNotification, #selector(visibilityChanged(_:))),
         ]
         for (name, selector) in observed { center.addObserver(self, selector: selector, name: name, object: nil) }
-        showIcon(frame: nil)
+        showIcon()
     }
 
     func update(snapshot: MonitorSnapshot) {
@@ -39,17 +46,17 @@ final class StatusItemController: NSObject {
             state = newState
             DiagnosticsLog.shared.log("state=\(newState.label)")
         }
-        if animationTimer == nil { showIcon(frame: nil) }
         menuController.update(snapshot: snapshot)
         updateAnimation()
     }
 
     // MARK: Icon
 
-    private func showIcon(frame: Int?) {
+    /// The button shows no image while the animated layer stands in for it.
+    private func showIcon() {
         guard let button = statusItem.button else { return }
         let tooltip = StatusBarPresentation.tooltip(for: state)
-        let image = IconRenderer.image(for: state, frame: frame)
+        let image = animatingState == nil ? IconRenderer.image(for: state) : nil
         if button.image !== image { button.image = image }
         if button.toolTip != tooltip {
             button.toolTip = tooltip
@@ -60,29 +67,35 @@ final class StatusItemController: NSObject {
     // MARK: Animation
 
     private func updateAnimation() {
-        let needed = StatusBarPresentation.shouldAnimate(
-            iconState: state, iconVisible: statusItem.isVisible,
-            openMenuRowStates: menuController.isOpen ? menuController.rowStates : [],
-            reduceMotion: reduceMotion, paused: screensAsleep || sessionInactive)
-        if needed, animationTimer == nil {
+        let paused = screensAsleep || sessionInactive
+        let iconAnimates = StatusBarPresentation.shouldAnimate(iconState: state, iconVisible: statusItem.isVisible,
+                                                               reduceMotion: reduceMotion, paused: paused)
+        let target = iconAnimates ? state : nil
+        if target != animatingState {
+            animatingState = target
+            if let target { animatedIcon.play(target) } else { animatedIcon.stop() }
+        }
+        showIcon()
+
+        let rowsAnimate = menuController.isOpen && StatusBarPresentation.shouldAnimateMenuRows(
+            menuController.rowStates, reduceMotion: reduceMotion, paused: paused)
+        if rowsAnimate, rowTimer == nil {
             let timer = Timer(timeInterval: 1.0 / IconAnimation.framesPerSecond, target: self,
                               selector: #selector(tick(_:)), userInfo: nil, repeats: true)
             timer.tolerance = 0.25 / IconAnimation.framesPerSecond
             // .common includes the event-tracking mode, so frames keep coming while the menu is open.
             RunLoop.main.add(timer, forMode: .common)
-            animationTimer = timer
-        } else if !needed, let timer = animationTimer {
+            rowTimer = timer
+        } else if !rowsAnimate, let timer = rowTimer {
             timer.invalidate()
-            animationTimer = nil
-            showIcon(frame: nil)
+            rowTimer = nil
             menuController.showStaticRowImages()
         }
     }
 
     @objc private func tick(_ timer: Timer) {
         frame = (frame + 1) % IconAnimation.frameCount
-        showIcon(frame: frame)
-        if menuController.isOpen { menuController.animateRows(frame: frame) }
+        menuController.animateRows(frame: frame)
     }
 
     @objc private func accessibilityOptionsChanged(_ notification: Notification) {
