@@ -149,7 +149,8 @@ serial state queue. Callers rely on these rules:
   on. They come back on only after a wake event, once the Mac is in use
   (`SleepState.inUse`). The device poll re-checks every 2 s, because a dark
   wake that turns into a full wake sends no event. `start()` and `stop()` start
-  and stop the watcher, and `start()` also ends an earlier sleep.
+  and stop the watcher on the state queue, so a `start()` racing a `stop()`
+  keeps it running, and `start()` also ends an earlier sleep.
 
 ## Paths
 

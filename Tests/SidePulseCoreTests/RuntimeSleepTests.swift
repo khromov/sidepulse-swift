@@ -135,6 +135,22 @@ final class RuntimeSleepTests: XCTestCase {
         other.stop()
     }
 
+    /// Regression: stop() stopped the watcher after leaving the state queue, so a start() in between ran unwatched.
+    func testStartRacingStopKeepsWatching() throws {
+        let runtime = try startWorkingRuntime()
+        watcher.stopDelay = 0.1
+        let stopped = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            runtime.stop()
+            stopped.signal()
+        }
+        XCTAssertTrue(runtimeWait { !runtime.isRunning })
+        try runtime.start()
+        XCTAssertEqual(stopped.wait(timeout: .now() + 3), .success)
+        XCTAssertTrue(runtime.isRunning)
+        XCTAssertTrue(watcher.isWatching)
+    }
+
     func testRestartAfterStopWhileOffWritesTheStatusAgain() throws {
         let runtime = try startWorkingRuntime()
         watcher.state.lidClosed = true

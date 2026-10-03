@@ -237,6 +237,8 @@ final class FakeSleepWatcher: SleepWatching, @unchecked Sendable {
     private var handler: (@Sendable (SleepEvent) -> Void)?
     private var current = SleepState(lidClosed: false, lidClosedSleeps: true, graphics: true)
     var startSucceeds = true
+    /// Widens the window between a stop() and the moment it lets go of the handler.
+    var stopDelay: TimeInterval = 0
 
     var state: SleepState {
         get { lock.lock(); defer { lock.unlock() }; return current }
@@ -253,6 +255,7 @@ final class FakeSleepWatcher: SleepWatching, @unchecked Sendable {
     }
 
     func stop() {
+        if stopDelay > 0 { Thread.sleep(forTimeInterval: stopDelay) }
         lock.lock(); handler = nil; lock.unlock()
     }
 

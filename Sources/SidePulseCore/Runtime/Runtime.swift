@@ -199,6 +199,10 @@ public final class SidePulseRuntime: @unchecked Sendable {
             waitingForWake.withLock { $0 = false }
             running = true
             setOutputsOpen(true)
+            // Started and stopped on the state queue, so a stop() racing a start() cannot leave it off.
+            if let sleepWatcher, !sleepWatcher.start({ [weak self] in self?.handleSleepEvent($0) }) {
+                DiagnosticsLog.shared.log("sleep: cannot watch for sleep, so the LEDs stay on while the Mac sleeps")
+            }
             saveLatest(now: now)
             startTimers()
             refreshLocked(now: now, checkSettings: false)
@@ -207,12 +211,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 + "\(options.dryRun ? ", dry run" : ""))")
             return true
         }
-        guard started else { return }
-        if let sleepWatcher, !sleepWatcher.start({ [weak self] in self?.handleSleepEvent($0) }) {
-            DiagnosticsLog.shared.log("sleep: cannot watch for sleep, so the LEDs stay on while the Mac sleeps")
-        }
         // Discovery can hang on a dead mount, so the first LED write follows it instead of holding up start().
-        deviceQueue.async { [weak self] in self?.pollDevicesTick() }
+        if started { deviceQueue.async { [weak self] in self?.pollDevicesTick() } }
     }
 
     /// Waits (bounded) for queued LED work and keepalive touches, then drops whatever LED work is
@@ -222,6 +222,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
             guard running else { return nil }
             running = false
             setOutputsOpen(false)
+            sleepWatcher?.stop()
             refreshTimer?.cancel()
             refreshTimer = nil
             deviceTimer?.cancel()
@@ -241,7 +242,6 @@ public final class SidePulseRuntime: @unchecked Sendable {
             return leds.currentGeneration
         }
         guard let generation else { return }
-        sleepWatcher?.stop()
         persistQueue.sync {}
         leds.finishPreviewNow()
         leds.waitUntilIdle(timeout: 2)
@@ -593,7 +593,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     static let sleepWriteTimeout: TimeInterval = 2
 
-    /// Runs on the watcher's queue, so it never waits for the state queue.
+    /// Runs on the watcher's queue and must never wait for the state queue, which starts and stops the watcher.
     private func handleSleepEvent(_ event: SleepEvent) {
         guard let sleepWatcher, outputsOpen.withLock({ $0 }) else { return }
         switch event {
