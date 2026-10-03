@@ -74,6 +74,9 @@ final class StatusItemController: NSObject {
         if target != animatingState {
             animatingState = target
             if let target { animatedIcon.play(target) } else { animatedIcon.stop() }
+            // Other displays' menu bars show a snapshot that AppKit retakes only when the button redraws, and going
+            // from Working to Ask leaves the button's image unchanged.
+            statusItem.button?.needsDisplay = true
         }
         showIcon()
 
