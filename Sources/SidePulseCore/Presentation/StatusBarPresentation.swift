@@ -69,23 +69,21 @@ public struct IconFrame: Sendable, Equatable {
     public static let identity = IconFrame(rotationDegrees: 0, scale: 1, opacity: 1)
 }
 
-/// Python's 48 frames at 30 fps stepped down to 12 at 8 fps (same 1.5 s cycle), because every new image
-/// makes AppKit redraw the status item on each display.
+/// Two frames a second apart, because every new image makes AppKit redraw the status item on each display.
 public enum IconAnimation {
-    public static let framesPerSecond: Double = 8
-    public static let frameCount = 12
+    public static let framesPerSecond: Double = 1
+    public static let frameCount = 2
     public static let canvasSize: Double = 18
     public static let symbolSize: Double = 15
 
     public static func frame(for state: DisplayState, index: Int) -> IconFrame {
-        let wrapped = ((index % frameCount) + frameCount) % frameCount
-        let phase = Double(wrapped) / Double(frameCount)
+        let alternate = !index.isMultiple(of: frameCount)
         switch state {
         case .working:
-            return IconFrame(rotationDegrees: -360 * phase, scale: 1, opacity: 1)
+            // A quarter turn, because the Working symbol looks the same after a half turn.
+            return alternate ? IconFrame(rotationDegrees: -90, scale: 1, opacity: 1) : .identity
         case .ask:
-            let pulse = (1 + cos(2 * Double.pi * phase)) / 2
-            return IconFrame(rotationDegrees: 0, scale: 0.82 + 0.18 * pulse, opacity: 0.45 + 0.55 * pulse)
+            return alternate ? IconFrame(rotationDegrees: 0, scale: 0.82, opacity: 0.45) : .identity
         case .idle, .done:
             return .identity
         }

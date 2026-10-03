@@ -416,9 +416,11 @@ your projects' `CLAUDE.md` or `AGENTS.md`.
 ## Menu-bar app
 
 `SidePulse.app` is a menu-bar-only app with no Dock icon. The icon is an SF
-Symbol for the aggregate state: Idle, Working, Done or Ask. Working rotates and
-Ask pulses at 8 frames per second. The animation stops while the displays
-sleep, while another user's session is in front, and when Reduce Motion is on.
+Symbol for the aggregate state: Idle, Working, Done or Ask. Working and Ask
+switch between two frames once a second: Working turns a quarter turn, and Ask
+dims. Each new frame makes macOS redraw the icon on every display, so it stays
+this slow. The animation stops while the displays sleep, while another user's
+session is in front, and when Reduce Motion is on.
 The tooltip reads `SidePulse Agent Monitor: <state>`. If you open the app again
 while it is running, for example from Finder, it shows Settings. A second copy
 asks the running one to show Settings and exits. Only when the socket belongs
