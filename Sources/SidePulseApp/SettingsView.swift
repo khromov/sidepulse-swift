@@ -67,6 +67,14 @@ private struct GeneralTab: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section("LEDs") {
+                Toggle(isOn: Binding(
+                    get: { model.settings.ledsOffOnAnySleep },
+                    set: { enabled in model.update { $0.ledsOffOnAnySleep = enabled } })) {
+                    Text(MenuText.ledsOffOnAnySleep)
+                    Text(MenuText.ledsOffOnAnySleepHelp)
+                }
+            }
             Section("SD Card Reader") {
                 Toggle(isOn: Binding(
                     get: { model.settings.sdEjectGuard },

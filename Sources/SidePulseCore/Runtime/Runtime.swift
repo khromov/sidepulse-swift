@@ -42,6 +42,9 @@ public struct RuntimeOptions: Sendable {
     public var batteryCacheInterval: TimeInterval = 30
     public var keepAwakeHolder: (any KeepAwakeHolding)? = nil
     public var keepAwakeGrace: TimeInterval = 300
+    /// Turns the LEDs off while the Mac sleeps.
+    public var watchSleep = true
+    public var sleepWatcher: (any SleepWatching)? = nil
     /// Counted from the first unsaved change, so later changes ride along instead
     /// of postponing the save.
     public var latestSaveDelay: TimeInterval = 1
@@ -105,11 +108,14 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private var refreshTimer: DispatchSourceTimer?
     private var deviceTimer: DispatchSourceTimer?
     private let keepAwakeHolder: (any KeepAwakeHolding)?
+    private let sleepWatcher: (any SleepWatching)?
     private let readBattery: @Sendable () -> BatteryState
     /// Only touched on the persist queue.
     private var latestSaveFailing = false
     /// Mirrors `running` so `preview` can check it without waiting for the state queue.
     private let outputsOpen = Mutex(false)
+    /// The Mac still looks in use between `.willSleep` and the actual sleep, so the LEDs wait for a wake.
+    private let waitingForWake = Mutex(false)
     private var ingestCount = 0
 
     public init(paths: SidePulsePaths, options: RuntimeOptions = RuntimeOptions()) {
@@ -133,6 +139,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         }
         self.policy = KeepAwakePolicy(grace: options.keepAwakeGrace)
         self.keepAwakeHolder = options.keepAwake ? (options.keepAwakeHolder ?? KeepAwakeAssertion()) : nil
+        self.sleepWatcher = options.watchSleep ? (options.sleepWatcher ?? SystemSleepWatcher()) : nil
         self.readBattery = options.batteryReader ?? { BatteryState.read() }
         stateQueue.setSpecific(key: stateQueueKey, value: true)
     }
@@ -141,6 +148,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         refreshTimer?.cancel()
         deviceTimer?.cancel()
         server?.stop()
+        sleepWatcher?.stop()
     }
 
     // MARK: Lifecycle
@@ -188,8 +196,13 @@ public final class SidePulseRuntime: @unchecked Sendable {
             battery = nil
             safeguardActive = false
             leds.reopen()
+            waitingForWake.withLock { $0 = false }
             running = true
             setOutputsOpen(true)
+            // Started and stopped on the state queue, so a stop() racing a start() cannot leave it off.
+            if let sleepWatcher, !sleepWatcher.start({ [weak self] in self?.handleSleepEvent($0) }) {
+                DiagnosticsLog.shared.log("sleep: cannot watch for sleep, so the LEDs stay on while the Mac sleeps")
+            }
             saveLatest(now: now)
             startTimers()
             refreshLocked(now: now, checkSettings: false)
@@ -209,6 +222,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
             guard running else { return nil }
             running = false
             setOutputsOpen(false)
+            sleepWatcher?.stop()
             refreshTimer?.cancel()
             refreshTimer = nil
             deviceTimer?.cancel()
@@ -520,6 +534,8 @@ public final class SidePulseRuntime: @unchecked Sendable {
 
     /// Runs on the device queue so a hung mount never stalls event handling.
     private func pollDevicesTick() {
+        // A dark wake that turns into a full wake sends no event.
+        turnLedsOnIfInUse()
         let changed = leds.pollDevices()
         let errorsChanged = leds.checkDeviceStatus()
         if changed {
@@ -571,6 +587,38 @@ public final class SidePulseRuntime: @unchecked Sendable {
                 DiagnosticsLog.shared.log("runtime: saving \(store.url.path) works again")
             }
         }
+    }
+
+    // MARK: Sleep
+
+    static let sleepWriteTimeout: TimeInterval = 2
+
+    /// Runs on the watcher's queue and must never wait for the state queue, which starts and stops the watcher.
+    private func handleSleepEvent(_ event: SleepEvent) {
+        guard let sleepWatcher, outputsOpen.withLock({ $0 }) else { return }
+        switch event {
+        case .willSleep:
+            let lidClosed = sleepWatcher.state.lidClosed == true
+            guard lidClosed || shared.read({ $0.ledSettings.ledsOffOnAnySleep }) else {
+                DiagnosticsLog.shared.log("sleep: Mac sleeping, LEDs left on")
+                return
+            }
+            waitingForWake.withLock { $0 = true }
+            let done = leds.turnOffForSleep(timeout: Self.sleepWriteTimeout)
+            DiagnosticsLog.shared.log("sleep: Mac sleeping\(lidClosed ? " (lid closed)" : ""), LEDs off"
+                + (done ? "" : "; a write is still pending"))
+        case .didWake:
+            waitingForWake.withLock { $0 = false }
+            turnLedsOnIfInUse()
+        case .lidChanged:
+            turnLedsOnIfInUse()
+        }
+    }
+
+    private func turnLedsOnIfInUse() {
+        guard leds.isOffForSleep, !waitingForWake.withLock({ $0 }), let sleepWatcher, sleepWatcher.state.inUse,
+              leds.turnOnAfterSleep() else { return }
+        DiagnosticsLog.shared.log("sleep: Mac in use again, LEDs back on")
     }
 
     // MARK: Keep-awake

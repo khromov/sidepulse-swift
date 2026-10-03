@@ -53,7 +53,12 @@ public final class LedSyncService: @unchecked Sendable {
         /// Work runs only while open and in the generation it was queued in.
         var outputOpen = true
         var generation = 0
+        /// Set while the LEDs are off for sleep, and new for each sleep so a late write of an old one is skipped.
+        var sleepToken: Int?
+        var sleeps = 0
     }
+
+    static let sleepProgram = "off 320ms cosine"
 
     // I/O-queue-only state.
     private var controllers: [String: AgentLedController] = [:]
@@ -275,6 +280,39 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
+    /// Fades Agent Status devices to off and holds back every other write until `turnOnAfterSleep()`.
+    /// Waits up to `timeout` for the writes, because the Mac sleeps once this returns.
+    @discardableResult
+    public func turnOffForSleep(timeout: TimeInterval) -> Bool {
+        let (token, generation) = shared.withLock { state -> (Int, Int) in
+            state.sleeps += 1
+            state.sleepToken = state.sleeps
+            // Ends a preview without its restore, which would light the LEDs again.
+            state.previewToken += 1
+            state.previewUntil = nil
+            return (state.sleeps, state.generation)
+        }
+        let done = DispatchSemaphore(value: 0)
+        ioQueue.async { [self] in
+            writeSleepProgram(token: token, generation: generation)
+            done.signal()
+        }
+        return done.wait(timeout: .now() + timeout) == .success
+    }
+
+    /// Returns whether the LEDs were off for sleep.
+    @discardableResult
+    public func turnOnAfterSleep() -> Bool {
+        let (wasOff, mode) = shared.withLock { state -> (Bool, AgentMode?) in
+            defer { state.sleepToken = nil }
+            return (state.sleepToken != nil, state.latestMode)
+        }
+        if wasOff, let mode { requestSync(mode: mode) }
+        return wasOff
+    }
+
+    public var isOffForSleep: Bool { shared.withLock { $0.sleepToken != nil } }
+
     public func touchKeepalive(now: Date = Date()) {
         touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now, generation: currentGeneration)
     }
@@ -330,6 +368,7 @@ public final class LedSyncService: @unchecked Sendable {
             state.generation += 1
             state.outputOpen = true
             state.syncScheduled = false
+            state.sleepToken = nil
         }
     }
 
@@ -354,7 +393,7 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     private func performSync(mode: AgentMode, generation: Int) -> [String: LedSyncResult] {
-        guard isCurrent(generation) else { return [:] }
+        guard isCurrent(generation), !isOffForSleep else { return [:] }
         // Resets are applied here, right before the sync, so a reset never races a write.
         let (devices, resetIDs) = shared.withLock { state -> ([DeviceCandidate], Set<String>) in
             defer {
@@ -386,7 +425,7 @@ public final class LedSyncService: @unchecked Sendable {
             let controller = controller(for: device)
             controller.brightness = settings.brightness(forDevice: device.id)
             let result = controller.sync(mode: mode, animationID: animationID) { [self] program in
-                try write(program, to: device, display: .agent, generation: generation)
+                try write(program, to: device, display: .agent, generation: generation, when: { !isOffForSleep })
             }
             results[device.id] = result
             if result.changed {
@@ -429,7 +468,8 @@ public final class LedSyncService: @unchecked Sendable {
                                                      brightness: settings.brightness(forDevice: device.id))
                 if dryRun {
                     try LedText.validate(program)
-                } else if try !write(program, to: device, display: .agent, generation: generation) {
+                } else if try !write(program, to: device, display: .agent, generation: generation,
+                                     when: { !isOffForSleep }) {
                     continue
                 }
                 log("leds: preview \(animationID) on \(device.displayName) at \(device.target.path)")
@@ -457,7 +497,8 @@ public final class LedSyncService: @unchecked Sendable {
         controllers[deviceID] = nil
         guard !dryRun, let expected = lastWritten[deviceID] else { return false }
         do {
-            let written = try write("off", to: device, display: .manual, generation: generation, ifHolding: expected)
+            let written = try write("off", to: device, display: .manual, generation: generation, ifHolding: expected,
+                                    when: { true })
             shared.withLock { $0.clearErrors[deviceID] = nil }
             return written
         } catch {
@@ -466,10 +507,29 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Returns false without writing if, once open() returns, the device is no longer in
-    /// `display` mode or this work's generation is over (open() can wait on a permission prompt).
+    private func writeSleepProgram(token: Int, generation: Int) {
+        guard isCurrent(generation) else { return }
+        let settings = settingsProvider()
+        for device in connectedDevices where settings.display(forDevice: device.id) == .agent {
+            guard !dryRun else {
+                log("leds: would turn off \(device.displayName) at \(device.target.path) for sleep")
+                continue
+            }
+            do {
+                if try write(Self.sleepProgram, to: device, display: .agent, generation: generation,
+                             when: { shared.withLock { $0.sleepToken == token } }) {
+                    log("leds: turned off \(device.displayName) at \(device.target.path) for sleep")
+                }
+            } catch {
+                log("leds: could not turn off \(device.displayName) for sleep: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Returns false without writing if, once open() returns, the device is no longer in `display` mode,
+    /// `wanted` fails or this work's generation is over (open() can wait on a permission prompt).
     private func write(_ program: String, to device: DeviceCandidate, display: LedDisplay, generation: Int,
-                       ifHolding expected: String? = nil) throws -> Bool {
+                       ifHolding expected: String? = nil, when wanted: () -> Bool) throws -> Bool {
         let group = writeGroup(for: device.id)
         shared.withLock { $0.writesStarted[device.id] = clock() }
         var entered = false
@@ -483,7 +543,7 @@ public final class LedSyncService: @unchecked Sendable {
                 // `waitForWrites` is either seen here or waited for there.
                 group.enter()
                 entered = true
-                return isCurrent(generation) && settingsProvider().display(forDevice: device.id) == display
+                return isCurrent(generation) && settingsProvider().display(forDevice: device.id) == display && wanted()
             }
             if written { lastWritten[device.id] = program }
             return written

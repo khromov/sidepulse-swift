@@ -216,3 +216,25 @@ final class PowerKeepAwakeAssertionTests: XCTestCase {
         XCTAssertFalse(heldAssertionNames().contains(reason))
     }
 }
+
+final class PowerSleepStateTests: XCTestCase {
+    func testInUseNeedsTheDisplaysAndAnOpenLidOrAnExternalDisplay() {
+        XCTAssertTrue(SleepState(lidClosed: false, lidClosedSleeps: true, graphics: true).inUse)
+        XCTAssertFalse(SleepState(lidClosed: false, lidClosedSleeps: true, graphics: false).inUse, "dark wake")
+        XCTAssertFalse(SleepState(lidClosed: true, lidClosedSleeps: true, graphics: true).inUse)
+        XCTAssertFalse(SleepState(lidClosed: true, lidClosedSleeps: nil, graphics: true).inUse)
+        XCTAssertTrue(SleepState(lidClosed: true, lidClosedSleeps: false, graphics: true).inUse, "external display")
+        XCTAssertTrue(SleepState(lidClosed: nil, lidClosedSleeps: nil, graphics: true).inUse, "no lid")
+        XCTAssertTrue(SleepState().inUse, "macOS reports nothing")
+    }
+
+    func testSystemWatcherStartsAndStops() {
+        let watcher = SystemSleepWatcher()
+        XCTAssertTrue(watcher.start { _ in })
+        XCTAssertTrue(watcher.start { _ in }, "already watching")
+        watcher.stop()
+        watcher.stop()
+        XCTAssertTrue(watcher.start { _ in })
+        watcher.stop()
+    }
+}

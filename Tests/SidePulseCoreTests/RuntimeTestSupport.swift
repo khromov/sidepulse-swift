@@ -73,6 +73,7 @@ final class RuntimeWorld {
         var options = RuntimeOptions()
         options.serveSocket = serveSocket
         options.keepAwake = false
+        options.watchSleep = false
         options.mountRoots = [mounts]
         options.refreshInterval = 3600
         options.devicePollInterval = 0.1
@@ -229,4 +230,38 @@ final class RuntimeInbox<Element>: @unchecked Sendable {
     func append(_ element: Element) { lock.lock(); storage.append(element); lock.unlock() }
     var items: [Element] { lock.lock(); defer { lock.unlock() }; return storage }
     var count: Int { items.count }
+}
+
+final class FakeSleepWatcher: SleepWatching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable (SleepEvent) -> Void)?
+    private var current = SleepState(lidClosed: false, lidClosedSleeps: true, graphics: true)
+    var startSucceeds = true
+    /// Widens the window between a stop() and the moment it lets go of the handler.
+    var stopDelay: TimeInterval = 0
+
+    var state: SleepState {
+        get { lock.lock(); defer { lock.unlock() }; return current }
+        set { lock.lock(); current = newValue; lock.unlock() }
+    }
+
+    var isWatching: Bool { lock.lock(); defer { lock.unlock() }; return handler != nil }
+
+    func start(_ handler: @escaping @Sendable (SleepEvent) -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard startSucceeds else { return false }
+        self.handler = handler
+        return true
+    }
+
+    func stop() {
+        if stopDelay > 0 { Thread.sleep(forTimeInterval: stopDelay) }
+        lock.lock(); handler = nil; lock.unlock()
+    }
+
+    /// Calls the handler on the caller's thread, which for `.willSleep` waits for the LED writes.
+    func send(_ event: SleepEvent) {
+        lock.lock(); let handler = handler; lock.unlock()
+        handler?(event)
+    }
 }

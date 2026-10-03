@@ -28,6 +28,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.sleepPolicy, .agents)
         XCTAssertEqual(settings.minBatteryPercent, 20)
         XCTAssertTrue(settings.sdEjectGuard)
+        XCTAssertFalse(settings.ledsOffOnAnySleep)
         XCTAssertEqual(settings.matchingProfile?.id, "profile:signal")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
         XCTAssertEqual(LedDisplay.manual.label, "Manual")
@@ -46,6 +47,9 @@ final class SettingsModelTests: XCTestCase {
           "sd_eject_guard": {
             "enabled": true
           },
+          "sleep_leds": {
+            "off_on_any_sleep": false
+          },
           "sleep_prevention": {
             "min_battery_percent": 20,
             "policy": "agents"
@@ -63,7 +67,8 @@ final class SettingsModelTests: XCTestCase {
     func testGarbageTypesFallBackFieldByField() throws {
         let loaded = try settings(fromJSON: """
         {"devices": "x", "default_display": 5, "agent_animations": [], "agent_list": "x",
-         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}, "sd_eject_guard": {"enabled": "no"}}
+         "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}, "sd_eject_guard": {"enabled": "no"},
+         "sleep_leds": {"off_on_any_sleep": "yes"}}
         """)
         XCTAssertEqual(loaded, SidePulseSettings())
 
@@ -164,11 +169,18 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(SidePulseSettings.fromJSON(off.toJSON()), off)
     }
 
+    func testLedsOffOnAnySleepCanBeTurnedOn() throws {
+        let on = try settings(fromJSON: #"{"sleep_leds": {"off_on_any_sleep": true}}"#)
+        XCTAssertTrue(on.ledsOffOnAnySleep)
+        XCTAssertEqual(on.toJSON()["sleep_leds"]?.serialized(), #"{"off_on_any_sleep":true}"#)
+        XCTAssertEqual(SidePulseSettings.fromJSON(on.toJSON()), on)
+    }
+
     func testUnknownKeysAreDroppedOnSave() throws {
         let loaded = try settings(fromJSON: #"{"future": {"a": 1}, "default_display": "manual", "leds_enabled": false}"#)
         XCTAssertEqual(loaded, SidePulseSettings())
         XCTAssertEqual(loaded.toJSON().objectValue?.keys,
-                       ["agent_animations", "agent_list", "devices", "sd_eject_guard", "sleep_prevention"])
+                       ["agent_animations", "agent_list", "devices", "sd_eject_guard", "sleep_leds", "sleep_prevention"])
     }
 
     func testJSONRoundTrip() {
