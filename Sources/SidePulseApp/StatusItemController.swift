@@ -83,6 +83,8 @@ final class StatusItemController: NSObject {
         let rowsAnimate = menuController.isOpen && StatusBarPresentation.shouldAnimateMenuRows(
             menuController.rowStates, reduceMotion: reduceMotion, paused: paused)
         if rowsAnimate, rowTimer == nil {
+            // The rows open on the still image, which is frame 0, so the first tick has to show frame 1.
+            frame = 0
             let timer = Timer(timeInterval: 1.0 / IconAnimation.framesPerSecond, target: self,
                               selector: #selector(tick(_:)), userInfo: nil, repeats: true)
             timer.tolerance = 0.25 / IconAnimation.framesPerSecond

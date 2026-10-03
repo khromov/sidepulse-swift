@@ -6,6 +6,7 @@ import SidePulseCore
 final class AnimatedIconView: NSView {
     private let iconLayer = CALayer()
     private let shapeLayer = CALayer()
+    private var current: DisplayState?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -37,6 +38,12 @@ final class AnimatedIconView: NSView {
         shapeLayer.contentsScale = window?.backingScaleFactor ?? 2
     }
 
+    /// Core Animation drops the spin if the view leaves its window, and no state change would restart it.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, let current, iconLayer.animation(forKey: "icon") == nil { play(current) }
+    }
+
     override func layout() {
         super.layout()
         let side = IconAnimation.canvasSize
@@ -53,10 +60,12 @@ final class AnimatedIconView: NSView {
         guard let animation = Self.animation(for: state) else { return stop() }
         withoutImplicitAnimations { shapeLayer.contents = IconRenderer.image(for: state) }
         iconLayer.add(animation, forKey: "icon")
+        current = state
         isHidden = false
     }
 
     func stop() {
+        current = nil
         iconLayer.removeAllAnimations()
         isHidden = true
     }

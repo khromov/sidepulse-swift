@@ -66,9 +66,9 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.ask], reduceMotion: false, paused: true))
     }
 
-    /// Regression: 8 fps redraws of the status item still cost about 8 % CPU (4 displays)
-    /// while an agent worked, so the icon flips between two frames once a second.
-    func testIconAnimationIsTwoFramesPerSecond() {
+    /// Regression: 8 fps image swaps cost about 8 % CPU with four displays, so open menu rows flip between two
+    /// frames once a second.
+    func testMenuRowsSwapTwoFramesOncePerSecond() {
         XCTAssertEqual(IconAnimation.framesPerSecond, 1)
         XCTAssertEqual(IconAnimation.frameCount, 2)
     }
