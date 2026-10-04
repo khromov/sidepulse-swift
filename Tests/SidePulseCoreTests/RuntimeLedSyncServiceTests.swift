@@ -501,8 +501,10 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.requestSync(mode: .completed)
         service.waitUntilIdle()
         XCTAssertEqual(world.program("SidePulsePro"), kitt)
-        XCTAssertTrue(runtimeWait { self.world.program("SidePulsePro") != kitt })
-        XCTAssertEqual(world.program("SidePulsePro"), RuntimePrograms.expected(.completed, ledCount: 8, brightness: 51))
+        // LEDS.LED is rewritten in place, so a read mid-write is empty: wait for the program itself.
+        let completed = RuntimePrograms.expected(.completed, ledCount: 8, brightness: 51)
+        XCTAssertTrue(runtimeWait { self.world.program("SidePulsePro") == completed },
+                      "shows \(world.program("SidePulsePro") ?? "nothing")")
         XCTAssertFalse(service.isPreviewing)
     }
 
