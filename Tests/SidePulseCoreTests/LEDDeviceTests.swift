@@ -571,164 +571,247 @@ final class LEDKeepaliveTests: XCTestCase {
         private let lock = NSLock()
         private var items: [URL] = []
         func append(_ url: URL) { lock.lock(); items.append(url); lock.unlock() }
-        var touched: [URL] { lock.lock(); defer { lock.unlock() }; return items }
+        var read: [URL] { lock.lock(); defer { lock.unlock() }; return items }
     }
 
-    private struct TouchFailure: Error, LocalizedError {
+    private struct ReadFailure: Error, LocalizedError {
         var errorDescription: String? { "offline" }
     }
 
-    func testKeepaliveFileLocation() {
+    func testStatusFileLocation() {
         let device = URL(fileURLWithPath: "/Volumes/SidePulsePro")
-        let expected = "/Volumes/SidePulsePro/keepalive"
-        for target in ["LEDS.LED", "leds.led", "STATUS.TXT", "keepalive", "KEEPALIVE"] {
-            XCTAssertEqual(KeepaliveToucher.keepaliveFile(for: device.appendingPathComponent(target)).path, expected, target)
+        let expected = "/Volumes/SidePulsePro/STATUS.TXT"
+        for target in ["LEDS.LED", "leds.led", "STATUS.TXT", "status.txt"] {
+            XCTAssertEqual(KeepaliveReader.statusFile(for: device.appendingPathComponent(target)).path, expected, target)
         }
-        XCTAssertEqual(KeepaliveToucher.keepaliveFile(for: device).path, expected)
-        XCTAssertEqual(KeepaliveToucher.keepaliveFile(for: device.appendingPathComponent("OTHER.LED")).path,
-                       "/Volumes/SidePulsePro/OTHER.LED/keepalive")
+        XCTAssertEqual(KeepaliveReader.statusFile(for: device).path, expected)
+        XCTAssertEqual(KeepaliveReader.statusFile(for: device.appendingPathComponent("OTHER.LED")).path,
+                       "/Volumes/SidePulsePro/OTHER.LED/STATUS.TXT")
     }
 
-    func testTouchesOncePerInterval() {
+    func testReadsOncePerInterval() {
         let recorder = Recorder()
-        let toucher = KeepaliveToucher(interval: 60) { recorder.append($0) }
+        let reader = KeepaliveReader(interval: 60) { recorder.append($0) }
         let target = URL(fileURLWithPath: "/Volumes/SidePulsePro/LEDS.LED")
-        let keepalive = URL(fileURLWithPath: "/Volumes/SidePulsePro/keepalive")
+        let status = URL(fileURLWithPath: "/Volumes/SidePulsePro/STATUS.TXT")
         let start = Date(timeIntervalSinceReferenceDate: 0)
 
-        XCTAssertEqual(toucher.poke(targets: [target], now: start), [keepalive])
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 30), [])
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 61), [keepalive])
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        XCTAssertEqual(reader.poke(targets: [target], now: start), [status])
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 30), [])
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 61), [status])
+        XCTAssertTrue(reader.waitForPendingReads())
 
-        XCTAssertEqual(recorder.touched, [keepalive, keepalive])
+        XCTAssertEqual(recorder.read, [status, status])
     }
 
     func testFailuresAlsoWaitTheInterval() {
-        let toucher = KeepaliveToucher(interval: 60) { _ in throw TouchFailure() }
+        let reader = KeepaliveReader(interval: 60) { _ in throw ReadFailure() }
         let target = URL(fileURLWithPath: "/Volumes/SidePulseDot/LEDS.LED")
         let start = Date(timeIntervalSinceReferenceDate: 0)
 
-        XCTAssertEqual(toucher.poke(targets: [target], now: start).count, 1)
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(toucher.lastError, "/Volumes/SidePulseDot/keepalive: offline")
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 59), [])
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 60).count, 1)
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        XCTAssertEqual(reader.poke(targets: [target], now: start).count, 1)
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.lastError, "/Volumes/SidePulseDot/STATUS.TXT: offline")
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 59), [])
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 60).count, 1)
+        XCTAssertTrue(reader.waitForPendingReads())
     }
 
     func testRateLimitIsPerPath() {
         let recorder = Recorder()
-        let toucher = KeepaliveToucher(interval: 60) { recorder.append($0) }
+        let reader = KeepaliveReader(interval: 60) { recorder.append($0) }
         let pro = URL(fileURLWithPath: "/Volumes/SidePulsePro")
         let dot = URL(fileURLWithPath: "/Volumes/PulseDot")
         let now = Date(timeIntervalSinceReferenceDate: 0)
 
-        let scheduled = toucher.poke(targets: [pro.appendingPathComponent("LEDS.LED"), pro,
-                                               dot.appendingPathComponent("LEDS.LED")], now: now)
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        let scheduled = reader.poke(targets: [pro.appendingPathComponent("LEDS.LED"), pro,
+                                              dot.appendingPathComponent("LEDS.LED")], now: now)
+        XCTAssertTrue(reader.waitForPendingReads())
 
-        XCTAssertEqual(scheduled.map(\.path), ["/Volumes/SidePulsePro/keepalive", "/Volumes/PulseDot/keepalive"])
-        XCTAssertEqual(Set(recorder.touched.map(\.path)), Set(scheduled.map(\.path)))
+        XCTAssertEqual(scheduled.map(\.path), ["/Volumes/SidePulsePro/STATUS.TXT", "/Volumes/PulseDot/STATUS.TXT"])
+        XCTAssertEqual(Set(recorder.read.map(\.path)), Set(scheduled.map(\.path)))
     }
 
-    func testAtMostOneTouchInFlightPerPath() {
+    func testAtMostOneReadInFlightPerPath() {
         let release = DispatchSemaphore(value: 0)
         let recorder = Recorder()
-        let toucher = KeepaliveToucher(interval: 60) { url in
+        let reader = KeepaliveReader(interval: 60) { url in
             recorder.append(url)
             release.wait()
         }
         let target = URL(fileURLWithPath: "/Volumes/SidePulsePro/LEDS.LED")
         let start = Date(timeIntervalSinceReferenceDate: 0)
 
-        XCTAssertEqual(toucher.poke(targets: [target], now: start).count, 1)
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 100), [], "a hung touch must not pile up")
+        XCTAssertEqual(reader.poke(targets: [target], now: start).count, 1)
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 100), [], "a hung read must not pile up")
         release.signal()
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(toucher.poke(targets: [target], now: start + 200).count, 1)
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.poke(targets: [target], now: start + 200).count, 1)
         release.signal()
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(recorder.touched.count, 2)
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(recorder.read.count, 2)
     }
 
-    func testStalledFilesListsTouchesRunningTooLong() {
+    func testStalledFilesListsReadsRunningTooLong() {
         let release = DispatchSemaphore(value: 0)
-        let toucher = KeepaliveToucher(interval: 60) { _ in release.wait() }
+        let reader = KeepaliveReader(interval: 60) { _ in release.wait() }
         let target = URL(fileURLWithPath: "/Volumes/SidePulsePro/LEDS.LED")
 
-        toucher.poke(targets: [target])
-        XCTAssertEqual(toucher.stalledFiles(after: 10), [])
-        XCTAssertTrue(IPCTestSupport.waitUntil { toucher.stalledFiles(after: 0.1) == ["/Volumes/SidePulsePro/keepalive"] })
+        reader.poke(targets: [target])
+        XCTAssertEqual(reader.stalledFiles(after: 10), [])
+        XCTAssertTrue(IPCTestSupport.waitUntil { reader.stalledFiles(after: 0.1) == ["/Volumes/SidePulsePro/STATUS.TXT"] })
         release.signal()
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(toucher.stalledFiles(after: 0), [])
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.stalledFiles(after: 0), [])
     }
 
     func testClockMovingBackwardsDoesNotBlock() {
-        let toucher = KeepaliveToucher(interval: 60) { _ in }
+        let reader = KeepaliveReader(interval: 60) { _ in }
         let target = URL(fileURLWithPath: "/Volumes/SidePulsePro/LEDS.LED")
         let start = Date(timeIntervalSinceReferenceDate: 1000)
 
-        XCTAssertEqual(toucher.poke(targets: [target], now: start).count, 1)
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(toucher.poke(targets: [target], now: start - 500).count, 1)
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        XCTAssertEqual(reader.poke(targets: [target], now: start).count, 1)
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.poke(targets: [target], now: start - 500).count, 1)
+        XCTAssertTrue(reader.waitForPendingReads())
     }
 
-    func testRealTouchCreatesAndRefreshesTheFile() throws {
+    /// The keepalive must never write to the card.
+    func testRealReadLeavesTheVolumeUnchanged() throws {
         let device = try makeDirectory(try makeTempDirectory(self), "SidePulsePro")
-        let keepalive = device.appendingPathComponent("keepalive")
-        let toucher = KeepaliveToucher()
-
-        XCTAssertEqual(toucher.poke(targets: [device.appendingPathComponent("LEDS.LED")]).map(\.path), [keepalive.path])
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertTrue(FileManager.default.fileExists(atPath: keepalive.path))
-        XCTAssertNil(toucher.lastError)
-
+        let status = device.appendingPathComponent("STATUS.TXT")
+        try writeFile(status, "release_version 1.1.0\nserial SP-1\n")
         let old = Date(timeIntervalSinceNow: -3600)
-        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: keepalive.path)
-        toucher.poke(targets: [device], now: Date().addingTimeInterval(120))
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        let modified = try FileManager.default.attributesOfItem(atPath: keepalive.path)[.modificationDate] as? Date
-        XCTAssertGreaterThan(modified ?? old, old.addingTimeInterval(1800))
-        XCTAssertEqual(try Data(contentsOf: keepalive).count, 0)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: status.path)
+        let reader = KeepaliveReader()
+
+        XCTAssertEqual(reader.poke(targets: [device.appendingPathComponent("LEDS.LED")]).map(\.path), [status.path])
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertNil(reader.lastError)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: device.path), ["STATUS.TXT"])
+        XCTAssertEqual(try readFile(status), "release_version 1.1.0\nserial SP-1\n")
+        let modified = try FileManager.default.attributesOfItem(atPath: status.path)[.modificationDate] as? Date
+        XCTAssertEqual(modified?.timeIntervalSince1970 ?? 0, old.timeIntervalSince1970, accuracy: 1)
     }
 
-    func testTouchFileFailsForMissingVolume() {
-        XCTAssertThrowsError(try KeepaliveToucher.touchFile(
-            URL(fileURLWithPath: "/nonexistent-sidepulse-volume/keepalive")))
+    func testRealReadReportsAMissingStatusFile() throws {
+        let device = try makeDirectory(try makeTempDirectory(self), "SidePulsePro")
+        let reader = KeepaliveReader()
+        reader.poke(targets: [device])
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(reader.lastError?.hasPrefix(device.appendingPathComponent("STATUS.TXT").path), true)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: device.path), [], "nothing is created")
+    }
+}
+
+final class DeviceStatusFileTests: XCTestCase {
+    func testReadsInBlocksUpToTheLimit() throws {
+        let base = try makeTempDirectory(self)
+        let file = base.appendingPathComponent("STATUS.TXT")
+        for size in [0, 1, 511, 512, 1024, 1500] {
+            let bytes = Data((0..<size).map { UInt8($0 % 251) })
+            try bytes.write(to: file)
+            XCTAssertEqual(try DeviceStatusFile.read(file, limit: 4096), bytes, "\(size) bytes")
+        }
+        let large = Data(repeating: 0x41, count: 5000)
+        try large.write(to: file)
+        XCTAssertEqual(try DeviceStatusFile.read(file), large.prefix(4096))
+        XCTAssertEqual(try DeviceStatusFile.read(file, limit: DeviceStatusFile.statusReadLimit), large)
     }
 
-    /// Regression: a `keepalive` symlink got its target created or touched.
-    func testTouchRefusesASymlinkFIFOOrDirectory() throws {
+    func testRefusesMissingFilesSymlinksFIFOsAndDirectories() throws {
         let base = try makeTempDirectory(self)
         let device = try makeDirectory(base, "SidePulsePro")
-        let keepalive = device.appendingPathComponent("keepalive")
-        let refused = LedError.writeFailed("\(keepalive.path) is not a regular file")
+        let status = device.appendingPathComponent("STATUS.TXT")
+        let refused = LedError.writeFailed("\(status.path) is not a regular file")
+
+        XCTAssertThrowsError(try DeviceStatusFile.read(status)) {
+            XCTAssertEqual(ErrorText.describe($0), "Could not open \(status.path): No such file or directory")
+        }
 
         let victim = base.appendingPathComponent("victim")
-        try writeFile(victim, "secret")
-        let old = Date(timeIntervalSinceNow: -3600)
-        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: victim.path)
-        try FileManager.default.createSymbolicLink(at: keepalive, withDestinationURL: victim)
-        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
-        let modified = try FileManager.default.attributesOfItem(atPath: victim.path)[.modificationDate] as? Date
-        XCTAssertEqual(modified?.timeIntervalSince1970 ?? 0, old.timeIntervalSince1970, accuracy: 1)
-        try FileManager.default.removeItem(at: keepalive)
+        try writeFile(victim, "release_version 9.9.9\n")
+        try FileManager.default.createSymbolicLink(at: status, withDestinationURL: victim)
+        XCTAssertThrowsError(try DeviceStatusFile.read(status)) { XCTAssertEqual($0 as? LedError, refused) }
+        try FileManager.default.removeItem(at: status)
 
-        let missing = base.appendingPathComponent("created-through-link")
-        try FileManager.default.createSymbolicLink(at: keepalive, withDestinationURL: missing)
-        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
-        try FileManager.default.removeItem(at: keepalive)
+        XCTAssertEqual(mkfifo(status.path, 0o644), 0)
+        let started = Date()
+        XCTAssertThrowsError(try DeviceStatusFile.read(status)) { XCTAssertEqual($0 as? LedError, refused) }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+        try FileManager.default.removeItem(at: status)
 
-        XCTAssertEqual(mkfifo(keepalive.path, 0o644), 0)
-        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
-        try FileManager.default.removeItem(at: keepalive)
+        try makeDirectory(device, "STATUS.TXT")
+        XCTAssertThrowsError(try DeviceStatusFile.read(status)) { XCTAssertEqual($0 as? LedError, refused) }
+    }
+}
 
-        try makeDirectory(device, "keepalive")
-        XCTAssertThrowsError(try KeepaliveToucher.touchFile(keepalive)) { XCTAssertEqual($0 as? LedError, refused) }
+final class FirmwareInfoTests: XCTestCase {
+    /// Abridged from a real Dot, padded with NULs as the device pads the file.
+    static let dotStatus = Data("reads 2\nticks 47364292\nserial SPD-000248\nserial_number 248\napp_version 1.0.4\n"
+        .utf8) + Data("app_build 2026-08-19T20:08:39Z\nfw_state idle\nfw_cipher chacha20-poly1305\n".utf8)
+        + Data(repeating: 0, count: 300)
+
+    func testParsesBothModels() {
+        XCTAssertEqual(FirmwareInfo(statusText: Self.dotStatus),
+                       FirmwareInfo(model: .dot, version: "1.0.4", serial: "SPD-000248"))
+        XCTAssertEqual(FirmwareInfo(statusText: Data("release_version 1.1.0\r\nfirmware_version 77\r\nserial  SP-9 \r\n".utf8)),
+                       FirmwareInfo(model: .pro, version: "1.1.0", serial: "SP-9"))
+    }
+
+    func testOlderOrUnassignedDevicesStillIdentify() {
+        XCTAssertEqual(FirmwareInfo(statusText: Data("app_build x\nfw_state idle\n".utf8)),
+                       FirmwareInfo(model: .dot, version: FirmwareInfo.unknownVersion, serial: "unassigned"))
+        XCTAssertEqual(FirmwareInfo(statusText: Data("firmware_version 12345\nfirmware_slot A\n".utf8))?.version,
+                       FirmwareInfo.unknownVersion)
+    }
+
+    func testRejectsUnknownOrAmbiguousStatus() {
+        for text in ["", "hello\n", "app_build x\n", "release_version 1.0.5\napp_version 1.0.5\n", "app_version\n"] {
+            XCTAssertNil(FirmwareInfo(statusText: Data(text.utf8)), text)
+        }
+    }
+
+    func testReadNamesTheFileItCouldNotUse() throws {
+        let device = try makeTempDirectory(self)
+        try writeFile(device.appendingPathComponent("STATUS.TXT"), "hello\n")
+        XCTAssertThrowsError(try FirmwareInfo.read(volume: device)) {
+            XCTAssertEqual($0 as? FirmwareError,
+                           FirmwareError("Cannot identify a SidePulse Dot or Pro from \(device.path)/STATUS.TXT."))
+        }
+        try Self.dotStatus.write(to: device.appendingPathComponent("STATUS.TXT"))
+        XCTAssertEqual(try FirmwareInfo.read(volume: device).version, "1.0.4")
+    }
+}
+
+final class FirmwareWriterTests: XCTestCase {
+    func testReplacesTheImageAndLeavesProgramsAlone() throws {
+        let device = try makeTempDirectory(self)
+        try writeFile(device.appendingPathComponent("LEDS.LED"), "existing program")
+        try writeFile(device.appendingPathComponent("INIT.LED"), "startup program")
+        try FirmwareWriter.write(Data("new".utf8), toVolume: device)
+        XCTAssertEqual(try readFile(device.appendingPathComponent("FIRMWARE.BIN")), "new")
+
+        try writeFile(device.appendingPathComponent("FIRMWARE.BIN"), String(repeating: "old firmware ", count: 100))
+        try FirmwareWriter.write(Data("payload".utf8), toVolume: device)
+        XCTAssertEqual(try readFile(device.appendingPathComponent("FIRMWARE.BIN")), "payload")
+        XCTAssertEqual(try readFile(device.appendingPathComponent("LEDS.LED")), "existing program")
+        XCTAssertEqual(try readFile(device.appendingPathComponent("INIT.LED")), "startup program")
+    }
+
+    func testRefusesASymlinkedImage() throws {
+        let base = try makeTempDirectory(self)
+        let device = try makeDirectory(base, "SidePulsePro")
+        let victim = base.appendingPathComponent("unrelated")
+        try writeFile(victim, "keep me")
+        try FileManager.default.createSymbolicLink(at: device.appendingPathComponent("FIRMWARE.BIN"), withDestinationURL: victim)
+        XCTAssertThrowsError(try FirmwareWriter.write(Data("payload".utf8), toVolume: device))
+        XCTAssertEqual(try readFile(victim), "keep me")
+    }
+
+    func testMissingVolumeFails() {
+        XCTAssertThrowsError(try FirmwareWriter.write(Data("payload".utf8),
+                                                      toVolume: URL(fileURLWithPath: "/nonexistent-sidepulse-volume")))
     }
 }

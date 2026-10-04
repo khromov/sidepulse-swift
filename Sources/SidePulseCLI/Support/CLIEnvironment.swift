@@ -59,6 +59,8 @@ public struct CLIEnvironment {
     public var launchAgent: LaunchAgentOperations
     /// Overridable so app-binary lookup is testable.
     public var systemApplicationsDir: URL
+    /// GETs a URL, failing once the body passes the byte limit.
+    public var download: (URL, Int) throws -> Data
 
     public init(variables: [String: String],
                 paths: SidePulsePaths? = nil,
@@ -72,7 +74,8 @@ public struct CLIEnvironment {
                 snapshots: SnapshotLoader = .standard,
                 hooks: HookOperations = .standard,
                 launchAgent: LaunchAgentOperations? = nil,
-                systemApplicationsDir: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)) {
+                systemApplicationsDir: URL = URL(fileURLWithPath: "/Applications", isDirectory: true),
+                download: @escaping (URL, Int) throws -> Data = CLIEnvironment.httpDownload) {
         let paths = paths ?? SidePulsePaths(environment: variables)
         self.variables = variables
         self.paths = paths
@@ -87,7 +90,10 @@ public struct CLIEnvironment {
         self.hooks = hooks
         self.launchAgent = launchAgent ?? .launchd(paths: paths)
         self.systemApplicationsDir = systemApplicationsDir
+        self.download = download
     }
+
+    public static let httpDownload: (URL, Int) throws -> Data = { try HTTPDownload.fetch($0, limit: $1) }
 
     public static func live() -> CLIEnvironment {
         let variables = ProcessInfo.processInfo.environment

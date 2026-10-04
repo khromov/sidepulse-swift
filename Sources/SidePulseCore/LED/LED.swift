@@ -374,41 +374,40 @@ public enum LedWriter {
     }
 }
 
-/// Keeps a MacBook SD reader from powering off a SidePulse Pro after about three idle minutes.
-/// Touches run in the background with at most one in flight per path, so a hung FAT mount neither
-/// blocks the caller nor piles up threads.
-public final class KeepaliveToucher: Sendable {
-    public static let fileName = "keepalive"
-    /// Targets that sit at the volume root, so their sibling is touched.
-    static let volumeFileNames: Set<String> = [DeviceDiscovery.fileName.uppercased(), "KEEPALIVE", "STATUS.TXT"]
+/// Keeps a MacBook SD reader from powering off a SidePulse Pro after about three idle minutes by
+/// reading `STATUS.TXT` past the cache, so nothing is written to the card. Reads run in the background
+/// with at most one in flight per path, so a hung FAT mount neither blocks the caller nor piles up threads.
+public final class KeepaliveReader: Sendable {
+    /// Targets that sit at the volume root, so their sibling is read.
+    static let volumeFileNames: Set<String> = [DeviceDiscovery.fileName.uppercased(), DeviceStatusFile.fileName]
 
     public let interval: TimeInterval
-    private let touch: @Sendable (URL) throws -> Void
+    private let read: @Sendable (URL) throws -> Void
     private let state = Mutex(State())
     private let group = DispatchGroup()
     private let queue = DispatchQueue(label: "sidepulse.keepalive", qos: .utility, attributes: .concurrent)
 
     public convenience init(interval: TimeInterval = 60) {
-        self.init(interval: interval, touch: { try KeepaliveToucher.touchFile($0) })
+        self.init(interval: interval, read: { _ = try DeviceStatusFile.read($0) })
     }
 
     private struct State {
-        var lastTouch: [String: Date] = [:]
-        /// Keepalive file → system uptime when its running touch was scheduled.
+        var lastRead: [String: Date] = [:]
+        /// Status file → system uptime when its running read was scheduled.
         var inFlight: [String: TimeInterval] = [:]
         var lastError: String?
     }
 
-    public init(interval: TimeInterval = 60, touch: @escaping @Sendable (URL) throws -> Void) {
+    public init(interval: TimeInterval = 60, read: @escaping @Sendable (URL) throws -> Void) {
         self.interval = interval
-        self.touch = touch
+        self.read = read
     }
 
-    public static func keepaliveFile(for target: URL) -> URL {
+    public static func statusFile(for target: URL) -> URL {
         if volumeFileNames.contains(target.lastPathComponent.uppercased()) {
-            return target.deletingLastPathComponent().appendingPathComponent(fileName, isDirectory: false)
+            return DeviceStatusFile.url(forVolume: target.deletingLastPathComponent())
         }
-        return target.appendingPathComponent(fileName, isDirectory: false)
+        return DeviceStatusFile.url(forVolume: target)
     }
 
     /// The rate limit is recorded before the attempt so failures also wait `interval`, and a wall
@@ -419,13 +418,13 @@ public final class KeepaliveToucher: Sendable {
         let scheduled = state.withLock { state -> [URL] in
             var scheduled: [URL] = []
             for target in targets {
-                let file = Self.keepaliveFile(for: target)
+                let file = Self.statusFile(for: target)
                 let key = file.path
-                if let last = state.lastTouch[key] {
+                if let last = state.lastRead[key] {
                     let elapsed = now.timeIntervalSince(last)
                     if elapsed >= 0 && elapsed < interval { continue }
                 }
-                state.lastTouch[key] = now
+                state.lastRead[key] = now
                 guard state.inFlight[key] == nil else { continue }
                 state.inFlight[key] = started
                 scheduled.append(file)
@@ -436,7 +435,7 @@ public final class KeepaliveToucher: Sendable {
         for file in scheduled {
             queue.async(group: group) { [self] in
                 var failure: String?
-                do { try touch(file) } catch { failure = "\(file.path): \(error.localizedDescription)" }
+                do { try read(file) } catch { failure = "\(file.path): \(error.localizedDescription)" }
                 state.withLock { state in
                     state.inFlight[file.path] = nil
                     state.lastError = failure
@@ -456,13 +455,7 @@ public final class KeepaliveToucher: Sendable {
     }
 
     @discardableResult
-    public func waitForPendingTouches(timeout: TimeInterval = 5) -> Bool {
+    public func waitForPendingReads(timeout: TimeInterval = 5) -> Bool {
         group.wait(timeout: .now() + timeout) == .success
-    }
-
-    public static func touchFile(_ url: URL) throws {
-        guard let fd = try LedWriter.openRegularFile(url.path, flags: O_WRONLY | O_CREAT) else { return }
-        defer { close(fd) }
-        guard futimens(fd, nil) == 0 else { throw FileUtil.posixError("touch \(url.path)") }
     }
 }

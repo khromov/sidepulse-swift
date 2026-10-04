@@ -250,6 +250,12 @@ final class PresentationMenuTests: XCTestCase {
                        "Connected · 2 LEDs · /Volumes/PulseDot")
         XCTAssertEqual(DevicePresentation.subtitle(device("/Volumes/PulseDot", name: "Dot", connected: false)),
                        "Not connected · /Volumes/PulseDot")
+
+        var dot = device("/Volumes/PulseDot", name: "Dot")
+        dot.firmware = FirmwareInfo(model: .dot, version: "1.1.14", serial: "SPD-000248")
+        XCTAssertEqual(DevicePresentation.subtitle(dot), "Connected · 2 LEDs · Firmware 1.1.14 · /Volumes/PulseDot")
+        dot.firmware?.version = FirmwareInfo.unknownVersion
+        XCTAssertEqual(DevicePresentation.subtitle(dot), "Connected · 2 LEDs · /Volumes/PulseDot")
     }
 
     // MARK: Hooks

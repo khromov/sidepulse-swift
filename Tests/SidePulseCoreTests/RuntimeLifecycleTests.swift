@@ -147,7 +147,6 @@ final class RuntimeLifecycleTests: XCTestCase {
         runtimeSpin(0.3)
         XCTAssertEqual(world.program("PulseDot"), "boot")
         XCTAssertEqual(world.program("SidePulsePro"), "boot")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: world.mounts.appendingPathComponent("SidePulsePro/keepalive").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: world.paths.settingsFile.path))
         XCTAssertEqual(try Data(contentsOf: world.paths.latestFile), latestBefore)
         second.stop()
@@ -458,12 +457,12 @@ final class RuntimeLifecycleTests: XCTestCase {
         waitForProgram("PulseDot", RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
-    /// Regression: stop() returned while keepalive touches were still running.
-    func testStopWaitsForKeepaliveTouchesInFlight() throws {
+    /// Regression: stop() returned while keepalive I/O was still running.
+    func testStopWaitsForKeepaliveReadsInFlight() throws {
         world.addDevice("SidePulsePro")
         let finished = RuntimeInbox<String>()
         var options = world.options(serveSocket: false)
-        options.keepaliveTouch = { url in
+        options.keepaliveRead = { url in
             usleep(300_000)
             finished.append(url.path)
         }
@@ -471,7 +470,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         runtime.waitUntilIdle()
         runtime.ingest(provider: "claude", line: RuntimeRecords.prompt())
         runtime.stop()
-        XCTAssertEqual(finished.items, [world.mounts.appendingPathComponent("SidePulsePro/keepalive").path])
+        XCTAssertEqual(finished.items, [world.mounts.appendingPathComponent("SidePulsePro/STATUS.TXT").path])
     }
 
     /// Regression: `sidepulse run --interval 1e12` trapped in Dispatch.
@@ -643,6 +642,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         runtime.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), "boot")
         XCTAssertEqual(world.program("SidePulsePro"), "boot")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: world.mounts.appendingPathComponent("SidePulsePro/keepalive").path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: world.mounts.appendingPathComponent("SidePulsePro").path),
+                       ["LEDS.LED"])
     }
 }

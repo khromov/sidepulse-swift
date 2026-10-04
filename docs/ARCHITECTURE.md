@@ -22,8 +22,11 @@ In scope:
   - Dot vs Pro LED count;
   - built-in animations and the Cyan/Ember/Purple/Signal profiles;
   - per-device Agent/Manual mode and brightness;
-  - keepalive touches (8-LED/SD devices only);
+  - keepalive reads of `STATUS.TXT`, past the macOS cache (8-LED/SD devices only);
+  - each device's model and firmware version from `STATUS.TXT`;
   - hot-plug.
+- `sidepulse firmware version|upgrade`: lists firmware, and installs a verified package from the
+  Python repo's `firmware/` folder by copying its `FIRMWARE.BIN` to the volume.
 - SidePulse Pro Eject Prevention, in the app only: a DiskArbitration eject-approval callback vetoes ejects of
   cards in the built-in SD reader and retries their mount every 5 s (`SDEjectGuard`, ported from Python's
   `sd_eject_guard.c`). The hook CLI never links DiskArbitration.
@@ -55,6 +58,8 @@ Out of scope (dropped on purpose):
 - terminal resume/focus
 - a `sidepulse update` command (release apps update themselves with Sparkle)
 - Cursor, Grok and Junie
+- the read-only-mount LED transports of firmware 1.1 (READ2ME reads of `setup.html` on the Pro, USB
+  control requests on the Dot), not ported yet
 
 ## Processes
 
@@ -66,7 +71,7 @@ agent (claude/codex) ──hook──▶ sidepulse hook-log --provider P ; true
 SidePulse.app (menu bar)  = SidePulseRuntime + AppKit UI
    EventSocketServer ─▶ StatusEngine ─▶ latest.json (debounced)
                               │
-                              ├─▶ LedSyncService ─▶ /Volumes/<device>/LEDS.LED (+ keepalive)
+                              ├─▶ LedSyncService ─▶ /Volumes/<device>/LEDS.LED (+ STATUS.TXT reads)
                               ├─▶ KeepAwake (ProcessInfo activity)
                               └─▶ UI (icon, menu, settings)
 
@@ -135,11 +140,14 @@ serial state queue. Callers rely on these rules:
   Normal syncs wait while a preview plays.
 - `stop()` ends a playing preview and waits (bounded, 2 s) for queued LED
   writes, then closes `LedSyncService`'s current generation, and waits (1 s)
-  for keepalive touches. LED work captures its generation when queued and
+  for keepalive reads. LED work captures its generation when queued and
   re-checks it before writing and after `open()`, so a write still queued or
-  stuck in `open()` is dropped and no LED write lands after `stop()` returns;
-  only a keepalive touch already inside `open()` cannot be recalled. `start()`
-  opens a new generation. The LEDs keep their last program.
+  stuck in `open()` is dropped and no LED write lands after `stop()` returns.
+  `start()` opens a new generation. The LEDs keep their last program.
+- `pollDevices` starts a firmware read of `STATUS.TXT` for each newly mounted
+  card (dev:ino of the volume root) on a concurrent queue, at most one per card
+  at a time, and retries a failed one after 60 s. `deviceInfos` reports the
+  result, and `checkDeviceStatus` reports a new one so an open menu refreshes.
 - `SystemSleepWatcher` delivers sleep, wake and lid events on its own queue.
   macOS waits for the `.willSleep` handler before it sleeps, so the handler
   never waits for the state queue: it reads the applied settings from the cache
@@ -283,14 +291,14 @@ menu and Settings show no update controls.
 |---|---|---|
 | Support | `SidePulseCore/Support/{Paths,JSON,FileUtil}.swift` | order-preserving `JSONValue`, `TimeFormat`, atomic writes, backups, `DiagnosticsLog` |
 | Status | `SidePulseCore/Status/*` | models, `EventParser`, `ModeClassifier`, `DisplayNames`, `StatusEngine`, `SnapshotBuilder`, `LatestStore`, `LogScanner`, `CodexSessionIndex` |
-| LED | `SidePulseCore/LED/*` | `LedText`, `DeviceDiscovery`, `LedWriter`, `KeepaliveToucher`, `AnimationLibrary`, `AnimationProfiles`, `LedProgram`, `AgentLedController` |
+| LED | `SidePulseCore/LED/*` | `LedText`, `DeviceDiscovery`, `LedWriter`, `KeepaliveReader`, `AnimationLibrary`, `AnimationProfiles`, `LedProgram`, `AgentLedController`; `Firmware.swift`: `DeviceStatusFile` (uncached `STATUS.TXT` reads), `FirmwareInfo`, `FirmwareWriter` |
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
 | Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
 | System | `SidePulseCore/System/{Power,SleepWatcher,LaunchAgent,SDEjectGuardRule,CLILink}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), sleep, wake and lid notifications (`SystemSleepWatcher`), launchd, the eject guard's card match, the `~/.local/bin/sidepulse` link (`CLILink`, `ShellPATH`, `ShellProfile`) |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested, including `CLILinkPresentation`), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
-| CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32` |
+| CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32`. `Support/FirmwareUpdate.swift` (release lookup, package and checksum checks), `ZipArchive` (stored/deflate reader whose inflate never exceeds the declared size), `HTTPDownload` (capped GET, injected as `CLIEnvironment.download`) |
 | App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings, `SDEjectGuard` (DiskArbitration) and `AppUpdater`, the only file that imports Sparkle |
 
 `SidePulseCore` must not import AppKit or SwiftUI, so the hook process starts
@@ -320,7 +328,7 @@ fast.
   Agent for syncs and previews, Manual for the one-time `off` clear. The clear
   also goes ahead only if the file still holds exactly what the app last wrote
   to that device, so it never overwrites a program written meanwhile.
-- `LedWriter` (the write and the read-back) and the keepalive touch open with
+- `LedWriter` (the write and the read-back), `DeviceStatusFile` and `FirmwareWriter` open with
   `O_NOFOLLOW | O_NONBLOCK` and accept only a regular file, so a symlink or
   FIFO planted on a volume can neither redirect nor block them. Discovery
   examines a mount point under a root only if it is a local `msdos` or `exfat`

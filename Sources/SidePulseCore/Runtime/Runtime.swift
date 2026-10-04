@@ -13,11 +13,14 @@ public struct DeviceInfo: Sendable, Equatable, Identifiable {
     /// Also carries the stuck-I/O notice (`LedSyncService.waitingForPermissionMessage`),
     /// not only write errors.
     public var lastError: String?
+    /// Nil until `STATUS.TXT` has been read from the connected device.
+    public var firmware: FirmwareInfo?
 
     public init(id: String, name: String, root: URL, target: URL, connected: Bool, display: LedDisplay,
-                brightness: Int, ledCount: Int, lastError: String? = nil) {
+                brightness: Int, ledCount: Int, lastError: String? = nil, firmware: FirmwareInfo? = nil) {
         self.id = id; self.name = name; self.root = root; self.target = target; self.connected = connected
         self.display = display; self.brightness = brightness; self.ledCount = ledCount; self.lastError = lastError
+        self.firmware = firmware
     }
 }
 
@@ -50,7 +53,7 @@ public struct RuntimeOptions: Sendable {
     public var latestSaveDelay: TimeInterval = 1
 
     var deviceDiscovery: (@Sendable ([URL]?) -> [DeviceCandidate])? = nil
-    var keepaliveTouch: (@Sendable (URL) throws -> Void)? = nil
+    var keepaliveRead: (@Sendable (URL) throws -> Void)? = nil
     var ledWriter: LedSyncService.FileWriter? = nil
     var afterBind: (@Sendable () -> Void)? = nil
 
@@ -127,7 +130,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         self.shared = shared
         self.leds = LedSyncService(settings: { shared.read { $0.ledSettings } }, roots: options.mountRoots,
                                    dryRun: options.dryRun, log: { DiagnosticsLog.shared.log($0) },
-                                   keepalive: options.keepaliveTouch.map { KeepaliveToucher(touch: $0) } ?? KeepaliveToucher(),
+                                   keepalive: options.keepaliveRead.map { KeepaliveReader(read: $0) } ?? KeepaliveReader(),
                                    discover: options.deviceDiscovery ?? { DeviceDiscovery.discover(roots: $0) },
                                    writeFile: options.ledWriter ?? LedSyncService.fileWriter)
         let index = CodexSessionIndex(paths: paths)
@@ -215,7 +218,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         if started { deviceQueue.async { [weak self] in self?.pollDevicesTick() } }
     }
 
-    /// Waits (bounded) for queued LED work and keepalive touches, then drops whatever LED work is
+    /// Waits (bounded) for queued LED work and keepalive reads, then drops whatever LED work is
     /// still queued or blocked, so no LED write lands after it returns.
     public func stop() {
         let generation: Int? = onState {
@@ -247,7 +250,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
         leds.waitUntilIdle(timeout: 2)
         // Closed only now so the preview's restore above still writes; a start() since then keeps its own generation.
         leds.close(generation: generation)
-        leds.waitForKeepaliveTouches(timeout: 1)
+        leds.waitForKeepaliveReads(timeout: 1)
         DiagnosticsLog.shared.log("runtime: stopped")
     }
 
@@ -503,7 +506,7 @@ public final class SidePulseRuntime: @unchecked Sendable {
     private func driveOutputs(_ snapshot: MonitorSnapshot, now: Date) {
         guard running else { return }
         leds.requestSync(mode: snapshot.aggregate.mode)
-        leds.touchKeepalive(now: now)
+        leds.pokeKeepalive(now: now)
         // Waiting and Blocked outrank Working in the aggregate, yet one agent still working must keep the Mac awake.
         let working = snapshot.statuses.contains { AgentMode.workingGroup.contains($0.mode) }
         updateKeepAwake(mode: working ? .working : snapshot.aggregate.mode, now: now)
