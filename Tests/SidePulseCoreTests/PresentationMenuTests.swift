@@ -49,49 +49,40 @@ final class PresentationMenuTests: XCTestCase {
         XCTAssertTrue(StatusBarPresentation.shouldAnimate(iconState: .ask, reduceMotion: false))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, reduceMotion: true))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .idle, reduceMotion: false))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.done, .idle],
-                                                           reduceMotion: false))
-        XCTAssertTrue(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.done, .ask],
-                                                          reduceMotion: false))
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, iconVisible: false, reduceMotion: false))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .idle, openMenuRowStates: [.working],
-                                                           reduceMotion: true))
+    }
+
+    func testShouldAnimateMenuRows() {
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.done, .idle], reduceMotion: false))
+        XCTAssertTrue(StatusBarPresentation.shouldAnimateMenuRows([.done, .ask], reduceMotion: false))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([], reduceMotion: false))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.working], reduceMotion: true))
     }
 
     /// Regression: the icon kept redrawing while the displays slept or another user
     /// session was in front.
     func testAnimationPausesWhenNobodyCanSeeIt() {
         XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .working, reduceMotion: false, paused: true))
-        XCTAssertFalse(StatusBarPresentation.shouldAnimate(iconState: .done, openMenuRowStates: [.ask],
-                                                           reduceMotion: false, paused: true))
+        XCTAssertFalse(StatusBarPresentation.shouldAnimateMenuRows([.ask], reduceMotion: false, paused: true))
     }
 
-    /// Regression: 30 fps redraws of the status item cost 6-7 % CPU (4 displays)
-    /// while an agent worked; the stepped animation keeps the 1.5 s cycle.
-    func testIconAnimationIsSteppedAndSlow() {
-        XCTAssertLessThanOrEqual(IconAnimation.framesPerSecond, 8)
-        XCTAssertEqual(IconAnimation.frameCount, 12)
-        XCTAssertEqual(Double(IconAnimation.frameCount) / IconAnimation.framesPerSecond, 1.5, accuracy: 1e-9)
+    /// Regression: 8 fps image swaps cost about 8 % CPU with four displays, so open menu rows flip between two
+    /// frames once a second.
+    func testMenuRowsSwapTwoFramesOncePerSecond() {
+        XCTAssertEqual(IconAnimation.framesPerSecond, 1)
+        XCTAssertEqual(IconAnimation.frameCount, 2)
     }
 
     func testIconAnimationFrames() {
-        XCTAssertEqual(IconAnimation.frame(for: .working, index: 0).rotationDegrees, 0, accuracy: 1e-9)
-        XCTAssertEqual(IconAnimation.frame(for: .working, index: 3).rotationDegrees, -90, accuracy: 1e-9)
-        XCTAssertEqual(IconAnimation.frame(for: .working, index: 15), IconAnimation.frame(for: .working, index: 3))
-        XCTAssertEqual(IconAnimation.frame(for: .working, index: 3).scale, 1)
-        XCTAssertEqual(IconAnimation.frame(for: .working, index: 3).opacity, 1)
+        XCTAssertEqual(IconAnimation.frame(for: .working, index: 0), .identity)
+        XCTAssertEqual(IconAnimation.frame(for: .working, index: 1),
+                       IconFrame(rotationDegrees: -90, scale: 1, opacity: 1))
+        XCTAssertEqual(IconAnimation.frame(for: .working, index: 7), IconAnimation.frame(for: .working, index: 1))
 
-        let full = IconAnimation.frame(for: .ask, index: 0)
-        XCTAssertEqual(full.scale, 1, accuracy: 1e-9)
-        XCTAssertEqual(full.opacity, 1, accuracy: 1e-9)
-        XCTAssertEqual(full.rotationDegrees, 0)
-        let low = IconAnimation.frame(for: .ask, index: 6)
-        XCTAssertEqual(low.scale, 0.82, accuracy: 1e-9)
-        XCTAssertEqual(low.opacity, 0.45, accuracy: 1e-9)
-        let quarter = IconAnimation.frame(for: .ask, index: 3)
-        XCTAssertEqual(quarter.scale, 0.91, accuracy: 1e-9)
-        XCTAssertEqual(quarter.opacity, 0.725, accuracy: 1e-9)
-        XCTAssertEqual(IconAnimation.frame(for: .ask, index: -1), IconAnimation.frame(for: .ask, index: 11))
+        XCTAssertEqual(IconAnimation.frame(for: .ask, index: 0), .identity)
+        XCTAssertEqual(IconAnimation.frame(for: .ask, index: 1), IconFrame(rotationDegrees: 0, scale: 0.82, opacity: 0.45))
+        XCTAssertEqual(IconAnimation.frame(for: .ask, index: -1), IconAnimation.frame(for: .ask, index: 1))
+        XCTAssertEqual(IconAnimation.frame(for: .ask, index: 4), .identity)
 
         XCTAssertEqual(IconAnimation.frame(for: .idle, index: 7), .identity)
         XCTAssertEqual(IconAnimation.frame(for: .done, index: 30), .identity)
