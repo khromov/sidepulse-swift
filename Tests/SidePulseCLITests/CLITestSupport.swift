@@ -109,7 +109,8 @@ final class CLIHarness {
                 uninstall: { _, _, _ in throw CommandFailure(message: "unexpected uninstall") }
             ),
             launchAgent: launchAgent.operations(plistPath: paths.launchAgentPlist()),
-            systemApplicationsDir: applicationsDir
+            systemApplicationsDir: applicationsDir,
+            download: { url, _ in throw CommandFailure(message: "unexpected download of \(url.absoluteString)") }
         )
     }
 

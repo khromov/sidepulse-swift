@@ -11,7 +11,7 @@ protocol CLICommand {
 public enum SidePulseCLI {
     /// Commands in the order `sidepulse --help` lists them.
     static let commands: [any CLICommand.Type] = [
-        SetupCommand.self, StatusCommand.self, WriteCommand.self, LedsCommand.self,
+        SetupCommand.self, StatusCommand.self, WriteCommand.self, LedsCommand.self, FirmwareCommand.self,
         InstallCommand.self, UninstallCommand.self, DoctorCommand.self, AppCommand.self,
         SettingsCommand.self, VersionCommand.self, HelpCommand.self,
     ]

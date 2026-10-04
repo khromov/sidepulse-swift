@@ -122,8 +122,11 @@ public enum DevicePresentation {
     }
 
     public static func subtitle(_ device: DeviceInfo) -> String {
-        let state = device.connected ? "Connected · \(ledCountLabel(device.ledCount))" : MenuText.notConnected
-        return "\(state) · \(device.root.path)"
+        var parts = device.connected ? ["Connected", ledCountLabel(device.ledCount)] : [MenuText.notConnected]
+        if let firmware = device.firmware, firmware.version != FirmwareInfo.unknownVersion {
+            parts.append("Firmware \(firmware.version)")
+        }
+        return (parts + [device.root.path]).joined(separator: " · ")
     }
 }
 

@@ -173,6 +173,8 @@ sidepulse write '#FF00FF' --device /Volumes/SidePulseDot --manual
 sidepulse status        # one-shot aggregate and per-agent status
 sidepulse status --watch  # redraw every 2 s, Ctrl-C to quit
 sidepulse doctor        # hooks, app, socket and CLI path check
+sidepulse firmware version              # model and firmware of each device
+sidepulse firmware upgrade --dry-run    # check for newer firmware without installing it
 ```
 
 Programs are limited to 512 bytes and 20 lines, the controller's limits.
@@ -209,6 +211,7 @@ for `leds` without `--once`. An option that takes a value never takes the next
 | `write`     | Write an LED program to a SidePulse device                                     |
 | `leds`      | Mirror agent status to the LEDs (headless)                                     |
 | `run`       | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
+| `firmware`  | Show or upgrade the firmware of a SidePulse device                             |
 | `install`   | Install agent hooks (Claude Code, Codex, OpenCode)                             |
 | `uninstall` | Remove agent hooks                                                             |
 | `doctor`    | Check hook installation and the app                                            |
@@ -263,6 +266,39 @@ Ctrl-C in its terminal or 'kill N', or use 'sidepulse leds --once'.`
 
 **`sidepulse run [--dry-run] [--interval SECONDS]`**
 The same as `sidepulse leds` without `--once`.
+
+**`sidepulse firmware version|upgrade [--device PATH] [--json] [--version VERSION | --file ZIP] [--dry-run]`**
+`version` prints each device's model, firmware and serial from its
+`STATUS.TXT`, for example `SidePulse Dot: 1.1.14  (/Volumes/PulseDot, serial
+SPD-000248)`. Volumes whose `STATUS.TXT` names no SidePulse model are skipped.
+`STATUS.TXT` is read past the macOS cache, so a version installed since the
+volume was mounted shows without reconnecting.
+
+`upgrade` installs the newest firmware for the device's model published in the
+Python repo's [`firmware/`](https://github.com/inteliwear/sidepulse/tree/main/firmware)
+folder, by copying the package's `FIRMWARE.BIN` to the volume. It first checks
+the ZIP against the release's `SHA256SUMS.txt`, then that the ZIP holds exactly
+`FIRMWARE.BIN`, `README.txt`, `RELEASE_NOTES.txt` and `SHA256SUMS.txt` (at the
+top level or in one folder named after the ZIP), that each matches the
+package's own checksums, and that the README's title names the model and
+version in the file name. It refuses a package for the other model and an
+older version, does nothing for the installed version, and needs `--device`
+when several devices are mounted. Right before writing it reads `STATUS.TXT`
+again and stops if the device changed during the download. Afterwards, leave
+the device connected for at least 10 seconds while it applies the update and
+restarts, then reconnect it and run `sidepulse firmware version`. The
+upgrade needs a writable volume.
+
+- `--device PATH`: the device volume, or a file on it such as its `LEDS.LED`.
+- `--json`: `version` only. Prints a JSON array of `model`, `version`, `serial`
+  and `device`.
+- `--version VERSION`: `upgrade` only. Installs this release (`1.1`, `v1.1.0`
+  and `1.1.0` are the same) instead of the newest one.
+- `--file ZIP`: `upgrade` only. Installs a downloaded
+  `sidepulse-dot-VERSION-ota.zip` or `sidepulse-pro-VERSION-ota.zip` without
+  going online.
+- `--dry-run`: `upgrade` only. Downloads and verifies the package without
+  writing it.
 
 **`sidepulse install [claude|codex|opencode|all]... [--dry-run] [--no-trust]`**
 With no provider named, installs hooks for each agent that looks installed (see
@@ -446,7 +482,7 @@ The Settings window has four tabs:
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Turn off LEDs whenever the Mac sleeps** (off by default; see Sleep below). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Command-line tool**: whether `~/.local/bin/sidepulse` runs this app, **Install**, and a check that your shell finds it, with **Add to PATH** when it does not (see Command-line tool below). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Mac goes to sleep**, the animation that turns the LEDs off as the Mac sleeps (see Sleep below). **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                                                                                                                                                                                                    |
-| Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Devices    | For each device: connection state, LED count, firmware version, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh**                                                                                                                                                                                                                           |
 
 The built-in animations are Slow Off, Immediate Off, Fade Off, Idle Pulse, Cyan
@@ -459,23 +495,27 @@ variants.
 - **Devices.** The app polls `/Volumes` every 2 seconds, so devices can be
   plugged in and out at any time. Only local FAT (`msdos`) and exFAT volumes
   count: other mounts under `/Volumes`, such as network shares and disk
-  images, are skipped without being accessed. A `LEDS.LED` or `keepalive` that
-  is not a regular file (a symlink, FIFO or folder) is never written. Dot and
-  PulseDot volume names get the 2-LED programs, and everything else gets the
-  8-LED ones. The app touches
-  `keepalive` on each connected 8-LED volume (SidePulse Pro, including Manual
-  ones) at most once a minute, which stops the MacBook SD reader from powering
-  it off. Dots (USB) are never touched. A device that has
+  images, are skipped without being accessed. A `LEDS.LED` that is not a
+  regular file (a symlink, FIFO or folder) is never written, and such a
+  `STATUS.TXT` is never read. Dot and PulseDot volume names get the 2-LED
+  programs, and everything else gets the 8-LED ones. At most once a minute the
+  app reads `STATUS.TXT` on each connected 8-LED volume (SidePulse Pro,
+  including Manual ones) past the macOS cache, so the read reaches the card and
+  the MacBook SD reader does not power it off. Nothing is written to keep it
+  awake, and Dots (USB) are left alone. A `keepalive` file that earlier
+  versions created is no longer used and can be deleted. When a card is
+  mounted, the app also reads its model and firmware version from
+  `STATUS.TXT`, once, retrying a failed read every minute. A device that has
   never been seen before starts in Agent mode.
 - **Manual mode.** In Manual mode, SidePulse never writes `LEDS.LED` on that
-  device (a Pro still gets keepalive touches). Switching a connected device to
+  device (a Pro still gets keepalive reads). Switching a connected device to
   Manual writes `off` once, but only while `LEDS.LED` still holds the program
   SidePulse last wrote there: a program written in the meantime is kept, and a
   device SidePulse has not written to since it started is left as it is. If
   that `off` fails, the error stays on the device until it is synced in Agent
   mode again. `sidepulse write --manual` switches a device to Manual from the
   CLI.
-- **Permission.** A device whose write or keepalive touch has been stuck for
+- **Permission.** A device whose write or keepalive read has been stuck for
   over 2 s, normally on the macOS removable-volume prompt, shows
   `Error: Waiting for macOS permission to access this device — check for a
 system prompt`. If macOS refuses to open `LEDS.LED` (`Operation not
@@ -614,7 +654,7 @@ and failed checks (`app: update failed: …`) to `app.log`.
 | `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`, kept pointed at the running app at each launch (and made by `scripts/install.sh`). This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                    |
 | `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
 | `~/.config/opencode/plugins/sidepulse.js`                                  | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted       |
-| `/Volumes/<device>/LEDS.LED`, `/Volumes/<device>/keepalive`                | Device files (`keepalive` on 8-LED devices only)                                                                                                                                                                                                                                                                                                                             |
+| `/Volumes/<device>/LEDS.LED`, `STATUS.TXT`, `FIRMWARE.BIN`                 | Device files: the LED program; the status the device generates on every read (read for the firmware version, and every minute on 8-LED devices to keep the SD reader awake); the firmware image, written only by `sidepulse firmware upgrade` |
 
 Environment overrides:
 
@@ -830,6 +870,10 @@ device, so only a write to that device counts. When the app is not running,
 
 - Per-device settings are keyed by mount path, so a volume remounted as
   "PulseDot 1" is treated as a new device.
+- A volume mounted read-only, for example by a device-management policy, gets
+  no LED updates. The Python version falls back to firmware 1.1's other
+  channels there (USB control requests for the Dot, reads of `setup.html` for
+  the Pro); this port does not.
 - A Codex `[[hooks.<Event>]]` group that mixes a user handler with a SidePulse
   handler is removed as a whole on install and uninstall. If the group holds a
   key SidePulse does not write, such as `statusMessage`, they refuse instead.

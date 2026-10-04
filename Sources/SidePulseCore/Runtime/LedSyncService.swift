@@ -20,14 +20,19 @@ public final class LedSyncService: @unchecked Sendable {
     private let settingsProvider: @Sendable () -> SidePulseSettings
     private let roots: [URL]?
     private let log: @Sendable (String) -> Void
-    private let keepalive: KeepaliveToucher
+    private let keepalive: KeepaliveReader
     private let clock: @Sendable () -> TimeInterval
     private let discover: @Sendable ([URL]?) -> [DeviceCandidate]
     private let writeFile: FileWriter
-    /// Seconds after which a running write or keepalive touch counts as stuck.
+    private let readFirmware: @Sendable (URL) throws -> FirmwareInfo
+    /// Seconds after which a running write or keepalive read counts as stuck.
     let stallNotice: TimeInterval
+    /// A failed firmware read (no STATUS.TXT, or no permission yet) is tried again this often.
+    static let firmwareRetryInterval: TimeInterval = 60
 
     let ioQueue = DispatchQueue(label: "sidepulse.leds.io", qos: .utility)
+    /// Concurrent, so a card that hangs its read never delays another device's.
+    private let firmwareQueue = DispatchQueue(label: "sidepulse.leds.firmware", qos: .utility, attributes: .concurrent)
 
     private let shared = Mutex(Shared())
 
@@ -50,12 +55,23 @@ public final class LedSyncService: @unchecked Sendable {
         var reportedErrors: [String: String] = [:]
         var syncPasses = 0
         var keepaliveError: String?
+        var firmware: [String: FirmwareRead] = [:]
+        var firmwareChanged = false
         /// Work runs only while open and in the generation it was queued in.
         var outputOpen = true
         var generation = 0
         /// Set while the LEDs are off for sleep, and new for each sleep so a late write of an old one is skipped.
         var sleepToken: Int?
         var sleeps = 0
+    }
+
+    /// Read once per mounted card, which `signature` tells apart.
+    private struct FirmwareRead {
+        var signature: String
+        var info: FirmwareInfo?
+        var startedAt: TimeInterval
+        var running: Bool
+        var failures = 0
     }
 
     // I/O-queue-only state.
@@ -67,17 +83,18 @@ public final class LedSyncService: @unchecked Sendable {
                             roots: [URL]? = nil,
                             dryRun: Bool = false,
                             log: @escaping @Sendable (String) -> Void = { _ in }) {
-        self.init(settings: settings, roots: roots, dryRun: dryRun, log: log, keepalive: KeepaliveToucher())
+        self.init(settings: settings, roots: roots, dryRun: dryRun, log: log, keepalive: KeepaliveReader())
     }
 
     init(settings: @escaping @Sendable () -> SidePulseSettings,
          roots: [URL]?,
          dryRun: Bool,
          log: @escaping @Sendable (String) -> Void,
-         keepalive: KeepaliveToucher,
+         keepalive: KeepaliveReader,
          clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          discover: @escaping @Sendable ([URL]?) -> [DeviceCandidate] = { DeviceDiscovery.discover(roots: $0) },
          writeFile: @escaping FileWriter = LedSyncService.fileWriter,
+         readFirmware: @escaping @Sendable (URL) throws -> FirmwareInfo = { try FirmwareInfo.read(volume: $0) },
          stallNotice: TimeInterval = 2) {
         self.settingsProvider = settings
         self.roots = roots
@@ -87,6 +104,7 @@ public final class LedSyncService: @unchecked Sendable {
         self.clock = clock
         self.discover = discover
         self.writeFile = writeFile
+        self.readFirmware = readFirmware
         self.stallNotice = stallNotice
     }
 
@@ -120,7 +138,54 @@ public final class LedSyncService: @unchecked Sendable {
         if !removed.isEmpty {
             log("devices: disconnected " + removed.joined(separator: ", "))
         }
+        readFirmwareIfDue(found, signatures: signatures)
         return changed
+    }
+
+    private func readFirmwareIfDue(_ devices: [DeviceCandidate], signatures: [String: String]) {
+        guard !dryRun else { return }
+        let now = clock()
+        let due = shared.withLock { state -> [(DeviceCandidate, String)] in
+            state.firmware = state.firmware.filter { signatures[$0.key] != nil }
+            var due: [(DeviceCandidate, String)] = []
+            for device in devices {
+                guard let signature = signatures[device.id] else { continue }
+                let previous = state.firmware[device.id]
+                var read = FirmwareRead(signature: signature, info: nil, startedAt: now, running: true)
+                if let previous, previous.signature == signature {
+                    guard !previous.running, previous.info == nil,
+                          now - previous.startedAt >= Self.firmwareRetryInterval else { continue }
+                    read.failures = previous.failures
+                } else if previous?.info != nil {
+                    state.firmwareChanged = true
+                }
+                state.firmware[device.id] = read
+                due.append((device, signature))
+            }
+            return due
+        }
+        for (device, signature) in due {
+            firmwareQueue.async { [self] in
+                var info: FirmwareInfo?
+                var failure: String?
+                do { info = try readFirmware(device.root) } catch { failure = ErrorText.describe(error) }
+                let firstFailure = shared.withLock { state -> Bool in
+                    guard var read = state.firmware[device.id], read.signature == signature else { return false }
+                    read.running = false
+                    read.info = info
+                    if info == nil { read.failures += 1 }
+                    state.firmware[device.id] = read
+                    if info != nil { state.firmwareChanged = true }
+                    return read.failures == 1 && info == nil
+                }
+                if let info {
+                    log("devices: \(device.displayName) (\(device.root.path)) is a \(info.model.productName) "
+                        + "on firmware \(info.version)")
+                } else if firstFailure, let failure {
+                    log("devices: no firmware version for \(device.displayName) (\(device.root.path)): \(failure)")
+                }
+            }
+        }
     }
 
     public var connectedDevices: [DeviceCandidate] {
@@ -131,13 +196,15 @@ public final class LedSyncService: @unchecked Sendable {
     /// still being saved.
     public func deviceInfos(settings: SidePulseSettings) -> [DeviceInfo] {
         let (devices, errors) = shownErrors()
+        let firmware = shared.withLock { $0.firmware.compactMapValues(\.info) }
         var infos: [DeviceInfo] = []
         var seen = Set<String>()
         for device in devices where seen.insert(device.id).inserted {
             infos.append(DeviceInfo(id: device.id, name: device.displayName, root: device.root, target: device.target,
                                     connected: true, display: settings.display(forDevice: device.id),
                                     brightness: settings.brightness(forDevice: device.id),
-                                    ledCount: device.ledCount, lastError: errors[device.id]))
+                                    ledCount: device.ledCount, lastError: errors[device.id],
+                                    firmware: firmware[device.id]))
         }
         for entry in settings.devices where seen.insert(entry.id).inserted {
             let root = URL(fileURLWithPath: DeviceDiscovery.expandTilde(entry.path), isDirectory: true)
@@ -157,13 +224,13 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     private func shownErrors() -> (devices: [DeviceCandidate], errors: [String: String]) {
-        let stalledTouches = keepalive.stalledFiles(after: stallNotice)
+        let stalledReads = keepalive.stalledFiles(after: stallNotice)
         let now = clock()
         return shared.withLock { state in
             var errors = state.clearErrors.merging(state.errors) { $1 }
             for device in state.devices {
                 let writeStalled = state.writesStarted[device.id].map { now - $0 > stallNotice } ?? false
-                if writeStalled || stalledTouches.contains(KeepaliveToucher.keepaliveFile(for: device.target).path) {
+                if writeStalled || stalledReads.contains(KeepaliveReader.statusFile(for: device.target).path) {
                     errors[device.id] = Self.waitingForPermissionMessage
                 }
             }
@@ -171,20 +238,23 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    /// Returns true when a shown error changed since the last call, so an open menu
-    /// can refresh.
+    /// Returns true when a shown error or firmware version changed since the last call, so an open
+    /// menu can refresh.
     func checkDeviceStatus() -> Bool {
         let (devices, errors) = shownErrors()
-        let previous = shared.withLock { state -> [String: String] in
-            defer { state.reportedErrors = errors }
-            return state.reportedErrors
+        let (previous, firmwareChanged) = shared.withLock { state -> ([String: String], Bool) in
+            defer {
+                state.reportedErrors = errors
+                state.firmwareChanged = false
+            }
+            return (state.reportedErrors, state.firmwareChanged)
         }
         for device in devices where errors[device.id] == Self.waitingForPermissionMessage
             && previous[device.id] != Self.waitingForPermissionMessage {
             log("leds: \(device.displayName) (\(device.root.path)) has not answered for over "
                 + "\(Int(stallNotice.rounded())) s; waiting for macOS permission?")
         }
-        return errors != previous
+        return errors != previous || firmwareChanged
     }
 
     /// Expects `infos` in display order, because the first of each duplicate keeps the
@@ -311,8 +381,8 @@ public final class LedSyncService: @unchecked Sendable {
 
     public var isOffForSleep: Bool { shared.withLock { $0.sleepToken != nil } }
 
-    public func touchKeepalive(now: Date = Date()) {
-        touchKeepalive(devices: connectedDevices, settings: settingsProvider(), now: now, generation: currentGeneration)
+    public func pokeKeepalive(now: Date = Date()) {
+        pokeKeepalive(devices: connectedDevices, now: now, generation: currentGeneration)
     }
 
     @discardableResult
@@ -333,8 +403,8 @@ public final class LedSyncService: @unchecked Sendable {
     }
 
     @discardableResult
-    func waitForKeepaliveTouches(timeout: TimeInterval) -> Bool {
-        keepalive.waitForPendingTouches(timeout: timeout)
+    func waitForKeepaliveReads(timeout: TimeInterval) -> Bool {
+        keepalive.waitForPendingReads(timeout: timeout)
     }
 
     func finishPreviewNow() {
@@ -353,7 +423,7 @@ public final class LedSyncService: @unchecked Sendable {
     var currentGeneration: Int { shared.withLock { $0.generation } }
 
     /// Work queued in `generation`, including a write still blocked in open(), never lands
-    /// afterwards; a keepalive touch already inside open() cannot be recalled.
+    /// afterwards.
     func close(generation: Int) {
         shared.withLock { state in
             if state.generation == generation { state.outputOpen = false }
@@ -432,7 +502,7 @@ public final class LedSyncService: @unchecked Sendable {
             }
             record(error: result.error, for: device)
         }
-        touchKeepalive(devices: devices, settings: settings, now: Date(), generation: generation)
+        pokeKeepalive(devices: devices, now: Date(), generation: generation)
         return results
     }
 
@@ -564,7 +634,7 @@ public final class LedSyncService: @unchecked Sendable {
         }
     }
 
-    private func touchKeepalive(devices: [DeviceCandidate], settings: SidePulseSettings, now: Date, generation: Int) {
+    private func pokeKeepalive(devices: [DeviceCandidate], now: Date, generation: Int) {
         // Only the MacBook SD reader powers down an idle card: Dots (USB) are skipped.
         let targets = devices.filter { $0.ledCount == 8 }.map(\.target)
         guard !dryRun, !targets.isEmpty, isCurrent(generation) else { return }

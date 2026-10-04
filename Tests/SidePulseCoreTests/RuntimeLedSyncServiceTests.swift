@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 import XCTest
 @testable import SidePulseCore
 
@@ -42,13 +43,16 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeService(dryRun: Bool = false, keepalive: KeepaliveToucher = KeepaliveToucher(),
+    private func makeService(dryRun: Bool = false, keepalive: KeepaliveReader = KeepaliveReader(),
+                             clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
                              writer: @escaping LedSyncService.FileWriter = LedSyncService.fileWriter,
+                             readFirmware: @escaping @Sendable (URL) throws -> FirmwareInfo = { try FirmwareInfo.read(volume: $0) },
                              stallNotice: TimeInterval = 2) -> LedSyncService {
         let box = self.box!
         let logs = self.logs!
         return LedSyncService(settings: { box.value }, roots: [world.mounts], dryRun: dryRun,
-                              log: { logs.append($0) }, keepalive: keepalive, writeFile: writer, stallNotice: stallNotice)
+                              log: { logs.append($0) }, keepalive: keepalive, clock: clock, writeFile: writer,
+                              readFirmware: readFirmware, stallNotice: stallNotice)
     }
 
     /// Returns whether the Manual clear wrote.
@@ -113,9 +117,12 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
     }
 
-    func testDryRunNeverWritesOrTouchesKeepalive() {
+    func testDryRunNeverWritesOrReadsTheDevices() {
         world.addDevice("PulseDot")
-        let service = makeService(dryRun: true)
+        world.addDevice("SidePulsePro")
+        let reads = RuntimeInbox<String>()
+        let service = makeService(dryRun: true, keepalive: KeepaliveReader(interval: 60) { reads.append($0.path) },
+                                  readFirmware: { reads.append($0.path); throw FirmwareError("unexpected read") })
         service.pollDevices()
         let result = service.syncNow(mode: .working)[world.deviceID("PulseDot")]
         XCTAssertEqual(result?.changed, true)
@@ -126,36 +133,41 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.preview(animationID: "kitt", seconds: 0)
         service.waitUntilIdle()
         XCTAssertEqual(world.program("PulseDot"), "boot")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: world.mounts.appendingPathComponent("PulseDot/keepalive").path))
+        service.pokeKeepalive()
+        runtimeSpin(0.1)
+        XCTAssertEqual(reads.items, [])
     }
 
-    /// Regression: the USB Dot got a keepalive write every minute it does not need.
-    func testKeepaliveIsTouchedForConnectedEightLedDevices() {
+    /// Regression: the USB Dot got keepalive I/O every minute it does not need.
+    func testKeepaliveReadsConnectedEightLedDevices() throws {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
         world.addDevice("NO NAME")
         box.update { $0.setDisplay(.manual, forDevice: world.deviceID("SidePulsePro")) }
-        let touched = RuntimeInbox<String>()
-        let toucher = KeepaliveToucher(interval: 60) { touched.append($0.path) }
-        let service = makeService(keepalive: toucher)
+        let read = RuntimeInbox<String>()
+        let reader = KeepaliveReader(interval: 60) { read.append($0.path) }
+        let service = makeService(keepalive: reader)
         service.pollDevices()
         service.syncNow(mode: .working)
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        XCTAssertTrue(reader.waitForPendingReads())
         // Manual Pros are kept awake too (the SD reader powers down any idle card);
         // Dots sit on USB and are left alone.
-        XCTAssertEqual(Set(touched.items), [world.mounts.appendingPathComponent("NO NAME/keepalive").path,
-                                            world.mounts.appendingPathComponent("SidePulsePro/keepalive").path])
-        service.touchKeepalive()
-        XCTAssertTrue(toucher.waitForPendingTouches())
-        XCTAssertEqual(touched.count, 2, "rate limited to once a minute")
+        XCTAssertEqual(Set(read.items), [world.mounts.appendingPathComponent("NO NAME/STATUS.TXT").path,
+                                         world.mounts.appendingPathComponent("SidePulsePro/STATUS.TXT").path])
+        service.pokeKeepalive()
+        XCTAssertTrue(reader.waitForPendingReads())
+        XCTAssertEqual(read.count, 2, "rate limited to once a minute")
 
-        let real = makeService()
+        let pro = world.mounts.appendingPathComponent("SidePulsePro")
+        try "release_version 1.1.0\n".write(to: pro.appendingPathComponent("STATUS.TXT"), atomically: false, encoding: .utf8)
+        let realReader = KeepaliveReader()
+        let real = makeService(keepalive: realReader)
         real.pollDevices()
-        real.touchKeepalive()
-        XCTAssertTrue(runtimeWait {
-            FileManager.default.fileExists(atPath: self.world.mounts.appendingPathComponent("SidePulsePro/keepalive").path)
-        })
-        XCTAssertFalse(FileManager.default.fileExists(atPath: world.mounts.appendingPathComponent("PulseDot/keepalive").path))
+        real.pokeKeepalive()
+        XCTAssertTrue(realReader.waitForPendingReads())
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: pro.path).sorted(), ["LEDS.LED", "STATUS.TXT"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: world.mounts.appendingPathComponent("PulseDot").path),
+                       ["LEDS.LED"])
     }
 
     // MARK: Coalescing
@@ -462,18 +474,69 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2))
     }
 
-    func testStalledKeepaliveTouchShowsAsWaiting() {
+    func testStalledKeepaliveReadShowsAsWaiting() {
         world.addDevice("SidePulsePro")
         box.update { $0.setDisplay(.manual, forDevice: world.deviceID("SidePulsePro")) }
         let release = DispatchSemaphore(value: 0)
-        let toucher = KeepaliveToucher(interval: 60) { _ in release.wait() }
-        let service = makeService(keepalive: toucher, stallNotice: 0.2)
+        let reader = KeepaliveReader(interval: 60) { _ in release.wait() }
+        let service = makeService(keepalive: reader, stallNotice: 0.2)
         service.pollDevices()
-        service.touchKeepalive()
+        service.pokeKeepalive()
         XCTAssertTrue(runtimeWait { self.deviceInfos(service).first?.lastError == LedSyncService.waitingForPermissionMessage })
         release.signal()
-        XCTAssertTrue(toucher.waitForPendingTouches())
+        XCTAssertTrue(reader.waitForPendingReads())
         XCTAssertNil(deviceInfos(service).first?.lastError)
+    }
+
+    // MARK: Firmware
+
+    func testFirmwareIsReadFromStatusAndShownInDeviceInfos() throws {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        try "serial SPD-1\napp_version 1.1.14\n".write(to: world.mounts.appendingPathComponent("PulseDot/STATUS.TXT"),
+                                                     atomically: false, encoding: .utf8)
+        let service = makeService()
+        XCTAssertTrue(service.pollDevices())
+        let dotID = world.deviceID("PulseDot")
+        XCTAssertTrue(runtimeWait { self.deviceInfos(service).first { $0.id == dotID }?.firmware != nil })
+        XCTAssertEqual(deviceInfos(service).first { $0.id == dotID }?.firmware,
+                       FirmwareInfo(model: .dot, version: "1.1.14", serial: "SPD-1"))
+        XCTAssertNil(deviceInfos(service).first { $0.id == self.world.deviceID("SidePulsePro") }?.firmware)
+        XCTAssertTrue(service.checkDeviceStatus(), "a new version refreshes an open menu")
+        XCTAssertFalse(service.checkDeviceStatus())
+        XCTAssertTrue(logs.items.contains { $0.hasSuffix("is a SidePulse Dot on firmware 1.1.14") }, "\(logs.items)")
+        XCTAssertTrue(runtimeWait { self.logs.items.contains { $0.hasPrefix("devices: no firmware version for SidePulse Pro") } })
+    }
+
+    func testFirmwareIsReadOncePerCardAndFailuresAreRetried() {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        let uptime = Mutex<TimeInterval>(1000)
+        let reads = RuntimeInbox<String>()
+        let service = makeService(clock: { uptime.withLock { $0 } }, readFirmware: { root in
+            reads.append(root.lastPathComponent)
+            guard root.lastPathComponent == "PulseDot" else { throw FirmwareError("no STATUS.TXT") }
+            return FirmwareInfo(model: .dot, version: "1.1.0", serial: "SPD-1")
+        })
+        service.pollDevices()
+        XCTAssertTrue(runtimeWait { self.logs.items.contains { $0.contains("no firmware version") } })
+        XCTAssertEqual(reads.items.sorted(), ["PulseDot", "SidePulsePro"])
+
+        uptime.withLock { $0 += 30 }
+        service.pollDevices()
+        runtimeSpin(0.1)
+        XCTAssertEqual(reads.count, 2, "neither a known version nor a recent failure is read again")
+
+        uptime.withLock { $0 += LedSyncService.firmwareRetryInterval }
+        service.pollDevices()
+        XCTAssertTrue(runtimeWait { reads.count == 3 })
+        XCTAssertEqual(reads.items.last, "SidePulsePro")
+        XCTAssertEqual(logs.items.filter { $0.contains("no firmware version") }.count, 1, "a failure is logged once per card")
+
+        world.removeDevice("PulseDot")
+        world.addDevice("PulseDot")
+        service.pollDevices()
+        XCTAssertTrue(runtimeWait { reads.items.filter { $0 == "PulseDot" }.count == 2 }, "a new card is read again")
     }
 
     // MARK: Previews

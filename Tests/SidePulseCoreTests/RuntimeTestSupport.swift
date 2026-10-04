@@ -41,7 +41,7 @@ final class RuntimeWorld {
         return volume
     }
 
-    /// Retries because an asynchronous keepalive touch can recreate a file inside the folder mid-removal.
+    /// Retries because an asynchronous LED write can recreate a file inside the folder mid-removal.
     func removeDevice(_ name: String) {
         let volume = mounts.appendingPathComponent(name, isDirectory: true)
         for _ in 0..<50 where FileManager.default.fileExists(atPath: volume.path) {
