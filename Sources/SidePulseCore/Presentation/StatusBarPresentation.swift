@@ -23,6 +23,10 @@ public enum MenuText {
     public static let ledsOffOnAnySleepHelp =
         "The LEDs always turn off when you close the lid and the Mac sleeps. Turn this on to also turn them off "
         + "when it sleeps with the lid open."
+    public static let sleepAnimation = "Mac goes to sleep"
+    public static let sleepAnimationHelp =
+        "Plays as the Mac goes to sleep with the lid closed, or whenever it sleeps if General asks for that. "
+        + "The LEDs stay dark until you use the Mac again. Profiles don't change it."
     public static let quit = "Quit SidePulse"
     public static let alreadyRunning = "SidePulse is already running"
     public static let settingsWindowTitle = "SidePulse Settings"

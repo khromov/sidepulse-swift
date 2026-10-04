@@ -58,8 +58,6 @@ public final class LedSyncService: @unchecked Sendable {
         var sleeps = 0
     }
 
-    static let sleepProgram = "off 320ms cosine"
-
     // I/O-queue-only state.
     private var controllers: [String: AgentLedController] = [:]
     private var lastDisplay: [String: LedDisplay] = [:]
@@ -516,7 +514,10 @@ public final class LedSyncService: @unchecked Sendable {
                 continue
             }
             do {
-                if try write(Self.sleepProgram, to: device, display: .agent, generation: generation,
+                // Without the device's brightness the fade would start at full brightness.
+                let program = try LedProgram.program(animationID: settings.sleepAnimationID, ledCount: device.ledCount,
+                                                     brightness: settings.brightness(forDevice: device.id))
+                if try write(program, to: device, display: .agent, generation: generation,
                              when: { shared.withLock { $0.sleepToken == token } }) {
                     log("leds: turned off \(device.displayName) at \(device.target.path) for sleep")
                 }

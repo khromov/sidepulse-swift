@@ -29,6 +29,7 @@ final class SettingsModelTests: XCTestCase {
         XCTAssertEqual(settings.minBatteryPercent, 20)
         XCTAssertTrue(settings.sdEjectGuard)
         XCTAssertFalse(settings.ledsOffOnAnySleep)
+        XCTAssertEqual(settings.sleepAnimationID, "fade-off")
         XCTAssertEqual(settings.matchingProfile?.id, "profile:signal")
         XCTAssertEqual(LedDisplay.agent.label, "Agent Status")
         XCTAssertEqual(LedDisplay.manual.label, "Manual")
@@ -48,6 +49,7 @@ final class SettingsModelTests: XCTestCase {
             "enabled": true
           },
           "sleep_leds": {
+            "animation": "fade-off",
             "off_on_any_sleep": false
           },
           "sleep_prevention": {
@@ -68,7 +70,7 @@ final class SettingsModelTests: XCTestCase {
         let loaded = try settings(fromJSON: """
         {"devices": "x", "default_display": 5, "agent_animations": [], "agent_list": "x",
          "sleep_prevention": {"policy": "sometimes", "min_battery_percent": "20"}, "sd_eject_guard": {"enabled": "no"},
-         "sleep_leds": {"off_on_any_sleep": "yes"}}
+         "sleep_leds": {"off_on_any_sleep": "yes", "animation": 3}}
         """)
         XCTAssertEqual(loaded, SidePulseSettings())
 
@@ -172,8 +174,18 @@ final class SettingsModelTests: XCTestCase {
     func testLedsOffOnAnySleepCanBeTurnedOn() throws {
         let on = try settings(fromJSON: #"{"sleep_leds": {"off_on_any_sleep": true}}"#)
         XCTAssertTrue(on.ledsOffOnAnySleep)
-        XCTAssertEqual(on.toJSON()["sleep_leds"]?.serialized(), #"{"off_on_any_sleep":true}"#)
+        XCTAssertEqual(on.toJSON()["sleep_leds"]?.serialized(), #"{"animation":"fade-off","off_on_any_sleep":true}"#)
         XCTAssertEqual(SidePulseSettings.fromJSON(on.toJSON()), on)
+    }
+
+    func testSleepAnimationMustEndDark() throws {
+        let sweep = try settings(fromJSON: #"{"sleep_leds": {"animation": "lid-closed"}}"#)
+        XCTAssertEqual(sweep.sleepAnimationID, "lid-closed")
+        XCTAssertEqual(SidePulseSettings.fromJSON(sweep.toJSON()), sweep)
+        for id in ["kitt", "nope", ""] {
+            let loaded = try settings(fromJSON: #"{"sleep_leds": {"animation": "\#(id)"}}"#)
+            XCTAssertEqual(loaded.sleepAnimationID, "fade-off", id)
+        }
     }
 
     func testUnknownKeysAreDroppedOnSave() throws {

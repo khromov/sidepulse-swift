@@ -548,7 +548,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
 
         XCTAssertTrue(service.turnOffForSleep(timeout: 2))
         XCTAssertTrue(service.isOffForSleep)
-        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("fade-off", ledCount: 2))
         XCTAssertEqual(world.program("SidePulsePro"), "boot", "Manual devices are left alone")
 
         service.requestSync(mode: .completed)
@@ -556,13 +556,41 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         service.preview(animationID: "kitt", seconds: 0)
         runtimeSpin(0.1)
         XCTAssertTrue(service.waitUntilIdle())
-        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("fade-off", ledCount: 2))
 
         XCTAssertTrue(service.turnOnAfterSleep())
         XCTAssertFalse(service.turnOnAfterSleep())
         XCTAssertTrue(service.waitUntilIdle())
         XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.completed, ledCount: 2))
         XCTAssertEqual(logs.items.filter { $0.contains("for sleep") }.count, 1, "\(logs.items)")
+    }
+
+    /// Regression: a program without `brightness N` plays at 255, so a dimmed device flashed bright as it faded.
+    func testOffForSleepKeepsTheDeviceBrightness() {
+        world.addDevice("PulseDot")
+        box.update { $0.setBrightness(15, forDevice: world.deviceID("PulseDot")) }
+        let service = makeService()
+        service.pollDevices()
+        service.syncNow(mode: .working)
+
+        service.turnOffForSleep(timeout: 2)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("fade-off", ledCount: 2, brightness: 15))
+        service.turnOnAfterSleep()
+        XCTAssertTrue(service.waitUntilIdle())
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.expected(.working, ledCount: 2, brightness: 15))
+    }
+
+    func testOffForSleepPlaysTheChosenAnimationPerLedCount() {
+        world.addDevice("PulseDot")
+        world.addDevice("SidePulsePro")
+        box.update { $0.sleepAnimationID = "lid-closed" }
+        let service = makeService()
+        service.pollDevices()
+        service.syncNow(mode: .working)
+
+        service.turnOffForSleep(timeout: 2)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("lid-closed", ledCount: 2))
+        XCTAssertEqual(world.program("SidePulsePro"), RuntimePrograms.program("lid-closed", ledCount: 8))
     }
 
     func testSleepEndsAPreviewWithoutItsRestore() {
@@ -577,7 +605,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertFalse(service.isPreviewing)
         runtimeSpin(0.4)
         XCTAssertTrue(service.waitUntilIdle())
-        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("fade-off", ledCount: 2))
 
         service.turnOnAfterSleep()
         XCTAssertTrue(service.waitUntilIdle())
@@ -597,7 +625,7 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
         XCTAssertFalse(service.turnOffForSleep(timeout: 0.1), "the sleep write waits behind the stuck one")
         gate.release()
         XCTAssertTrue(service.waitUntilIdle())
-        XCTAssertEqual(world.program("PulseDot"), LedSyncService.sleepProgram)
+        XCTAssertEqual(world.program("PulseDot"), RuntimePrograms.program("fade-off", ledCount: 2))
     }
 
     /// A sleep write that only gets its turn after the wake must not turn the LEDs off.

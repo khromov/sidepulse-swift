@@ -5,6 +5,7 @@ enum ExtraPrograms {
         Animation(id: "solid-blue", name: "Solid Blue", countSpecific: false),
         Animation(id: "red-double-blink", name: "Red Double Blink", countSpecific: false),
         Animation(id: "blue-double-blink", name: "Blue Double Blink", countSpecific: false),
+        Animation(id: "fade-off", name: "Fade Off", countSpecific: false),
     ]
 
     static let files: [String: String] = [
@@ -12,6 +13,7 @@ enum ExtraPrograms {
         "solid-blue.LED": "#0000FF 320ms cosine",
         "red-double-blink.LED": doubleBlink("#FF0000"),
         "blue-double-blink.LED": doubleBlink("#0000FF"),
+        "fade-off.LED": "off 320ms cosine",
     ]
 
     /// Two short pulses from off, then a hold: a line that sets the color it already shows just keeps it lit.

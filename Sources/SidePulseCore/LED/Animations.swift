@@ -33,6 +33,14 @@ public enum AnimationLibrary {
         return program
     }
 
+    /// Only animations that end dark, so a sleeping Mac's LEDs never play all night.
+    public static let sleepAnimationIDs = ["fade-off", "lid-closed", "off", "immediate-off"]
+    public static let defaultSleepAnimationID = "fade-off"
+
+    public static var sleepAnimations: [Animation] {
+        sleepAnimationIDs.compactMap { animation(id: $0) }
+    }
+
     /// The Signal profile.
     public static func defaultAnimationID(for mode: AgentMode) -> String {
         switch mode {
