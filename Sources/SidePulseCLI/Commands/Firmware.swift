@@ -101,8 +101,8 @@ enum FirmwareCommand: CLICommand {
         env.stdout.line("Sending firmware \(package.version). Keep the device connected.")
         try FirmwareWriter.write(package.payload, toVolume: device.root)
         env.stdout.line("Firmware \(package.version) transferred. Leave the device connected for at least 10 seconds "
-            + "while it applies the update and restarts, then reconnect it and run `sidepulse firmware version` "
-            + "to confirm the installation.")
+            + "while it applies the update and restarts, then run `sidepulse firmware version` to confirm the "
+            + "installation. If its drive does not come back, reconnect it.")
         return ExitCode.ok
     }
 

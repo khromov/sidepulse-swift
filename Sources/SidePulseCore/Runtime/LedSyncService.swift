@@ -179,8 +179,8 @@ public final class LedSyncService: @unchecked Sendable {
                     return read.failures == 1 && info == nil
                 }
                 if let info {
-                    log("devices: \(device.displayName) (\(device.root.path)) is a \(info.model.productName) "
-                        + "on firmware \(info.version)")
+                    let model = info.model.productName == device.displayName ? "" : "is a \(info.model.productName) that "
+                    log("devices: \(device.displayName) (\(device.root.path)) \(model)runs firmware \(info.version)")
                 } else if firstFailure, let failure {
                     log("devices: no firmware version for \(device.displayName) (\(device.root.path)): \(failure)")
                 }

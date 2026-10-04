@@ -493,18 +493,24 @@ final class RuntimeLedSyncServiceTests: XCTestCase {
     func testFirmwareIsReadFromStatusAndShownInDeviceInfos() throws {
         world.addDevice("PulseDot")
         world.addDevice("SidePulsePro")
+        world.addDevice("NO NAME")
         try "serial SPD-1\napp_version 1.1.14\n".write(to: world.mounts.appendingPathComponent("PulseDot/STATUS.TXT"),
                                                      atomically: false, encoding: .utf8)
+        try "release_version 1.1.0\n".write(to: world.mounts.appendingPathComponent("NO NAME/STATUS.TXT"),
+                                            atomically: false, encoding: .utf8)
         let service = makeService()
         XCTAssertTrue(service.pollDevices())
         let dotID = world.deviceID("PulseDot")
-        XCTAssertTrue(runtimeWait { self.deviceInfos(service).first { $0.id == dotID }?.firmware != nil })
+        XCTAssertTrue(runtimeWait { self.deviceInfos(service).filter { $0.firmware != nil }.count == 2 })
         XCTAssertEqual(deviceInfos(service).first { $0.id == dotID }?.firmware,
                        FirmwareInfo(model: .dot, version: "1.1.14", serial: "SPD-1"))
         XCTAssertNil(deviceInfos(service).first { $0.id == self.world.deviceID("SidePulsePro") }?.firmware)
         XCTAssertTrue(service.checkDeviceStatus(), "a new version refreshes an open menu")
         XCTAssertFalse(service.checkDeviceStatus())
-        XCTAssertTrue(logs.items.contains { $0.hasSuffix("is a SidePulse Dot on firmware 1.1.14") }, "\(logs.items)")
+        XCTAssertTrue(logs.items.contains { $0 == "devices: SidePulse Dot (\(dotID)) runs firmware 1.1.14" }, "\(logs.items)")
+        XCTAssertTrue(logs.items.contains {
+            $0 == "devices: NO NAME (\(self.world.deviceID("NO NAME"))) is a SidePulse Pro that runs firmware 1.1.0"
+        }, "\(logs.items)")
         XCTAssertTrue(runtimeWait { self.logs.items.contains { $0.hasPrefix("devices: no firmware version for SidePulse Pro") } })
     }
 

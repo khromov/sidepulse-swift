@@ -286,8 +286,9 @@ older version, does nothing for the installed version, and needs `--device`
 when several devices are mounted. Right before writing it reads `STATUS.TXT`
 again and stops if the device changed during the download. Afterwards, leave
 the device connected for at least 10 seconds while it applies the update and
-restarts, then reconnect it and run `sidepulse firmware version`. The
-upgrade needs a writable volume.
+restarts, then run `sidepulse firmware version`. A Dot remounts by itself after
+the restart; reconnect a device whose drive does not come back. The upgrade
+needs a writable volume.
 
 - `--device PATH`: the device volume, or a file on it such as its `LEDS.LED`.
 - `--json`: `version` only. Prints a JSON array of `model`, `version`, `serial`
