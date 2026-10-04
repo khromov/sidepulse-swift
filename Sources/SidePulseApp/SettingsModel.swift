@@ -21,6 +21,7 @@ final class SettingsModel: ObservableObject {
 
     let services: AppServices
     let animations = AnimationLibrary.all
+    let sleepAnimations = AnimationLibrary.sleepAnimations
     let profiles = AnimationProfiles.builtIn
 
     private var runtime: SidePulseRuntime { services.runtime }
@@ -78,6 +79,15 @@ final class SettingsModel: ObservableObject {
 
     func preview(_ row: AnimationStateRow) {
         runtime.preview(animationID: animationID(for: row), seconds: 3)
+    }
+
+    func setSleepAnimation(_ id: String) {
+        guard id != settings.sleepAnimationID else { return }
+        update { $0.sleepAnimationID = id }
+    }
+
+    func previewSleepAnimation() {
+        runtime.preview(animationID: settings.sleepAnimationID, seconds: 3)
     }
 
     // MARK: Devices

@@ -240,17 +240,43 @@ private struct AnimationsTab: View {
                             set: { model.setAnimation($0, for: row) })) {
                             ForEach(model.animations) { Text($0.name).tag($0.id) }
                         }
-                        Button("Show") { model.preview(row) }
-                            .accessibilityLabel("Show \(row.label) animation on devices")
-                            .disabled(!model.canPreview)
-                            .help(model.canPreview
-                                  ? "Play this animation on connected devices for 3 seconds."
-                                  : "Connect a device in Agent Status mode to preview.")
+                        ShowButton(model: model, label: row.label) { model.preview(row) }
                     }
                 }
             }
+            Section {
+                HStack {
+                    Picker(MenuText.sleepAnimation, selection: Binding(
+                        get: { model.settings.sleepAnimationID },
+                        set: { model.setSleepAnimation($0) })) {
+                        ForEach(model.sleepAnimations) { Text($0.name).tag($0.id) }
+                    }
+                    ShowButton(model: model, label: MenuText.sleepAnimation) { model.previewSleepAnimation() }
+                }
+            } header: {
+                Text("Sleep")
+            } footer: {
+                Text(MenuText.sleepAnimationHelp)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct ShowButton: View {
+    @ObservedObject var model: SettingsModel
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button("Show", action: action)
+            .accessibilityLabel("Show \(label) animation on devices")
+            .disabled(!model.canPreview)
+            .help(model.canPreview
+                  ? "Play this animation on connected devices for 3 seconds."
+                  : "Connect a device in Agent Status mode to preview.")
     }
 }
 

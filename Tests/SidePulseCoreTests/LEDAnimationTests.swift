@@ -40,17 +40,20 @@ final class LEDAnimationLibraryTests: XCTestCase {
         ("purple-attention", "Purple Attention", false),
         ("purple-complete", "Purple Complete", false),
         ("night-rider", "Night Rider", true),
+        ("lid-closed", "Lid Closed Sweep", true),
         ("solid-red", "Solid Red", false),
         ("solid-blue", "Solid Blue", false),
         ("red-double-blink", "Red Double Blink", false),
         ("blue-double-blink", "Blue Double Blink", false),
+        ("fade-off", "Fade Off", false),
     ]
 
     func testCatalogOrderNamesAndVariants() {
         XCTAssertEqual(AnimationLibrary.all.map(\.id), expectedCatalog.map(\.0))
         XCTAssertEqual(AnimationLibrary.all.map(\.name), expectedCatalog.map(\.1))
         XCTAssertEqual(AnimationLibrary.all.map(\.countSpecific), expectedCatalog.map(\.2))
-        XCTAssertFalse(AnimationLibrary.all.contains(where: { LEDTestSupport.isLidAnimation($0.id) }), "lid animations are dropped")
+        XCTAssertEqual(AnimationLibrary.all.map(\.id).filter(LEDTestSupport.isLidAnimation), ["lid-closed"],
+                       "the lid-open animations are dropped")
         XCTAssertEqual(AnimationLibrary.animation(id: "kitt")?.name, "KITT Scanner")
         XCTAssertNil(AnimationLibrary.animation(id: "lid-open"))
         XCTAssertNil(AnimationLibrary.animation(id: "default"))
@@ -62,8 +65,22 @@ final class LEDAnimationLibraryTests: XCTestCase {
             for count in [2, 8] { reachable.insert(AnimationLibrary.fileName(for: animation, ledCount: count)) }
         }
         XCTAssertEqual(reachable, Set(BuiltInPrograms.files.keys).union(ExtraPrograms.files.keys))
-        XCTAssertEqual(BuiltInPrograms.files.count, 27)
+        XCTAssertEqual(BuiltInPrograms.files.count, 29)
         XCTAssertTrue(Set(BuiltInPrograms.files.keys).isDisjoint(with: ExtraPrograms.files.keys))
+    }
+
+    func testSleepAnimationsEndDark() throws {
+        XCTAssertEqual(AnimationLibrary.sleepAnimations.map(\.name), ["Fade Off", "Lid Closed Sweep", "Slow Off", "Immediate Off"])
+        XCTAssertEqual(AnimationLibrary.sleepAnimations.first?.id, AnimationLibrary.defaultSleepAnimationID)
+        XCTAssertEqual(try AnimationLibrary.program(id: "fade-off", ledCount: 2), "off 320ms cosine")
+        for id in AnimationLibrary.sleepAnimationIDs {
+            for count in [2, 8] {
+                let lines = try AnimationLibrary.program(id: id, ledCount: count).split(separator: "\n")
+                XCTAssertFalse(lines.contains { $0.hasPrefix("repeat") }, "\(id)-\(count)")
+                let last = try XCTUnwrap(lines.last)
+                XCTAssertTrue(last.hasPrefix("off") || last.hasPrefix("#000000"), "\(id)-\(count) ends with \(last)")
+            }
+        }
     }
 
     func testFileNameVariants() throws {
@@ -82,6 +99,11 @@ final class LEDAnimationLibraryTests: XCTestCase {
         XCTAssertEqual(try AnimationLibrary.program(id: "off", ledCount: 8), "off 1s")
         XCTAssertEqual(try AnimationLibrary.program(id: "immediate-off", ledCount: 2), "off")
         XCTAssertEqual(try AnimationLibrary.program(id: "immediate-off", ledCount: 8), "off")
+        XCTAssertEqual(try AnimationLibrary.program(id: "lid-closed", ledCount: 2),
+                       "0:#000000 300ms ease; 1:#000000 300ms ease\n#000000 1s")
+        XCTAssertEqual(try AnimationLibrary.program(id: "lid-closed", ledCount: 8),
+                       "0:#000000 75ms ease; 7:#000000 75ms ease\n1:#000000 75ms ease; 6:#000000 75ms ease\n"
+                       + "2:#000000 75ms ease; 5:#000000 75ms ease\n3:#000000 75ms ease; 4:#000000 75ms ease\n#000000 1s")
         XCTAssertEqual(try AnimationLibrary.program(id: "idle-pulse", ledCount: 8),
                        "off 2s\n2:#006060 3:#00E5FF 4:#00E5FF 5:#006060 2s ease\nrepeat")
         XCTAssertEqual(try AnimationLibrary.program(id: "idle-pulse", ledCount: 2),

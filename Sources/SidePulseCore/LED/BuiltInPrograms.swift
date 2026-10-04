@@ -19,6 +19,7 @@ enum BuiltInPrograms {
         Animation(id: "purple-attention", name: "Purple Attention", countSpecific: false),
         Animation(id: "purple-complete", name: "Purple Complete", countSpecific: false),
         Animation(id: "night-rider", name: "Night Rider", countSpecific: true),
+        Animation(id: "lid-closed", name: "Lid Closed Sweep", countSpecific: true),
     ]
 
     static let files: [String: String] = [
@@ -104,6 +105,17 @@ enum BuiltInPrograms {
             0:#FF1800 320ms pulse 0ms; 1:#FF1800 320ms pulse 85ms; 2:#FF1800 320ms pulse 170ms; 3:#FF1800 320ms pulse 255ms; 4:#FF1800 320ms pulse 340ms; 5:#FF1800 320ms pulse 425ms; 6:#FF1800 320ms pulse 510ms; 7:#FF1800 320ms pulse 595ms
             6:#FF1800 320ms pulse 0ms; 5:#FF1800 320ms pulse 85ms; 4:#FF1800 320ms pulse 170ms; 3:#FF1800 320ms pulse 255ms; 2:#FF1800 320ms pulse 340ms; 1:#FF1800 320ms pulse 425ms; 0:#FF1800 320ms pulse 510ms
             repeat
+            """#,
+        "lid-closed-2.LED": #"""
+            0:#000000 300ms ease; 1:#000000 300ms ease
+            #000000 1s
+            """#,
+        "lid-closed-8.LED": #"""
+            0:#000000 75ms ease; 7:#000000 75ms ease
+            1:#000000 75ms ease; 6:#000000 75ms ease
+            2:#000000 75ms ease; 5:#000000 75ms ease
+            3:#000000 75ms ease; 4:#000000 75ms ease
+            #000000 1s
             """#,
         "night-rider-2.LED": #"""
             off

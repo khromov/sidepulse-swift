@@ -54,7 +54,7 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
 
 **Intentionally dropped:** iPhone link and push, the remote relay, the headless
 service and Linux support, battery LED mode, the closed-lid
-sleep helper and lid animations, status history and charts, audit and
+sleep helper and the Lid Open animations, status history and charts, audit and
 decision-log export, the virtual SidePulse Notch device, WASM previews, the
 custom animation editor and profile import/export, transcript fallback
 monitoring, terminal resume/focus from session rows, `sidepulse update` (the
@@ -441,14 +441,14 @@ The Settings window has four tabs:
 | Tab        | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Turn off LEDs whenever the Mac sleeps** (off by default; see Sleep below). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Command-line tool**: whether `~/.local/bin/sidepulse` runs this app, **Install**, and a check that your shell finds it, with **Add to PATH** when it does not (see Command-line tool below). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
-| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                                                                                                                                                                                                    |
+| Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Mac goes to sleep**, the animation that turns the LEDs off as the Mac sleeps (see Sleep below). **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                                                                                                                                                                                                    |
 | Devices    | For each device: connection state, LED count, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh**                                                                                                                                                                                                                           |
 
-The built-in animations are Slow Off, Immediate Off, Idle Pulse, Cyan Roll,
-Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, Red Double
-Blink, Blue Double Blink, KITT Scanner, KITT Scanner Red, Night Rider, and the
-Ember and Purple families (Idle, Tide, Attention, Complete).
+The built-in animations are Slow Off, Immediate Off, Fade Off, Idle Pulse, Cyan
+Roll, Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, Red Double
+Blink, Blue Double Blink, KITT Scanner, KITT Scanner Red, Night Rider, Lid Closed
+Sweep, and the Ember and Purple families (Idle, Tide, Attention, Complete).
 Animations that depend on the LED layout have separate 2-LED and 8-LED
 variants.
 
@@ -498,12 +498,14 @@ locked`. The Settings window's Devices tab shows the same text. A write that
     the Mac is always allowed to sleep.
 - **Sleep.** A device keeps playing its program for as long as it has power,
   and USB stays powered while the Mac sleeps. So when the Mac goes to sleep
-  with the lid closed, SidePulse fades every Agent Status device to off
-  (`off 320ms cosine`, at the device's brightness) and only then lets macOS
-  sleep. The LEDs stay off,
-  including through Power Nap wakes, until the Mac wakes and is in use again,
-  with the lid open or closed on an external display. Then they show the live
-  status again. Closing the lid on an external display doesn't sleep the Mac,
+  with the lid closed, SidePulse plays the **Mac goes to sleep** animation on
+  every Agent Status device, at the device's brightness, and only then lets
+  macOS sleep. Pick it in Settings > Animations > Sleep: Fade Off (the default,
+  `off 320ms cosine`), Lid Closed Sweep (from the Python version), Slow Off or
+  Immediate Off. Only animations that end dark are offered, and profiles leave
+  the pick alone. The LEDs stay off, including through Power Nap wakes, until
+  the Mac wakes and is in use again, with the lid open or closed on an external
+  display. Then they show the live status again. Closing the lid on an external display doesn't sleep the Mac,
   so the LEDs stay on. **Turn off LEDs whenever the Mac sleeps** (Settings >
   General, off by default) also turns them off when the Mac sleeps with the
   lid open, or a Mac without a lid sleeps. Manual devices are left alone.

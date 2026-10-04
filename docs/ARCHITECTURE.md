@@ -27,13 +27,13 @@ In scope:
 - SidePulse Pro Eject Prevention, in the app only: a DiskArbitration eject-approval callback vetoes ejects of
   cards in the built-in SD reader and retries their mount every 5 s (`SDEjectGuard`, ported from Python's
   `sd_eject_guard.c`). The hook CLI never links DiskArbitration.
-- LEDs off while the Mac sleeps: `SystemSleepWatcher` (IOKit system-power and lid notifications) turns Agent Status devices off before a sleep with the lid closed, or any sleep with the opt-in setting, and back on once the Mac is in use again. Python did this by polling `ioreg` for the lid every second.
+- LEDs off while the Mac sleeps: `SystemSleepWatcher` (IOKit system-power and lid notifications) plays the chosen off animation (Fade Off, Lid Closed Sweep, Slow Off or Immediate Off) on Agent Status devices before a sleep with the lid closed, or any sleep with the opt-in setting, and lights them again once the Mac is in use. Python did this by polling `ioreg` for the lid every second.
 - Keep-awake while agents work: a `ProcessInfo` activity (`.idleSystemSleepDisabled`, which holds PreventUserIdleSystemSleep) with the Never / When Agents Work / Always policy, plus a low-battery safeguard.
 - Menu-bar app:
   - status icon;
   - recent sessions;
   - Devices menus and a one-row Keep Awake policy switch;
-  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, LEDs off on any sleep, eject prevention, launch at login, logs folder, command-line tool, updates).
+  - a small SwiftUI Settings window (per-state animations, profiles, timeouts, hooks, the sleep animation and LEDs off on any sleep, eject prevention, launch at login, logs folder, command-line tool, updates).
 - The `~/.local/bin/sidepulse` link, which the app keeps pointed at its own CLI, and a check that the user's shell finds it.
 - Updates of release builds with Sparkle 2, from a feed published with each GitHub release.
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
@@ -43,7 +43,7 @@ Out of scope (dropped on purpose):
 - remote relay
 - the headless service and Linux support
 - battery LED mode
-- closed-lid helper and the configurable Lid Closed / Lid Open animations (the LEDs still go off while the Mac sleeps)
+- closed-lid helper and the Lid Open animations
 - status history and charts
 - audit export
 - the virtual notch device

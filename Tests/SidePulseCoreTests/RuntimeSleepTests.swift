@@ -17,7 +17,7 @@ final class RuntimeSleepTests: XCTestCase {
         super.tearDown()
     }
 
-    private let off = LedSyncService.sleepProgram
+    private var off: String { RuntimePrograms.program("fade-off", ledCount: 2) }
     private var working: String { RuntimePrograms.expected(.working, ledCount: 2) }
     private var completed: String { RuntimePrograms.expected(.completed, ledCount: 2) }
 
