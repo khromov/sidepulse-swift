@@ -91,13 +91,15 @@ if ! codesign -dvv "$BINARY" 2>&1 | grep -q '^Authority=Developer ID Application
     exit 1
 fi
 ARCHS=$(lipo -archs "$BINARY")
-case " $ARCHS " in
-    *" arm64 "*" x86_64 "* | *" x86_64 "*" arm64 "*) ;;
+case $ARCHS in
+    "arm64 x86_64" | "x86_64 arm64") ;;
     *)
         echo "error: $BINARY is built for '$ARCHS', not arm64 and x86_64" >&2
         exit 1
         ;;
 esac
+# Before notarizing, so a manifest problem shows up without waiting for Apple.
+elgato validate "$PLUGIN" --no-update-check
 
 if [ "$NOTARIZE" -eq 1 ]; then
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/sidepulse-streamdeck.XXXXXX")
@@ -128,7 +130,6 @@ if [ "$NOTARIZE" -eq 1 ]; then
     fi
 fi
 
-elgato validate "$PLUGIN" --no-update-check
 mkdir -p "$ROOT/dist"
 rm -f "$PACKAGE"
 elgato pack "$PLUGIN" --output "$ROOT/dist" --force --no-update-check

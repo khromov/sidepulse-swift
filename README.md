@@ -643,12 +643,12 @@ and failed checks (`app: update failed: …`) to `app.log`.
 ## Stream Deck plugin
 
 The **SidePulse Swift** Stream Deck plugin (`io.sidepulse.swift.streamdeck`)
-adds one action, **Agent Status**. A key with it shows the same state as the
-menu-bar icon:
+adds one action, **Agent Status**. A key with it shows the agents' overall state,
+chosen like the menu-bar icon's, but with errors apart from questions:
 
 | Key       | When                                                                   |
 | --------- | ---------------------------------------------------------------------- |
-| `Error`   | A tool call or turn failed, or a permission was denied (Blocked / Error) |
+| `Error`   | A tool call or turn failed, or a permission was denied (Blocked / Error). A failed command mid-turn shows until the agent's next step |
 | `Ask`     | An agent is waiting for you (a permission prompt, a question)          |
 | `Working` | An agent is working or running a tool                                  |
 | `Done`    | The last agent finished, within the last 20 minutes                    |
@@ -656,11 +656,11 @@ menu-bar icon:
 | `Off`     | No SidePulse runtime answers on the event socket                       |
 
 Below the state it shows `N active` when agents are active. Error fills the
-whole key with red and Ask with orange, so a key that needs you stands out; the
-other states keep a dark key with a colored icon. Unlike the menu-bar icon, which
-shows both as Ask, the key tells them apart. Working turns, and Error and Ask
-pulse, two frames a second. The key's settings (the property inspector)
-have:
+whole key with red and Ask with orange, so they stand out; the other states keep
+a dark key with a colored icon. The menu-bar icon shows both as Ask. Working
+turns, and Error and Ask pulse, two frames a second. Until the plugin first
+draws a key, Stream Deck shows the SidePulse logo there. The key's settings (the
+property inspector) have:
 
 - **Agents**: All agents (default), or only Claude Code, Codex or OpenCode. A
   key for one agent names it above the icon and shows that agent's own state,
@@ -668,8 +668,10 @@ have:
 - **Animation**: Animate Working, Ask and Error (on by default).
 
 Pressing the key opens SidePulse Settings, like `sidepulse settings`. When the
-app is not running it starts it (`open -b io.sidepulse.swift`) and waits up to
-5 s for it to answer. With a headless `sidepulse run` or `sidepulse leds` the
+app is not running it starts it with `~/.local/bin/sidepulse app start`, which
+uses the LaunchAgent when Launch at Login is on (or with
+`open -b io.sidepulse.swift` when that link is not the SidePulse CLI), and waits
+up to 5 s for it to answer. Further presses are ignored until then. With a headless `sidepulse run` or `sidepulse leds` the
 key shows Stream Deck's alert, since that runtime has no settings window.
 Without SidePulse installed the key opens the
 [releases page](https://github.com/khromov/sidepulse-swift/releases/latest).

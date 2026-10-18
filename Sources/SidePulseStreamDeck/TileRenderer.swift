@@ -30,7 +30,7 @@ public enum TileRenderer {
     /// Glyph and text on a filled key; white on orange or red is too faint to read at key size.
     static let ink = Color(hex: 0x1C1C1E)
 
-    /// Only Ask and Error fill the key, so a filled key always means an agent needs you.
+    /// Only Ask and Error fill the key, so they stand out from the states that need nothing.
     static func isFilled(_ glyph: StreamDeckTile.Glyph) -> Bool { glyph == .ask || glyph == .error }
 
     static func color(for glyph: StreamDeckTile.Glyph) -> Color {

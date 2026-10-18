@@ -16,14 +16,14 @@ public enum PluginAssets {
         Asset(path: "imgs/plugin/icon", points: 256, draw: drawPluginIcon),
         Asset(path: "imgs/plugin/category", points: 28) { drawPulse(in: $0, color: TileRenderer.white.cg(), width: 13) },
         Asset(path: "imgs/actions/status/icon", points: 20, draw: drawActionIcon),
+        // Stream Deck shows this until the plugin draws (or when it cannot run), so it must not look like a status.
         Asset(path: "imgs/actions/status/key", points: 72) { context in
             context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: TileRenderer.canvas, height: TileRenderer.canvas))
-            TileRenderer.drawKey(defaultKey, frame: 0, in: context)
+            context.setShadow(offset: .zero, blur: 10, color: TileRenderer.pulse.cg(alpha: 0.8))
+            drawPulse(in: context, color: TileRenderer.pulse.cg(), width: 8)
         },
     ]
-
-    public static let defaultKey = StreamDeckTile(glyph: .idle, label: DisplayState.idle.label)
 
     /// Writes `<path>.png` and `<path>@2x.png` for every asset.
     public static func write(to directory: URL) throws {

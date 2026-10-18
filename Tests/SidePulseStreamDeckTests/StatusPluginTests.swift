@@ -1,3 +1,4 @@
+import Synchronization
 import XCTest
 import SidePulseCore
 @testable import SidePulseStreamDeck
@@ -92,6 +93,19 @@ final class StatusPluginTests: XCTestCase {
         XCTAssertEqual(output.images(for: "key1").count, 2)
     }
 
+    func testKeyShownAgainWaitsForFreshStatus() throws {
+        current = snapshot([("codex", .waitingForInput)])
+        let plugin = makePlugin()
+        plugin.handle(event("willAppear"))
+        plugin.handle(event("willDisappear"))
+        current = snapshot([("codex", .completed)])
+        plugin.handle(event("willAppear"))
+        XCTAssertEqual(output.images(for: "key1"), [
+            try expectedImage(StreamDeckTile(glyph: .ask, label: "Ask", detail: "1 active")),
+            try expectedImage(StreamDeckTile(glyph: .done, label: "Done")),
+        ])
+    }
+
     func testSettingsChoosesTheProvider() throws {
         current = snapshot([("claude", .working), ("codex", .completed)])
         let plugin = makePlugin()
@@ -139,6 +153,30 @@ final class StatusPluginTests: XCTestCase {
         plugin.handle(event("keyDown"))
         XCTAssertEqual(opens, 1)
         XCTAssertFalse(output.events.contains("showAlert"))
+    }
+
+    func testPressWhileOpeningIsIgnored() {
+        let gate = DispatchSemaphore(value: 0)
+        let presses = Mutex(0)
+        let opener = SidePulseOpener(requestSettings: { presses.withLock { $0 += 1 }; gate.wait(); return true },
+                                     isRunning: { false }, launchApp: { false })
+        let queue = DispatchQueue(label: "plugin")
+        let plugin = StatusPlugin(output: output, source: StatusSource(load: { nil }, monitorConfig: { MonitorConfig() }),
+                                  opener: opener, queue: queue, background: DispatchQueue(label: "status"),
+                                  usesTimers: false)
+        queue.sync {
+            plugin.handle(event("keyDown"))
+            plugin.handle(event("keyDown"))
+        }
+        gate.signal()
+        let deadline = Date().addingTimeInterval(5)
+        while queue.sync(execute: { plugin.opening }), Date() < deadline { usleep(10_000) }
+        XCTAssertEqual(presses.withLock { $0 }, 1)
+
+        queue.sync { plugin.handle(event("keyDown")) }
+        gate.signal()
+        while queue.sync(execute: { plugin.opening }), Date() < deadline { usleep(10_000) }
+        XCTAssertEqual(presses.withLock { $0 }, 2)
     }
 
     func testFailedPressShowsAnAlertAndLogs() {

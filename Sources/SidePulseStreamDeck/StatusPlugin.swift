@@ -42,7 +42,7 @@ public struct KeySettings: Sendable, Equatable {
     }
 }
 
-/// Runs entirely on `queue`; only the socket requests and the app launch run on the background queue.
+/// Runs entirely on `queue`; only the socket requests and the app launch run on background queues.
 public final class StatusPlugin {
     public static let actionUUID = "io.sidepulse.swift.streamdeck.status"
     public static let downloadURL = "https://github.com/khromov/sidepulse-swift/releases/latest"
@@ -55,6 +55,8 @@ public final class StatusPlugin {
     private let queue: DispatchQueue
     /// nil runs background work inline, which only tests do.
     private let background: DispatchQueue?
+    /// Separate from `background` so polling goes on while a key press waits up to seconds for the app to start.
+    private let launching: DispatchQueue?
     private let usesTimers: Bool
 
     private(set) var keys: [String: KeySettings] = [:]
@@ -64,6 +66,7 @@ public final class StatusPlugin {
     private var config = MonitorConfig()
     private var loaded = false
     private var loading = false
+    private(set) var opening = false
     private(set) var frame = 0
     private var pollTimer: DispatchSourceTimer?
     private var animationTimer: DispatchSourceTimer?
@@ -78,6 +81,7 @@ public final class StatusPlugin {
                 usesTimers: Bool = true) {
         self.output = output; self.source = source; self.opener = opener; self.queue = queue
         self.background = background; self.usesTimers = usesTimers
+        launching = background.map { _ in DispatchQueue(label: "sidepulse.streamdeck.launch", qos: .userInitiated) }
     }
 
     public func handle(_ event: StreamDeckEvent) {
@@ -95,6 +99,11 @@ public final class StatusPlugin {
             guard let context = event.context else { return }
             keys[context] = nil
             sentImages[context] = nil
+            if keys.isEmpty {
+                // A key shown again later must not flash a status that is minutes old.
+                loaded = false
+                snapshot = nil
+            }
             updateTimers()
         case "didReceiveSettings":
             guard let context = event.context, keys[context] != nil else { return }
@@ -118,7 +127,7 @@ public final class StatusPlugin {
         loading = true
         let needsConfig = keys.values.contains { $0.provider != nil }
         let source = self.source
-        perform({ () -> (MonitorSnapshot?, MonitorConfig?) in
+        perform(on: background, { () -> (MonitorSnapshot?, MonitorConfig?) in
             let snapshot = source.load()
             return (snapshot, needsConfig && snapshot != nil ? source.monitorConfig() : nil)
         }, then: { [weak self] in self?.statusLoaded($0.0, config: $0.1) })
@@ -165,12 +174,15 @@ public final class StatusPlugin {
     // MARK: Key press
 
     private func openSidePulse(from context: String) {
+        guard !opening else { return }
+        opening = true
         let opener = self.opener
-        perform({ opener.open() }, then: { [weak self] in self?.opened($0, from: context) })
+        perform(on: launching, { opener.open() }, then: { [weak self] in self?.opened($0, from: context) })
     }
 
     /// Without the app installed the key leads to its download page, since a Marketplace user may not have it yet.
     private func opened(_ outcome: SidePulseOpener.Outcome, from context: String) {
+        opening = false
         refresh()
         guard let message = Self.failureMessage(outcome) else { return }
         output.send(StreamDeckCommand.logMessage(message))
@@ -196,10 +208,10 @@ public final class StatusPlugin {
 
     // MARK: Timers
 
-    private func perform<T>(_ work: @escaping () -> T, then finish: @escaping (T) -> Void) {
-        guard let background else { return finish(work()) }
+    private func perform<T>(on worker: DispatchQueue?, _ work: @escaping () -> T, then finish: @escaping (T) -> Void) {
+        guard let worker else { return finish(work()) }
         let queue = self.queue
-        background.async {
+        worker.async {
             let result = work()
             queue.async { finish(result) }
         }

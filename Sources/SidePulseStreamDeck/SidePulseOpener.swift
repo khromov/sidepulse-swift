@@ -43,20 +43,26 @@ public struct SidePulseOpener {
 
     public static func live(paths: SidePulsePaths) -> SidePulseOpener {
         let socket = paths.socketPath
+        let cli = paths.defaultCLILink.path
         return SidePulseOpener(
             requestSettings: {
                 guard let reply = EventSocketClient.request("open-settings", socketPath: socket, timeout: 1) else { return false }
                 return String(decoding: reply, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "ok"
             },
             isRunning: { EventSocketClient.isServerRunning(socketPath: socket) },
-            launchApp: { launchWithLaunchServices(bundleIdentifier: SidePulseConstants.bundleIdentifier) })
+            launchApp: {
+                // `sidepulse app start` uses the LaunchAgent when Launch at Login is on, so launchd keeps the app
+                // alive; LaunchServices only covers a missing CLI link, and fails when no app has the identifier.
+                if HookCLIPath.problem(with: cli) == nil, run(cli, ["app", "start"]) { return true }
+                return run("/usr/bin/open", ["-g", "-b", SidePulseConstants.bundleIdentifier])
+            })
     }
 
-    /// LaunchServices finds the app wherever it is installed; `open` fails when no app has the identifier.
-    static func launchWithLaunchServices(bundleIdentifier: String) -> Bool {
+    static func run(_ executable: String, _ arguments: [String]) -> Bool {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-g", "-b", bundleIdentifier]
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {

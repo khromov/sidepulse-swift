@@ -297,9 +297,14 @@ wrapper around `StreamDeckPluginMain.main` in the `SidePulseStreamDeck` library
 Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
 - **Bundle.** `StreamDeck/io.sidepulse.swift.streamdeck.sdPlugin/` holds the
   checked-in part: `manifest.json` and the property inspector
-  `ui/status.html` (plain HTML and JS, no library). `scripts/build-streamdeck.sh`
-  copies it to `build/`, adds `bin/sidepulse-streamdeck` and generates the
-  manifest's PNGs with `--write-assets` from the same renderer as the live keys.
+  `ui/status.html` (plain HTML and JS, no library), and `.sdignore`, which keeps
+  `.DS_Store` out of the package. `scripts/build-streamdeck.sh` builds first,
+  then assembles the bundle next to `build/io.sidepulse.swift.streamdeck.sdPlugin`
+  and swaps it in, so the development link never dangles. It adds
+  `bin/sidepulse-streamdeck` and generates the manifest's PNGs with
+  `--write-assets` from the same renderer as the live keys. The default key
+  image is the logo, not a state, because Stream Deck shows it whenever the
+  plugin has not drawn.
   `--write-marketplace` draws the listing images the same way.
 - **Protocol.** Stream Deck starts the binary with `-port -pluginUUID
   -registerEvent -info`. `StreamDeckSocket` (`URLSessionWebSocketTask` to
@@ -310,7 +315,8 @@ Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
   `showAlert`, `openUrl` and `logMessage`.
 - **Status.** While a key is visible, `StatusPlugin` asks the runtime for
   `status` once a second on a background queue (one request at a time) and
-  shows Off when nothing answers. `StreamDeckTilePresentation`
+  shows Off when nothing answers. It forgets the snapshot once no key is
+  visible, so a key shown again never flashes an old state. `StreamDeckTilePresentation`
   (`SidePulseCore/Presentation`) turns the snapshot into a tile. A
   single-provider key rebuilds that provider's aggregate with `SnapshotBuilder`
   from its rows in `statuses` and `staleStatuses` (and the idle timeout from
@@ -319,17 +325,21 @@ Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
 - **Images.** `TileRenderer` draws on a 144-point canvas (Stream Deck's @2x
   key). Its glyphs are Core Graphics paths, not SF Symbols, whose license
   excludes artwork such as the Marketplace listing's. Only Error (red) and
-  Ask (orange) fill the key, with near-black ink, so a filled key always means
-  an agent needs the user; unlike the menu-bar icon, the key shows Blocked /
-  Error apart from Ask. Working, Ask and Error animate
+  Ask (orange) fill the key, with near-black ink; unlike the menu-bar icon, the
+  key shows Blocked / Error apart from Ask. A failed tool call mid-turn is
+  Blocked / Error until the agent's next event, so Error can flash while the
+  agent carries on. Working, Ask and Error animate
   at two frames a second, so a few keys stay under Elgato's guideline of 10
   updates a second. Rendered images are cached per tile and frame, and a key
   is sent an image only when it differs from the last one it got; `willAppear`
   forgets that, because Stream Deck shows the manifest image again after a page
   switch.
 - **Key press.** `SidePulseOpener` sends `open-settings`; if nothing answers
-  and no runtime runs, it starts the app with `open -g -b io.sidepulse.swift`
-  and retries for 5 s, like `sidepulse settings`. It runs off the main queue.
+  and no runtime runs, it starts the app with `~/.local/bin/sidepulse app start`
+  when `HookCLIPath` accepts that link (so the LaunchAgent is used when it is
+  installed), else with `open -g -b io.sidepulse.swift`, and retries for 5 s,
+  like `sidepulse settings`. It runs on its own queue, so polling goes on, and
+  a press while one is pending is ignored.
 - **Marketplace constraints.** The manifest declares `SDKVersion` 3 and
   Stream Deck 6.9, the minimums for new plugins and updates. Elgato encrypts the
   manifest (DRM) and treats the installed files as immutable, so the plugin

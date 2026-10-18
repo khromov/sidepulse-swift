@@ -46,38 +46,45 @@ SOURCE="$ROOT/StreamDeck/$UUID.sdPlugin"
 PLUGIN="$ROOT/build/$UUID.sdPlugin"
 VERSION=$(plutil -extract Version raw -o - "$SOURCE/manifest.json")
 
-rm -rf "$PLUGIN"
-mkdir -p "$ROOT/build"
-ditto "$SOURCE" "$PLUGIN"
-mkdir -p "$PLUGIN/bin"
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/sidepulse-streamdeck.XXXXXX")
+# The bundle is put together next to the old one and swapped in at the end, so the link Stream Deck
+# follows never dangles during a build and survives a failed one.
+STAGE="$ROOT/build/.$UUID.sdPlugin.new"
+trap 'rm -rf "$WORK" "$STAGE"' EXIT
 
 if [ "$DISTRIBUTION" -eq 1 ]; then
     echo "Building the Stream Deck plugin $VERSION (release, arm64 + x86_64)..."
     # Older toolchains need Xcode for a multi-arch `swift build`, and newer ones put every arch in one output
     # directory, so each slice is built and copied out on its own.
-    SLICES=$(mktemp -d "${TMPDIR:-/tmp}/sidepulse-streamdeck-slices.XXXXXX")
-    trap 'rm -rf "$SLICES"' EXIT
     for arch in arm64 x86_64; do
         swift build -c release --arch "$arch" --product "$PRODUCT"
-        cp "$(swift build -c release --arch "$arch" --show-bin-path)/$PRODUCT" "$SLICES/$arch"
-        if [ "$(lipo -archs "$SLICES/$arch")" != "$arch" ]; then
-            echo "error: the $arch build produced '$(lipo -archs "$SLICES/$arch")'" >&2
+        cp "$(swift build -c release --arch "$arch" --show-bin-path)/$PRODUCT" "$WORK/$arch"
+        if [ "$(lipo -archs "$WORK/$arch")" != "$arch" ]; then
+            echo "error: the $arch build produced '$(lipo -archs "$WORK/$arch")'" >&2
             exit 1
         fi
     done
-    lipo -create "$SLICES/arm64" "$SLICES/x86_64" -output "$PLUGIN/bin/$PRODUCT"
+    lipo -create "$WORK/arm64" "$WORK/x86_64" -output "$WORK/$PRODUCT"
 else
     echo "Building the Stream Deck plugin $VERSION ($CONFIG)..."
     swift build -c "$CONFIG" --product "$PRODUCT"
-    cp "$(swift build -c "$CONFIG" --show-bin-path)/$PRODUCT" "$PLUGIN/bin/$PRODUCT"
+    cp "$(swift build -c "$CONFIG" --show-bin-path)/$PRODUCT" "$WORK/$PRODUCT"
 fi
-chmod 755 "$PLUGIN/bin/$PRODUCT"
-"$PLUGIN/bin/$PRODUCT" --write-assets "$PLUGIN"
+
+rm -rf "$STAGE"
+mkdir -p "$ROOT/build"
+ditto "$SOURCE" "$STAGE"
+mkdir -p "$STAGE/bin"
+cp "$WORK/$PRODUCT" "$STAGE/bin/$PRODUCT"
+chmod 755 "$STAGE/bin/$PRODUCT"
+"$STAGE/bin/$PRODUCT" --write-assets "$STAGE"
 
 # Extended attributes such as FinderInfo make codesign fail.
-xattr -cr "$PLUGIN" 2>/dev/null || true
-codesign --force $SIGN_FLAGS --sign "$IDENTITY" --identifier "$UUID" "$PLUGIN/bin/$PRODUCT"
-codesign --verify --strict "$PLUGIN/bin/$PRODUCT"
+xattr -cr "$STAGE" 2>/dev/null || true
+codesign --force $SIGN_FLAGS --sign "$IDENTITY" --identifier "$UUID" "$STAGE/bin/$PRODUCT"
+codesign --verify --strict "$STAGE/bin/$PRODUCT"
+rm -rf "$PLUGIN"
+mv "$STAGE" "$PLUGIN"
 
 if [ "$IDENTITY" = "-" ]; then
     echo "Built $PLUGIN (signed ad hoc)"
