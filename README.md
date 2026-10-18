@@ -648,21 +648,24 @@ menu-bar icon:
 
 | Key       | When                                                                   |
 | --------- | ---------------------------------------------------------------------- |
-| `Ask`     | An agent is waiting for you (a permission prompt, a question, an error) |
+| `Error`   | A tool call or turn failed, or a permission was denied (Blocked / Error) |
+| `Ask`     | An agent is waiting for you (a permission prompt, a question)          |
 | `Working` | An agent is working or running a tool                                  |
 | `Done`    | The last agent finished, within the last 20 minutes                    |
 | `Idle`    | Nothing to report                                                      |
 | `Off`     | No SidePulse runtime answers on the event socket                       |
 
-Below the state it shows `N active` when agents are active. Ask fills the whole
-key with orange, so a key that needs you stands out; the other states keep a
-dark key with a colored icon. Working turns and Ask pulses, two frames a second. The key's settings (the property inspector)
+Below the state it shows `N active` when agents are active. Error fills the
+whole key with red and Ask with orange, so a key that needs you stands out; the
+other states keep a dark key with a colored icon. Unlike the menu-bar icon, which
+shows both as Ask, the key tells them apart. Working turns, and Error and Ask
+pulse, two frames a second. The key's settings (the property inspector)
 have:
 
 - **Agents**: All agents (default), or only Claude Code, Codex or OpenCode. A
   key for one agent names it above the icon and shows that agent's own state,
   so its Done stays visible while another agent works.
-- **Animation**: Animate Working and Ask (on by default).
+- **Animation**: Animate Working, Ask and Error (on by default).
 
 Pressing the key opens SidePulse Settings, like `sidepulse settings`. When the
 app is not running it starts it (`open -b io.sidepulse.swift`) and waits up to

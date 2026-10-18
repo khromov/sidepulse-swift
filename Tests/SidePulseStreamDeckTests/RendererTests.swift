@@ -11,6 +11,7 @@ final class RendererTests: XCTestCase {
     }
 
     private let tiles: [StreamDeckTile] = [
+        StreamDeckTile(glyph: .error, label: "Error", detail: "1 active"),
         StreamDeckTile(glyph: .ask, label: "Ask", detail: "2 active"),
         StreamDeckTile(glyph: .working, heading: "Claude Code", label: "Working", detail: "1 active"),
         StreamDeckTile(glyph: .done, heading: "Codex", label: "Done"),
@@ -47,10 +48,11 @@ final class RendererTests: XCTestCase {
         return [pixel[0], pixel[1], pixel[2]]
     }
 
-    func testOnlyAskFillsTheKey() throws {
+    func testOnlyAskAndErrorFillTheKey() throws {
+        let fills: [StreamDeckTile.Glyph: [UInt8]] = [.ask: [0xFF, 0x9F, 0x0A], .error: [0xFF, 0x45, 0x3A]]
         for tile in tiles {
             let pixel = try XCTUnwrap(corner(of: try XCTUnwrap(TileRenderer.keyPNG(tile))), tile.label)
-            XCTAssertEqual(pixel, tile.glyph == .ask ? [0xFF, 0x9F, 0x0A] : [0, 0, 0], tile.label)
+            XCTAssertEqual(pixel, fills[tile.glyph] ?? [0, 0, 0], tile.label)
         }
     }
 

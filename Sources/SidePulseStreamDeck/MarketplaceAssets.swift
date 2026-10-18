@@ -44,6 +44,9 @@ public enum MarketplaceAssets {
         case .off:
             return StreamDeckTile(glyph: .off, heading: heading, label: StreamDeckTilePresentation.offLabel,
                                   detail: StreamDeckTilePresentation.offDetail)
+        case .error:
+            return StreamDeckTile(glyph: .error, heading: heading, label: StreamDeckTilePresentation.errorLabel,
+                                  detail: active > 0 ? "\(active) active" : nil)
         case .idle, .working, .done, .ask:
             let state: DisplayState = glyph == .ask ? .ask : glyph == .working ? .working : glyph == .done ? .done : .idle
             return StreamDeckTile(glyph: glyph, heading: heading, label: state.label,
@@ -124,13 +127,14 @@ public enum MarketplaceAssets {
         drawBackground(in: context)
         heading("Every state at a glance", subtitle: "The key shows the agent that most needs you", in: context)
         let items: [(StreamDeckTile, String)] = [
-            (tile(.ask, active: 1), "An agent is waiting for you"),
+            (tile(.error, active: 1), "A tool or turn failed"),
+            (tile(.ask, active: 1), "An agent waits for you"),
             (tile(.working, active: 2), "Agents are working"),
             (tile(.done), "A task just finished"),
             (tile(.idle), "Nothing is running"),
             (tile(.off), "SidePulse isn't running"),
         ]
-        let size: CGFloat = 250, gap: CGFloat = 70, bottom: CGFloat = 300
+        let size: CGFloat = 230, gap: CGFloat = 60, bottom: CGFloat = 310
         let positions = row(items.map(\.0), size: size, gap: gap, bottom: bottom, in: context)
         for (x, item) in zip(positions, items) {
             TileRenderer.drawText(item.1, size: 30, bold: false, color: TileRenderer.secondaryText.cg(),

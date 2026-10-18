@@ -27,15 +27,16 @@ public enum TileRenderer {
     static let white = Color(hex: 0xFFFFFF)
     static let secondaryText = Color(hex: 0xA1A1A6)
     static let pulse = Color(hex: 0x22D3EE)
-    /// Glyph and text on a filled key; white on orange is too faint to read at key size.
+    /// Glyph and text on a filled key; white on orange or red is too faint to read at key size.
     static let ink = Color(hex: 0x1C1C1E)
 
-    /// Only Ask (which includes errors) fills the key, so a filled key always means an agent needs you.
-    static func isFilled(_ glyph: StreamDeckTile.Glyph) -> Bool { glyph == .ask }
+    /// Only Ask and Error fill the key, so a filled key always means an agent needs you.
+    static func isFilled(_ glyph: StreamDeckTile.Glyph) -> Bool { glyph == .ask || glyph == .error }
 
     static func color(for glyph: StreamDeckTile.Glyph) -> Color {
         switch glyph {
         case .ask: return Color(hex: 0xFF9F0A)
+        case .error: return Color(hex: 0xFF453A)
         case .working: return Color(hex: 0x0A84FF)
         case .done: return Color(hex: 0x30D158)
         case .idle: return Color(hex: 0x8E8E93)
@@ -94,13 +95,14 @@ public enum TileRenderer {
         var fill: CGFloat = 1
     }
 
-    /// Working turns clockwise, a half turn per cycle because its two arrows look the same after one; Ask pulses.
+    /// Working turns clockwise, a half turn per cycle because its two arrows look the same after one; Ask and
+    /// Error pulse.
     static func motion(for glyph: StreamDeckTile.Glyph, frame: Int) -> Motion {
         let phase = CGFloat(frame) / CGFloat(frameCount)
         switch glyph {
         case .working:
             return Motion(rotation: -phase * .pi)
-        case .ask:
+        case .ask, .error:
             let depth = (1 - cos(phase * 2 * .pi)) / 2
             return Motion(scale: 1 - 0.1 * depth, fill: 1 - 0.35 * depth)
         case .idle, .done, .off:
@@ -126,9 +128,9 @@ public enum TileRenderer {
             context.addLine(to: CGPoint(x: -0.12 * radius, y: -0.30 * radius))
             context.addLine(to: CGPoint(x: 0.44 * radius, y: 0.32 * radius))
             context.strokePath()
-        case .ask:
+        case .ask, .error:
             context.strokeEllipse(in: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2))
-            drawCenteredGlyphText("?", size: radius * 1.25, color: color, in: context)
+            drawCenteredGlyphText(glyph == .ask ? "?" : "!", size: radius * 1.25, color: color, in: context)
         case .working:
             drawCircularArrows(radius: radius, line: line, in: context)
         case .off:

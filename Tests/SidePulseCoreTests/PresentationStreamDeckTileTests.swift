@@ -28,6 +28,17 @@ final class PresentationStreamDeckTileTests: XCTestCase {
         XCTAssertTrue(tile.animates)
     }
 
+    func testErrorOutranksAskAndIsShownApart() {
+        let tile = StreamDeckTilePresentation.tile(
+            snapshot: snapshot([status("claude", "a", .waitingForInput), status("codex", "b", .blockedError)]),
+            provider: nil, config: config)
+        XCTAssertEqual(tile, StreamDeckTile(glyph: .error, label: "Error", detail: "2 active"))
+        XCTAssertTrue(tile.animates)
+
+        let shared = snapshot([status("claude", "a", .waitingForInput), status("codex", "b", .blockedError)])
+        XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: .claude, config: config).glyph, .ask)
+    }
+
     func testEmptySnapshotIsIdleWithoutDetail() {
         let tile = StreamDeckTilePresentation.tile(snapshot: .empty(now: now), provider: nil, config: config)
         XCTAssertEqual(tile, StreamDeckTile(glyph: .idle, label: "Idle"))

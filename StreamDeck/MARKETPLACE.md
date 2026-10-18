@@ -24,10 +24,10 @@ Elgato's [product guidelines](https://docs.elgato.com/guidelines/products) and
 250 to 1,500 characters, in English, listing every requirement:
 
 > See at a glance whether your AI coding agents need you. SidePulse Swift adds an Agent Status key that
-> shows the state of your Claude Code, Codex and OpenCode sessions, and turns orange the moment one of them
-> waits for your answer or a permission prompt.
+> shows the state of your Claude Code, Codex and OpenCode sessions. It turns orange the moment one of them
+> waits for your answer or a permission prompt, and red when a tool call or turn fails.
 >
-> The key shows Ask when an agent is waiting for you, Working (animated) while agents work or run tools,
+> The key shows Error or Ask when an agent needs you, Working (animated) while agents work or run tools,
 > Done when a task has just finished and Idle when nothing is running, plus how many agents are active.
 > Put one key on your deck to follow every agent, or one key per agent: each key's settings let you pick
 > Claude Code, Codex or OpenCode. Press the key to open SidePulse settings.

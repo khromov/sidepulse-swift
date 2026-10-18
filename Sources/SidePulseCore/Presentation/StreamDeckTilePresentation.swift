@@ -3,7 +3,7 @@ import Foundation
 /// What a Stream Deck status key shows; the plugin renders it and the tests pin it.
 public struct StreamDeckTile: Sendable, Equatable, Hashable {
     public enum Glyph: String, Sendable, Hashable {
-        case idle, working, done, ask, off
+        case idle, working, done, ask, error, off
     }
 
     public var glyph: Glyph
@@ -16,12 +16,13 @@ public struct StreamDeckTile: Sendable, Equatable, Hashable {
         self.glyph = glyph; self.heading = heading; self.label = label; self.detail = detail
     }
 
-    public var animates: Bool { glyph == .working || glyph == .ask }
+    public var animates: Bool { glyph == .working || glyph == .ask || glyph == .error }
 }
 
 public enum StreamDeckTilePresentation {
     public static let offLabel = "Off"
     public static let offDetail = "Press to start"
+    public static let errorLabel = "Error"
 
     /// nil `provider` follows every agent, like the menu-bar icon.
     public static func tile(snapshot: MonitorSnapshot?, provider: HookProvider?, config: MonitorConfig) -> StreamDeckTile {
@@ -30,9 +31,13 @@ public enum StreamDeckTilePresentation {
             return StreamDeckTile(glyph: .off, heading: heading, label: offLabel, detail: offDetail)
         }
         let aggregate = provider.map { aggregate(of: snapshot, provider: $0, config: config) } ?? snapshot.aggregate
+        let detail = aggregate.activeCount > 0 ? "\(aggregate.activeCount) active" : nil
+        // Unlike the menu-bar icon, a key tells a failure apart from a question.
+        if aggregate.mode == .blockedError {
+            return StreamDeckTile(glyph: .error, heading: heading, label: errorLabel, detail: detail)
+        }
         let state = aggregate.mode.displayState
-        return StreamDeckTile(glyph: glyph(for: state), heading: heading, label: state.label,
-                              detail: aggregate.activeCount > 0 ? "\(aggregate.activeCount) active" : nil)
+        return StreamDeckTile(glyph: glyph(for: state), heading: heading, label: state.label, detail: detail)
     }
 
     /// The snapshot moves a provider's finished rows to stale while another provider is active, so the
