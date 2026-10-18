@@ -40,6 +40,8 @@ In scope:
 - The `~/.local/bin/sidepulse` link, which the app keeps pointed at its own CLI, and a check that the user's shell finds it.
 - Updates of release builds with Sparkle 2, from a feed published with each GitHub release.
 - CLI: `write`, `status` (with `--watch`), `leds`, `run`, `install`, `uninstall`, `doctor`, `setup`, `app`, `settings`, `hook-log`, `version`, `help`.
+- A Stream Deck plugin (macOS only, Elgato Marketplace) with one Agent Status key action that shows the
+  aggregate or one provider's state and opens Settings when pressed (see [Stream Deck plugin](#stream-deck-plugin)).
 
 Out of scope (dropped on purpose):
 - iPhone link/push
@@ -78,6 +80,8 @@ SidePulse.app (menu bar)  = SidePulseRuntime + AppKit UI
 sidepulse status     ─▶ asks the app over the socket ({"command":"status"}),
                         or falls back to scanning logs/*.jsonl when the app isn't running
 sidepulse leds/run   ─▶ runs SidePulseRuntime headless in the foreground
+sidepulse-streamdeck ─▶ started by Stream Deck; polls {"command":"status"} once a second while a key is
+                        visible and sends key images over Stream Deck's WebSocket
 ```
 
 OpenCode has no hook settings. Its SidePulse plugin (`plugins/sidepulse.js` in
@@ -285,6 +289,54 @@ menu and Settings show no update controls.
   the bundle, so they stay valid. The removable-volume grant is tied to the
   Developer ID designated requirement, so it survives too.
 
+## Stream Deck plugin
+
+The plugin is a native Swift executable, `sidepulse-streamdeck`, a one-line
+wrapper around `StreamDeckPluginMain.main` in the `SidePulseStreamDeck` library
+(so tests drive it directly). It depends on `SidePulseCore` only and uses
+Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
+- **Bundle.** `StreamDeck/io.sidepulse.swift.streamdeck.sdPlugin/` holds the
+  checked-in part: `manifest.json` and the property inspector
+  `ui/status.html` (plain HTML and JS, no library). `scripts/build-streamdeck.sh`
+  copies it to `build/`, adds `bin/sidepulse-streamdeck` and generates the
+  manifest's PNGs with `--write-assets` from the same renderer as the live keys.
+  `--write-marketplace` draws the listing images the same way.
+- **Protocol.** Stream Deck starts the binary with `-port -pluginUUID
+  -registerEvent -info`. `StreamDeckSocket` (`URLSessionWebSocketTask` to
+  `ws://127.0.0.1:PORT`, no proxy) registers, delivers events on the main queue
+  and exits the process when Stream Deck closes the socket. `StatusPlugin`
+  handles `willAppear`, `willDisappear`, `didReceiveSettings`, `keyDown` and
+  `systemDidWakeUp`, and sends `setImage` (a PNG data URL, target 0),
+  `showAlert`, `openUrl` and `logMessage`.
+- **Status.** While a key is visible, `StatusPlugin` asks the runtime for
+  `status` once a second on a background queue (one request at a time) and
+  shows Off when nothing answers. `StreamDeckTilePresentation`
+  (`SidePulseCore/Presentation`) turns the snapshot into a tile. A
+  single-provider key rebuilds that provider's aggregate with `SnapshotBuilder`
+  from its rows in `statuses` and `staleStatuses` (and the idle timeout from
+  `settings.json`), because the snapshot demotes one provider's finished rows
+  while another is active.
+- **Images.** `TileRenderer` draws on a 144-point canvas (Stream Deck's @2x
+  key). Its glyphs are Core Graphics paths, not SF Symbols, whose license
+  excludes artwork such as the Marketplace listing's. Working and Ask animate
+  at two frames a second, so a few keys stay under Elgato's guideline of 10
+  updates a second. Rendered images are cached per tile and frame, and a key
+  is sent an image only when it differs from the last one it got; `willAppear`
+  forgets that, because Stream Deck shows the manifest image again after a page
+  switch.
+- **Key press.** `SidePulseOpener` sends `open-settings`; if nothing answers
+  and no runtime runs, it starts the app with `open -g -b io.sidepulse.swift`
+  and retries for 5 s, like `sidepulse settings`. It runs off the main queue.
+- **Marketplace constraints.** The manifest declares `SDKVersion` 3 and
+  Stream Deck 6.9, the minimums for new plugins and updates. Elgato encrypts the
+  manifest (DRM) and treats the installed files as immutable, so the plugin
+  never reads its own folder or writes into it. The action UUID is
+  `StatusPlugin.actionUUID`, prefixed with the plugin UUID; neither may change
+  after publishing. `streamdeck pack` stores the binary without its executable
+  bit, and Stream Deck sets it again on install.
+- **Version.** The plugin's `Version` lives only in its manifest and is
+  independent of `SidePulseConstants.version`.
+
 ## Module map (`Sources/`)
 
 | Area | Files | Notes |
@@ -300,6 +352,7 @@ menu and Settings show no update controls.
 | Presentation | `SidePulseCore/Presentation/*` | UI-agnostic menu/session-row/settings view models (unit-tested, including `CLILinkPresentation`), `HookCLIPath`. The UI's hook state is `ProviderDoctorInfo` (`HookState` is a typealias) |
 | CLI | `SidePulseCLI/*`, `sidepulse/main.swift` | argument parsing and commands; `SidePulseCLI.main(args) -> Int32`. `Support/FirmwareUpdate.swift` (release lookup, package and checksum checks), `ZipArchive` (stored/deflate reader whose inflate never exceeds the declared size), `HTTPDownload` (capped GET, injected as `CLIEnvironment.download`) |
 | App | `SidePulseApp/*` | NSStatusItem menu, SwiftUI settings, `SDEjectGuard` (DiskArbitration) and `AppUpdater`, the only file that imports Sparkle |
+| Stream Deck | `SidePulseStreamDeck/*`, `sidepulse-streamdeck/main.swift` | `StreamDeckArguments`/`StreamDeckEvent`/`StreamDeckCommand`, `StreamDeckSocket`, `StatusPlugin`, `SidePulseOpener`, `TileRenderer`, `PluginAssets`, `MarketplaceAssets`; the tile model is `StreamDeckTilePresentation` in Presentation |
 
 `SidePulseCore` must not import AppKit or SwiftUI, so the hook process starts
 fast.
@@ -308,7 +361,8 @@ fast.
 
 - Swift 5 language mode, macOS 26+. Sparkle is the only third-party dependency,
   and only `SidePulseApp` links it; the CLI and `SidePulseCore` have none.
-- Tests use XCTest (`swift test`).
+- Tests use XCTest (`swift test`), in `SidePulseCoreTests`, `SidePulseCLITests`
+  and `SidePulseStreamDeckTests`.
 - Tests never modify the real `~/.claude`, `~/.codex`, `~/.config/opencode`,
   `~/Library/LaunchAgents` or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read
   copies of the real agent configs). Use a temporary directory with

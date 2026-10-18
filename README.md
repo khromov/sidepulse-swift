@@ -19,6 +19,7 @@ Please uninstall the official version using `sidepulse agent-monitor uninstall a
 - 5.6MB app size (1.8MB zipped download), including the updater
 - Updates itself from GitHub releases (see [Updates](#updates))
 - Under 100MB in memory usage vs >1GB for the official implementation.
+- A Stream Deck plugin that shows agent status on a key (see [Stream Deck plugin](#stream-deck-plugin))
 
 <p>
   <img src=".github/dropdown.png" alt="Menu-bar dropdown listing agent sessions, devices and Keep Awake options" width="270">
@@ -639,6 +640,55 @@ macOS 26 or later, so an older Mac is never offered an update it cannot run.
 Sparkle logs to Console.app. SidePulse writes `app: installing update X.Y.Z`
 and failed checks (`app: update failed: …`) to `app.log`.
 
+## Stream Deck plugin
+
+The **SidePulse Swift** Stream Deck plugin (`io.sidepulse.swift.streamdeck`)
+adds one action, **Agent Status**. A key with it shows the same state as the
+menu-bar icon:
+
+| Key       | When                                                                   |
+| --------- | ---------------------------------------------------------------------- |
+| `Ask`     | An agent is waiting for you (a permission prompt, a question, an error) |
+| `Working` | An agent is working or running a tool                                  |
+| `Done`    | The last agent finished, within the last 20 minutes                    |
+| `Idle`    | Nothing to report                                                      |
+| `Off`     | No SidePulse runtime answers on the event socket                       |
+
+Below the state it shows `N active` when agents are active. Working turns and
+Ask pulses, two frames a second. The key's settings (the property inspector)
+have:
+
+- **Agents**: All agents (default), or only Claude Code, Codex or OpenCode. A
+  key for one agent names it above the icon and shows that agent's own state,
+  so its Done stays visible while another agent works.
+- **Animation**: Animate Working and Ask (on by default).
+
+Pressing the key opens SidePulse Settings, like `sidepulse settings`. When the
+app is not running it starts it (`open -b io.sidepulse.swift`) and waits up to
+5 s for it to answer. With a headless `sidepulse run` or `sidepulse leds` the
+key shows Stream Deck's alert, since that runtime has no settings window.
+Without SidePulse installed the key opens the
+[releases page](https://github.com/khromov/sidepulse-swift/releases/latest).
+
+Requirements: macOS 26 or later, Stream Deck 6.9 or later, and SidePulse
+running. Any Stream Deck with keys works. The plugin has no dials or touch
+strip layout yet.
+
+The plugin is a native Swift program (`sidepulse-streamdeck`, universal arm64
+and x86_64). While at least one of its keys is visible, it asks the runtime for
+`status` over `events.sock` once a second, the same request as
+`sidepulse status`, and redraws a key only when its image changes. It reads
+`settings.json` for the idle timeout of single-agent keys, writes no files and
+connects only to Stream Deck and the SidePulse socket. Its messages, such as a failed key press, go to
+`~/Library/Logs/ElgatoStreamDeck/io.sidepulse.swift.streamdeck0.log`.
+
+Install it from the Elgato Marketplace, or build it from source and link it
+into Stream Deck (see [Development](#development)):
+
+```sh
+scripts/build-streamdeck.sh --link
+```
+
 ## Files & paths
 
 | Path                                                                       | Contents                                                                                                                                                                                                                                                                                                                                                                     |
@@ -655,6 +705,8 @@ and failed checks (`app: update failed: …`) to `app.log`.
 | `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`, kept pointed at the running app at each launch (and made by `scripts/install.sh`). This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                    |
 | `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
 | `~/.config/opencode/plugins/sidepulse.js`                                  | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted       |
+| `~/Library/Application Support/com.elgato.StreamDeck/Plugins/io.sidepulse.swift.streamdeck.sdPlugin` | The Stream Deck plugin, installed by Stream Deck, or a link to `build/io.sidepulse.swift.streamdeck.sdPlugin` made by `scripts/build-streamdeck.sh --link` |
+| `~/Library/Logs/ElgatoStreamDeck/io.sidepulse.swift.streamdeck0.log`      | The Stream Deck plugin's messages, written by Stream Deck |
 | `/Volumes/<device>/LEDS.LED`, `STATUS.TXT`, `FIRMWARE.BIN`                 | Device files: the LED program; the status the device generates on every read (read for the firmware version, and every minute on 8-LED devices to keep the SD reader awake); the firmware image, written only by `sidepulse firmware upgrade` |
 
 Environment overrides:
@@ -670,8 +722,8 @@ Environment overrides:
 | `CLAUDE_CONFIG_DIR`                      | Claude Code config directory, where the hooks go (`settings.json`)                                                                                                              |
 | `CODEX_HOME`, `CODEX_CLI_PATH`           | Codex config directory, and the `codex` binary used for hook trust                                                                                                              |
 | `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` | OpenCode's global config directory, where the plugin goes (the same lookup OpenCode uses)                                                                                       |
-| `SIDEPULSE_CODESIGN_IDENTITY`            | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh` and `scripts/release.sh` (default: ad hoc; for `release.sh`, the only Developer ID Application identity) |
-| `SIDEPULSE_NOTARY_PROFILE`               | notarytool keychain profile for `scripts/release.sh` (default: `notary`)                                                                                                        |
+| `SIDEPULSE_CODESIGN_IDENTITY`            | Code-signing identity for `scripts/build-app.sh`, `scripts/install.sh`, `scripts/release.sh`, `scripts/build-streamdeck.sh` and `scripts/release-streamdeck.sh` (default: ad hoc; for the release scripts, the only Developer ID Application identity) |
+| `SIDEPULSE_NOTARY_PROFILE`               | notarytool keychain profile for `scripts/release.sh` and `scripts/release-streamdeck.sh` (default: `notary`)                                                                    |
 
 The app started by the LaunchAgent does not see variables exported in your
 shell, except `PATH`, which is copied into the plist from the process that
@@ -909,7 +961,27 @@ SIDEPULSE_CODESIGN_IDENTITY="…" scripts/build-app.sh   # sign with a certifica
 scripts/release.sh                            # notarized dist/SidePulse-VERSION.zip (see Releasing)
 scripts/appcast.sh dist/SidePulse-VERSION.zip NOTES.md   # signed update feed dist/appcast.xml
 SIDEPULSE_HOME=/tmp/sp swift run sidepulse status --offline
+scripts/build-streamdeck.sh [--debug] [--link] # build/io.sidepulse.swift.streamdeck.sdPlugin, linked into Stream Deck
+scripts/release-streamdeck.sh                 # notarized dist/io.sidepulse.swift.streamdeck.streamDeckPlugin
 ```
+
+With only the Command Line Tools selected (`xcode-select -p` prints
+`/Library/Developer/CommandLineTools`), `swift test` cannot find XCTest. Run it
+with Xcode's toolchain: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`.
+
+`scripts/build-streamdeck.sh --link` builds the plugin and links it into Stream
+Deck's plugin folder. Stream Deck lists a newly linked plugin only after it
+restarts itself, so quit and reopen Stream Deck the first time. Later builds
+replace the linked folder, but the running plugin keeps its old binary until it
+restarts: with Stream Deck's developer mode on
+(`defaults write com.elgato.StreamDeck developer_mode -bool YES`, then reopen
+Stream Deck), the script restarts just the plugin; otherwise reopen Stream Deck.
+The link refuses to replace a copy installed from the Marketplace; uninstall
+that in Stream Deck first. The plugin's sources live in
+`Sources/SidePulseStreamDeck` (unit-tested in `SidePulseStreamDeckTests`), and
+its manifest and property inspector in `StreamDeck/io.sidepulse.swift.streamdeck.sdPlugin/`.
+The build generates the PNGs the manifest names with
+`sidepulse-streamdeck --write-assets DIR`.
 
 For the layout, the module map and the project conventions, see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). `SidePulseCore` does not import
@@ -1004,6 +1076,40 @@ in `Resources/Info.plist`. Keep a backup:
 `generate_keys -f FILE` imports it on another Mac. If the key is lost, a
 release signed with the same Developer ID certificate can switch to a new key
 (Sparkle's [key rotation](https://sparkle-project.org/documentation/#rotating-signing-keys)).
+
+### Releasing the Stream Deck plugin
+
+```sh
+scripts/release-streamdeck.sh                   # dist/io.sidepulse.swift.streamdeck.streamDeckPlugin
+scripts/release-streamdeck.sh --sign "Developer ID Application: …" --notary-profile NAME [--no-notarize]
+```
+
+The plugin has its own version, `Version` in
+`StreamDeck/io.sidepulse.swift.streamdeck.sdPlugin/manifest.json`
+(`MAJOR.MINOR.PATCH.BUILD`), so an app release does not need a Marketplace
+update. Bump it for every upload. The script:
+
+1. **Checks** the identity and the notary profile the way `scripts/release.sh`
+   does.
+2. **Builds** `build/io.sidepulse.swift.streamdeck.sdPlugin` with
+   `scripts/build-streamdeck.sh --distribution`: a universal binary (Marketplace
+   users may have Intel Macs) signed with the Developer ID, the hardened runtime
+   and a secure timestamp.
+3. **Notarizes** the binary (skip with `--no-notarize`). A bare executable cannot
+   be stapled, so Gatekeeper looks the ticket up online. Elgato does not ask for
+   signing or notarization; it only keeps Gatekeeper away if the file ever
+   arrives quarantined.
+4. **Validates and packs** it with Elgato's CLI (`streamdeck`, else
+   `npx @elgato/cli@1.10.2`, which needs Node.js 20 or later) into
+   `dist/io.sidepulse.swift.streamdeck.streamDeckPlugin`.
+5. **Draws the listing images** into `dist/streamdeck-marketplace/`: the
+   288 × 288 icon, the 1920 × 960 thumbnail and three gallery images.
+
+It uploads nothing. Submit the `.streamDeckPlugin` and the images in the
+[Maker Console](https://maker.elgato.com) with the text in
+[`StreamDeck/MARKETPLACE.md`](StreamDeck/MARKETPLACE.md). The Marketplace adds
+DRM to the upload, so test the processed build it offers for download before
+publishing.
 
 ## Uninstall
 
