@@ -654,8 +654,9 @@ menu-bar icon:
 | `Idle`    | Nothing to report                                                      |
 | `Off`     | No SidePulse runtime answers on the event socket                       |
 
-Below the state it shows `N active` when agents are active. Working turns and
-Ask pulses, two frames a second. The key's settings (the property inspector)
+Below the state it shows `N active` when agents are active. Ask fills the whole
+key with orange, so a key that needs you stands out; the other states keep a
+dark key with a colored icon. Working turns and Ask pulses, two frames a second. The key's settings (the property inspector)
 have:
 
 - **Agents**: All agents (default), or only Claude Code, Codex or OpenCode. A

@@ -318,7 +318,9 @@ Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
   while another is active.
 - **Images.** `TileRenderer` draws on a 144-point canvas (Stream Deck's @2x
   key). Its glyphs are Core Graphics paths, not SF Symbols, whose license
-  excludes artwork such as the Marketplace listing's. Working and Ask animate
+  excludes artwork such as the Marketplace listing's. Only Ask (which includes
+  errors) fills the key, orange with near-black ink, so a filled key always
+  means an agent needs the user. Working and Ask animate
   at two frames a second, so a few keys stay under Elgato's guideline of 10
   updates a second. Rendered images are cached per tile and frame, and a key
   is sent an image only when it differs from the last one it got; `willAppear`

@@ -27,6 +27,11 @@ public enum TileRenderer {
     static let white = Color(hex: 0xFFFFFF)
     static let secondaryText = Color(hex: 0xA1A1A6)
     static let pulse = Color(hex: 0x22D3EE)
+    /// Glyph and text on a filled key; white on orange is too faint to read at key size.
+    static let ink = Color(hex: 0x1C1C1E)
+
+    /// Only Ask (which includes errors) fills the key, so a filled key always means an agent needs you.
+    static func isFilled(_ glyph: StreamDeckTile.Glyph) -> Bool { glyph == .ask }
 
     static func color(for glyph: StreamDeckTile.Glyph) -> Color {
         switch glyph {
@@ -55,33 +60,38 @@ public enum TileRenderer {
         // Top-down layout positions, converted because Core Graphics counts y from the bottom.
         let center = CGPoint(x: canvas / 2, y: canvas - (hasHeading ? 62 : 54))
         let motion = motion(for: tile.glyph, frame: frame)
+        let filled = isFilled(tile.glyph)
 
-        if tile.glyph != .idle, tile.glyph != .off {
-            drawGlow(at: center, radius: radius * 2.1, color: color, alpha: 0.30 * motion.glow, in: context)
+        if filled {
+            context.setFillColor(color.cg(alpha: motion.fill))
+            context.fill(CGRect(x: 0, y: 0, width: canvas, height: canvas))
+        } else if tile.glyph != .idle, tile.glyph != .off {
+            drawGlow(at: center, radius: radius * 2.1, color: color, alpha: 0.30, in: context)
         }
         context.saveGState()
         context.translateBy(x: center.x, y: center.y)
         context.rotate(by: motion.rotation)
         context.scaleBy(x: motion.scale, y: motion.scale)
-        context.setAlpha(motion.opacity)
-        drawGlyph(tile.glyph, radius: radius, color: color.cg(), in: context)
+        drawGlyph(tile.glyph, radius: radius, color: (filled ? ink : color).cg(), in: context)
         context.restoreGState()
 
+        let primary = filled ? ink.cg() : white.cg()
+        let secondary = filled ? ink.cg(alpha: 0.75) : secondaryText.cg()
         if let heading = tile.heading {
-            drawText(heading, size: 17, bold: false, color: secondaryText, baselineFromTop: 24, in: context)
+            drawText(heading, size: 17, bold: false, color: secondary, baselineFromTop: 24, in: context)
         }
-        drawText(tile.label, size: 26, bold: true, color: white, baselineFromTop: tile.detail == nil ? 118 : 110,
+        drawText(tile.label, size: 26, bold: true, color: primary, baselineFromTop: tile.detail == nil ? 118 : 110,
                  in: context)
         if let detail = tile.detail {
-            drawText(detail, size: 19, bold: false, color: secondaryText, baselineFromTop: 134, in: context)
+            drawText(detail, size: 19, bold: false, color: secondary, baselineFromTop: 134, in: context)
         }
     }
 
     struct Motion {
         var rotation: CGFloat = 0
         var scale: CGFloat = 1
-        var opacity: CGFloat = 1
-        var glow: CGFloat = 1
+        /// Opacity of a filled key's color over the black key.
+        var fill: CGFloat = 1
     }
 
     /// Working turns clockwise, a half turn per cycle because its two arrows look the same after one; Ask pulses.
@@ -92,7 +102,7 @@ public enum TileRenderer {
             return Motion(rotation: -phase * .pi)
         case .ask:
             let depth = (1 - cos(phase * 2 * .pi)) / 2
-            return Motion(scale: 1 - 0.14 * depth, opacity: 1 - 0.5 * depth, glow: 1 - 0.7 * depth)
+            return Motion(scale: 1 - 0.1 * depth, fill: 1 - 0.35 * depth)
         case .idle, .done, .off:
             return Motion()
         }
@@ -174,9 +184,9 @@ public enum TileRenderer {
         return CTLineCreateWithAttributedString(CFAttributedStringCreate(nil, text as CFString, attributes))
     }
 
-    static func drawText(_ text: String, size: CGFloat, bold: Bool, color: Color, baselineFromTop: CGFloat,
+    static func drawText(_ text: String, size: CGFloat, bold: Bool, color: CGColor, baselineFromTop: CGFloat,
                          in context: CGContext) {
-        drawText(text, size: size, bold: bold, color: color.cg(), centerX: canvas / 2,
+        drawText(text, size: size, bold: bold, color: color, centerX: canvas / 2,
                  baseline: canvas - baselineFromTop, maxWidth: canvas - 12, in: context)
     }
 

@@ -34,6 +34,26 @@ final class RendererTests: XCTestCase {
         }
     }
 
+    /// The top-left pixel as 8-bit RGB.
+    private func corner(of png: Data) -> [UInt8]? {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 1 - image.height, width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        let pixel = data.bindMemory(to: UInt8.self, capacity: 4)
+        return [pixel[0], pixel[1], pixel[2]]
+    }
+
+    func testOnlyAskFillsTheKey() throws {
+        for tile in tiles {
+            let pixel = try XCTUnwrap(corner(of: try XCTUnwrap(TileRenderer.keyPNG(tile))), tile.label)
+            XCTAssertEqual(pixel, tile.glyph == .ask ? [0xFF, 0x9F, 0x0A] : [0, 0, 0], tile.label)
+        }
+    }
+
     func testAnimationStaysUnderElgatosUpdateGuideline() {
         XCTAssertLessThanOrEqual(1 / TileRenderer.frameInterval, 2)
     }
