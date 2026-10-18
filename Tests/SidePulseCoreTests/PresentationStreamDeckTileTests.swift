@@ -28,15 +28,14 @@ final class PresentationStreamDeckTileTests: XCTestCase {
         XCTAssertTrue(tile.animates)
     }
 
-    func testErrorOutranksAskAndIsShownApart() {
-        let tile = StreamDeckTilePresentation.tile(
-            snapshot: snapshot([status("claude", "a", .waitingForInput), status("codex", "b", .blockedError)]),
-            provider: nil, config: config)
-        XCTAssertEqual(tile, StreamDeckTile(glyph: .error, label: "Error", detail: "2 active"))
-        XCTAssertTrue(tile.animates)
-
-        let shared = snapshot([status("claude", "a", .waitingForInput), status("codex", "b", .blockedError)])
-        XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: .claude, config: config).glyph, .ask)
+    /// The key and the menu-bar icon must agree, and the icon shows Blocked / Error as Ask.
+    func testBlockedErrorShowsAsAskLikeTheMenuBar() {
+        let shared = snapshot([status("claude", "a", .working), status("codex", "b", .blockedError)])
+        XCTAssertEqual(StatusBarPresentation.header(for: shared), "SidePulse \u{2014} Ask (2 active)")
+        XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: nil, config: config),
+                       StreamDeckTile(glyph: .ask, label: "Ask", detail: "2 active"))
+        XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: .codex, config: config),
+                       StreamDeckTile(glyph: .ask, heading: "Codex", label: "Ask", detail: "1 active"))
     }
 
     func testEmptySnapshotIsIdleWithoutDetail() {

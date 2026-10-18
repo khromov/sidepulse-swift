@@ -324,11 +324,10 @@ Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
   while another is active.
 - **Images.** `TileRenderer` draws on a 144-point canvas (Stream Deck's @2x
   key). Its glyphs are Core Graphics paths, not SF Symbols, whose license
-  excludes artwork such as the Marketplace listing's. Only Error (red) and
-  Ask (orange) fill the key, with near-black ink; unlike the menu-bar icon, the
-  key shows Blocked / Error apart from Ask. A failed tool call mid-turn is
-  Blocked / Error until the agent's next event, so Error can flash while the
-  agent carries on. Working, Ask and Error animate
+  excludes artwork such as the Marketplace listing's. Only Ask fills the key
+  (orange, with near-black ink). The key's states match the menu-bar icon's, so
+  Blocked / Error shows as Ask too, including a failed tool call mid-turn until
+  the agent's next event. Working, Ask and Error animate
   at two frames a second, so a few keys stay under Elgato's guideline of 10
   updates a second. Rendered images are cached per tile and frame, and a key
   is sent an image only when it differs from the last one it got; `willAppear`
