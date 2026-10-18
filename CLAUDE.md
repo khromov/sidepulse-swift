@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-SidePulse (Swift) is a `sidepulse` CLI plus a macOS menu-bar app. Together they show Claude Code, Codex and OpenCode agent status on SidePulse LED devices: the Pro has 8 LEDs and the Dot has 2. Both devices are FAT volumes, and the LEDs are driven by writing a small DSL to `LEDS.LED`. The project is a lightweight port of the Python project at `../sidepulse`. Where behavior is unclear, the Python sources in `../sidepulse/src/sidepulse/` are the ground truth.
+SidePulse (Swift) is a `sidepulse` CLI plus a macOS menu-bar app, and a Stream Deck plugin. Together they show Claude Code, Codex and OpenCode agent status on SidePulse LED devices: the Pro has 8 LEDs and the Dot has 2. Both devices are FAT volumes, and the LEDs are driven by writing a small DSL to `LEDS.LED`. The project is a lightweight port of the Python project at `../sidepulse`. Where behavior is unclear, the Python sources in `../sidepulse/src/sidepulse/` are the ground truth.
 
 - `README.md` documents user-visible behavior in detail: CLI flags, exact messages, status rules and paths.
 - `docs/ARCHITECTURE.md` has the process diagram, the module map, paths and conventions.
@@ -13,7 +13,7 @@ Read the relevant section before you change behavior, and keep both files in syn
 
 ```sh
 swift build                                   # all targets (debug)
-swift test                                    # both XCTest suites
+swift test                                    # all XCTest suites (Command Line Tools only? prefix DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer)
 swift test --filter StatusEngineTests         # one test class
 swift test --filter StatusEngineTests/testAggregatesHighestPriorityStatus   # one test
 swift run sidepulse --help
@@ -22,6 +22,8 @@ scripts/build-app.sh [--debug]                # build/SidePulse.app (ad-hoc sign
 scripts/install.sh [--no-setup] [--sign ID]   # build, install to ~/Applications, link ~/.local/bin/sidepulse, run setup
 scripts/release.sh [--sign ID] [--notary-profile NAME]   # Developer ID + notarize + staple → dist/SidePulse-VERSION.zip
 scripts/appcast.sh dist/SidePulse-VERSION.zip [NOTES.md]  # EdDSA-signed Sparkle feed → dist/appcast.xml
+scripts/build-streamdeck.sh [--debug] [--link]            # build/io.sidepulse.swift.streamdeck.sdPlugin, optionally linked into Stream Deck
+scripts/release-streamdeck.sh [--sign ID] [--notary-profile NAME] [--no-notarize]   # → dist/io.sidepulse.swift.streamdeck.streamDeckPlugin + listing images
 ```
 
 There is no linter or formatter config. The package uses swift-tools-version 6.0, Swift 5 language mode and macOS 26+. Its only third-party dependency is Sparkle, which only `SidePulseApp` links.
@@ -39,6 +41,7 @@ Targets (`Package.swift`):
 
 - **`SidePulseCore`**: Foundation, Darwin, IOKit and Synchronization only, and it **must never import AppKit or SwiftUI**. Shared state goes behind a `Mutex` rather than an `NSLock`. Every agent hook runs the CLI on every tool call, so the hook path must launch fast.
 - **`SidePulseCLI`**: a library holding all the commands, so tests can call it directly. The `sidepulse` executable is a one-line wrapper around `SidePulseCLI.main`.
+- **`SidePulseStreamDeck`** + **`sidepulse-streamdeck`**: the Stream Deck plugin, a library plus a one-line executable like the CLI. Stream Deck runs it and talks to it over a WebSocket; it polls the runtime's `status` socket command and draws keys with Core Graphics. The checked-in bundle parts (manifest, property inspector) are in `StreamDeck/io.sidepulse.swift.streamdeck.sdPlugin/`. The Stream Deck plugin section of `docs/ARCHITECTURE.md` is the contract.
 - **`SidePulseApp`**: the AppKit/SwiftUI menu-bar app. `scripts/build-app.sh` bundles it as `Contents/MacOS/SidePulse`. The CLI goes into `Contents/Helpers/sidepulse` because the default case-insensitive APFS would treat `MacOS/sidepulse` and `MacOS/SidePulse` as the same file. `Sparkle.framework` goes into `Contents/Frameworks`, and `AppUpdater.swift` is the only file that imports it.
 
 Data flow:
@@ -71,7 +74,8 @@ Key design points that span several files:
 - **Stable hook command.** Hook commands point at the stable `~/.local/bin/sidepulse` link. Codex trust hashes bind to the exact command string, so changing the command format invalidates trust.
 - **CLI link.** At launch the app points `~/.local/bin/sidepulse` at its own `Helpers/sidepulse` (`CLILink.installAtLaunch`), but only over a missing, dangling or other-`SidePulse.app` link. Anything else there is replaced only from the Settings **Install** button. Swap the link with a rename, never remove-then-create, because hooks run it at any moment.
 - **Built-in animations.** `Sources/SidePulseCore/LED/BuiltInPrograms.swift` holds the animations and profiles copied from the Python project and is now the source of truth; Swift-only ones (such as Signal) go in `ExtraPrograms.swift`.
-- **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed.
+- **Version.** The version string lives in `SidePulseConstants.version` (`Support/Paths.swift`). `build-app.sh` reads it from there with sed. The Stream Deck plugin has its own 4-part `Version` in its `manifest.json`.
+- **Stream Deck plugin.** Its UUID `io.sidepulse.swift.streamdeck` and action UUID `StatusPlugin.actionUUID` are permanent once published. The Marketplace needs `SDKVersion` 3 and Stream Deck 6.9+, and encrypts the manifest, so the plugin never reads or writes its own folder. Glyphs are drawn with Core Graphics, never SF Symbols (license). Keep animation at or under Elgato's 10 image updates a second.
 - **Updates.** Only `build-app.sh --distribution` keeps `SUFeedURL`, so builds from source never update themselves into a release. Installed apps trust only the `SUPublicEDKey` in `Resources/Info.plist` (its private half is in the release Mac's keychain) and read the feed from `releases/latest/download/appcast.xml`. Changing either strands every installed copy. The Updates section of `docs/ARCHITECTURE.md` has the details.
 - **Escapes.** Prefer `\u{…}` escapes to literal invisible characters in Swift sources.
 - **Scope.** The Out of scope list in `docs/ARCHITECTURE.md` is deliberate: Cursor/Grok/Junie, iPhone push, relay, history charts and so on. Ask before re-adding any of it.

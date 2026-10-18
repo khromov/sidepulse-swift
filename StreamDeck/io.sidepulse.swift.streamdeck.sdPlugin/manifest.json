@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "io.sidepulse.swift.streamdeck",
+  "Name": "SidePulse Swift",
+  "Version": "1.0.0.0",
+  "Author": "Stanislav Khromov",
+  "Description": "Shows whether your Claude Code, Codex and OpenCode agents are working, finished or waiting for you, on a Stream Deck key. Needs the free SidePulse Swift app for macOS.",
+  "URL": "https://github.com/khromov/sidepulse-swift",
+  "SupportURL": "https://github.com/khromov/sidepulse-swift/issues",
+  "Icon": "imgs/plugin/icon",
+  "Category": "SidePulse Swift",
+  "CategoryIcon": "imgs/plugin/category",
+  "CodePath": "bin/sidepulse-streamdeck",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "6.9"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "26.0"
+    }
+  ],
+  "Actions": [
+    {
+      "UUID": "io.sidepulse.swift.streamdeck.status",
+      "Name": "Agent Status",
+      "Icon": "imgs/actions/status/icon",
+      "Tooltip": "Shows whether your coding agents are working, finished or waiting for you. Press it to open SidePulse.",
+      "Controllers": ["Keypad"],
+      "PropertyInspectorPath": "ui/status.html",
+      "SupportedInMultiActions": false,
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/actions/status/key",
+          "ShowTitle": false
+        }
+      ]
+    }
+  ]
+}

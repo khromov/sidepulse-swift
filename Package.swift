@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "sidepulse", targets: ["sidepulse"]),
         .executable(name: "SidePulseApp", targets: ["SidePulseApp"]),
+        .executable(name: "sidepulse-streamdeck", targets: ["sidepulse-streamdeck"]),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.0"),
@@ -33,8 +34,12 @@ let package = Package(
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
+        // The Stream Deck plugin lives in a library so it can be unit tested; scripts/build-streamdeck.sh bundles it.
+        .target(name: "SidePulseStreamDeck", dependencies: ["SidePulseCore"]),
+        .executableTarget(name: "sidepulse-streamdeck", dependencies: ["SidePulseStreamDeck"]),
         .testTarget(name: "SidePulseCoreTests", dependencies: ["SidePulseCore"]),
         .testTarget(name: "SidePulseCLITests", dependencies: ["SidePulseCLI", "SidePulseCore"]),
+        .testTarget(name: "SidePulseStreamDeckTests", dependencies: ["SidePulseStreamDeck", "SidePulseCore"]),
     ],
     swiftLanguageModes: [.v5]
 )
