@@ -301,7 +301,8 @@ public final class StatusEngine {
     }
 
     /// Claude sends no SubagentStop for a subagent killed with its session, nor OpenCode
-    /// for one that failed or asked (they run synchronously, so the parent's turn end closes them).
+    /// for one that failed or asked (they run synchronously, so the parent's turn end closes them),
+    /// nor Antigravity for a child conversation cancelled with its parent.
     /// A Claude Stop closes only ids its `background_task_ids` dropped since the last one,
     /// because the list also holds workflow and shell task ids.
     private func completeFinishedSubagents(after event: HookEvent) {
@@ -309,6 +310,8 @@ public final class StatusEngine {
         let prefix = "\(event.provider):agent:"
         let finished: (String) -> Bool
         if event.provider == "opencode", ["Stop", "StopFailure", "Interrupt"].contains(event.eventName) {
+            finished = { _ in true }
+        } else if event.provider == "antigravity", event.eventName == "Interrupt" {
             finished = { _ in true }
         } else if event.eventName == "SessionEnd" {
             backgroundTasks[event.statusKey] = nil

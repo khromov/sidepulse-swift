@@ -444,7 +444,10 @@ How the global display state is chosen:
   list also holds workflow and shell task ids, so a subagent that was never
   listed, such as one a Workflow runs, stays open until its own `SubagentStop`
   or the idle timeout. OpenCode subagents run synchronously, so the parent's
-  `Stop`, `StopFailure` or `Interrupt` closes any that are still open.
+  `Stop`, `StopFailure` or `Interrupt` closes any that are still open. An
+  Antigravity child conversation (one with a `parentConversationId`) reports as
+  a subagent of its root conversation, and a cancelled parent turn closes any
+  that are still open.
 - **Interrupt.** `Interrupt` (Codex, OpenCode for a stopped or cancelled turn,
   and Antigravity `Stop` with `USER_CANCELED`) returns the session to Idle
   without marking it Completed.
@@ -806,7 +809,8 @@ hand, then retry`. They do the same for any other key SidePulse did not write
   preserved; install notes a disabled hook and doctor and Settings report it.
   `hook-log --provider antigravity` translates Antigravity's camelCase
   protojson payloads (`conversationId`, `hookEventName`, `toolCall`,
-  `lastUserInput`, `error`, `terminationReason`, `workspacePaths`) into
+  `lastUserInput`, `error`, `terminationReason`, `workspacePaths`,
+  `parentConversationId`, `rootConversationId`) into
   SidePulse's trimmed snake_case records and infers the surface (`Antigravity
   CLI`, `Antigravity App` or `Antigravity IDE`) from `transcriptPath` or
   `artifactDirectoryPath`. Interactive `ask_question` and blocking
@@ -814,6 +818,8 @@ hand, then retry`. They do the same for any other key SidePulse did not write
   (`PermissionRequest`), `PostToolUse` with a non-empty `error` maps to
   `PostToolUseFailure`, `Stop` with `USER_CANCELED` maps to `Interrupt`, and
   `Stop` with an error or invocation/token limit maps to `StopFailure`.
+  Antigravity CLI 1.5.4 added `hookEventName` to hook input. Earlier versions
+  send no event name, so SidePulse logs nothing for them.
 - **Identification.** SidePulse finds its own hooks, current and Python-era,
   by command markers such as `hook-log --provider`. It never goes by log
   paths, so your other hooks are never touched. The OpenCode plugin is ours
@@ -1179,7 +1185,7 @@ If you used **Add to PATH**, your shell's startup file keeps its
 `# Added by SidePulse for the sidepulse command` comment and the `export PATH`
 line below it; delete them by hand.
 
-To remove only parts of the install, use `sidepulse uninstall [claude|codex|opencode]`
+To remove only parts of the install, use `sidepulse uninstall [claude|codex|opencode|antigravity]`
 for the hooks, and `sidepulse app uninstall` for launch at login.
 
 ## License

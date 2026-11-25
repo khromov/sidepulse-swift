@@ -224,8 +224,15 @@ public enum HookRuntime {
         }
 
         record["hook_event_name"] = mappedEvent
-        record["session_id"] = scalar("conversationId") ?? scalar("session_id")
-        record["agent_id"] = scalar("agentId") ?? scalar("agent_id")
+        // A child conversation (a subagent) reports under its root conversation, like a Claude subagent.
+        let conversation = scalar("conversationId") ?? scalar("session_id")
+        if let root = scalar("rootConversationId") ?? scalar("parentConversationId"), root != conversation {
+            record["session_id"] = root
+            record["agent_id"] = conversation
+        } else {
+            record["session_id"] = conversation
+            record["agent_id"] = scalar("agent_id")
+        }
         record["cwd"] = scalar("cwd") ?? firstWorkspacePath(raw["workspacePaths"])
         record["tool_name"] = toolName
 

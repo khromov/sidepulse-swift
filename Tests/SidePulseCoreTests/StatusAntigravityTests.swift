@@ -97,6 +97,33 @@ final class StatusAntigravityTests: XCTestCase {
         XCTAssertEqual(engine.statuses["antigravity:session:c4"]?.mode, .completed)
     }
 
+    func testChildConversationReportsUnderItsRootAndClosesWithACancelledParent() throws {
+        let top = record(#"{"hookEventName":"PreInvocation","conversationId":"root-1","rootConversationId":"root-1","lastUserInput":"Main task"}"#)
+        XCTAssertEqual(top["session_id"], .string("root-1"))
+        XCTAssertNil(top["agent_id"])
+        let child = record(#"{"hookEventName":"PreInvocation","conversationId":"child-1","parentConversationId":"mid-1","rootConversationId":"root-1","lastUserInput":"Sub task"}"#,
+                           offset: 1)
+        XCTAssertEqual(child["session_id"], .string("root-1"))
+        XCTAssertEqual(child["agent_id"], .string("child-1"))
+        let parentOnly = record(#"{"hookEventName":"PreInvocation","conversationId":"child-2","parentConversationId":"root-1"}"#)
+        XCTAssertEqual(parentOnly["session_id"], .string("root-1"))
+        XCTAssertEqual(parentOnly["agent_id"], .string("child-2"))
+
+        let engine = StatusEngine()
+        engine.ingest(provider: "antigravity", line: top)
+        engine.ingest(provider: "antigravity", line: child)
+        let childRow = try XCTUnwrap(engine.statuses["antigravity:agent:child-1"])
+        XCTAssertEqual(childRow.sessionID, "root-1")
+        XCTAssertEqual(childRow.mode, .working)
+        XCTAssertNil(engine.statuses["antigravity:session:child-1"])
+        XCTAssertEqual(SessionRows.coalesce(engine.snapshot(now: t0.addingTimeInterval(2)).statuses).count, 1)
+
+        engine.ingest(provider: "antigravity",
+                      line: record(#"{"hookEventName":"Stop","conversationId":"root-1","terminationReason":"USER_CANCELED"}"#, offset: 3))
+        XCTAssertEqual(engine.statuses["antigravity:session:root-1"]?.mode, .idleReady)
+        XCTAssertEqual(engine.statuses["antigravity:agent:child-1"]?.mode, .completed)
+    }
+
     func testPostInvocationSettlesToCompletedAfterTwoMinutes() {
         let engine = StatusEngine()
         engine.ingest(provider: "antigravity", line: record(#"{"hookEventName":"PostInvocation","conversationId":"p1"}"#))
