@@ -12,7 +12,7 @@ Elgato's [product guidelines](https://docs.elgato.com/guidelines/products) and
   (and `Category`) in `manifest.json`.
 - **Maker / organization:** must equal `Author` in `manifest.json` (now "Stanislav Khromov").
 - **Category:** Developer tools (or Productivity).
-- **Tags:** claude code, codex, opencode, ai agents, coding, developer, status, notifications.
+- **Tags:** claude code, codex, opencode, antigravity, ai agents, coding, developer, status, notifications.
 - **Price:** free.
 - **Links:** website https://github.com/khromov/sidepulse-swift, support
   https://github.com/khromov/sidepulse-swift/issues.
@@ -24,23 +24,23 @@ Elgato's [product guidelines](https://docs.elgato.com/guidelines/products) and
 250 to 1,500 characters, in English, listing every requirement:
 
 > See at a glance whether your AI coding agents need you. SidePulse Swift adds an Agent Status key that
-> shows the state of your Claude Code, Codex and OpenCode sessions, and turns orange the moment one of them
+> shows the state of your Claude Code, Codex, OpenCode and Antigravity sessions, and turns orange the moment one of them
 > waits for your answer or a permission prompt, or gets stuck on an error.
 >
 > The key shows Ask when an agent needs you, Working (animated) while agents work or run tools,
 > Done when a task has just finished and Idle when nothing is running, plus how many agents are active.
 > Put one key on your deck to follow every agent, or one key per agent: each key's settings let you pick
-> Claude Code, Codex or OpenCode. Press the key to open SidePulse settings.
+> Claude Code, Codex, OpenCode or Antigravity. Press the key to open SidePulse settings.
 >
 > Requirements: a Mac with macOS 26 or later, and the free, open-source SidePulse Swift app
 > (https://github.com/khromov/sidepulse-swift), which installs the hooks that report your agents' status.
 > The plugin starts the app when you press the key, and opens its download page if it is not installed.
 > A SidePulse LED device is optional.
 >
-> SidePulse Swift is an independent open-source project. It works with Claude Code, Codex and OpenCode but
-> is not affiliated with or endorsed by Anthropic, OpenAI, the OpenCode project or the makers of the
-> SidePulse hardware. It collects no data and connects only to Stream Deck and the SidePulse app on your
-> Mac.
+> SidePulse Swift is an independent open-source project. It works with Claude Code, Codex, OpenCode and
+> Antigravity but is not affiliated with or endorsed by Anthropic, OpenAI, the OpenCode project, Google or
+> the makers of the SidePulse hardware. It collects no data and connects only to Stream Deck and the
+> SidePulse app on your Mac.
 
 ## Media
 

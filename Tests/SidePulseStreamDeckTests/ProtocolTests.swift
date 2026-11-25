@@ -61,6 +61,8 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(KeySettings(JSONObject()), KeySettings(provider: nil, animate: true))
         XCTAssertEqual(KeySettings(["provider": .string("opencode"), "animate": .bool(false)]),
                        KeySettings(provider: .opencode, animate: false))
+        XCTAssertEqual(KeySettings(["provider": .string("antigravity")]),
+                       KeySettings(provider: .antigravity, animate: true))
         XCTAssertEqual(KeySettings(["provider": .string("all")]).provider, nil)
     }
 }

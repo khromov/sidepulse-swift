@@ -314,6 +314,7 @@ final class PresentationSessionRowsTests: XCTestCase {
         XCTAssertEqual(SessionRows.menuProviderLabel("claude"), "Claude Code")
         XCTAssertEqual(SessionRows.menuProviderLabel("Codex"), "Codex")
         XCTAssertEqual(SessionRows.menuProviderLabel("opencode"), "OpenCode")
+        XCTAssertEqual(SessionRows.menuProviderLabel("antigravity"), "Antigravity")
         XCTAssertEqual(SessionRows.menuProviderLabel("cursor"), "Cursor")
         XCTAssertEqual(SessionRows.menuProviderLabel(""), "Agent")
     }

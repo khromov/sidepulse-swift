@@ -4,12 +4,14 @@ public enum HookProvider: String, CaseIterable, Sendable {
     case claude
     case codex
     case opencode
+    case antigravity
 
     public var label: String {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
         case .opencode: return "OpenCode"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -26,6 +28,8 @@ public enum HookProvider: String, CaseIterable, Sendable {
             return ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                     "PermissionRequest", "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop",
                     "StopFailure", "Interrupt", "SessionEnd"]
+        case .antigravity:
+            return ["SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "PostInvocation", "Stop"]
         }
     }
 
@@ -34,6 +38,7 @@ public enum HookProvider: String, CaseIterable, Sendable {
         case .claude: return paths.claudeSettingsFile
         case .codex: return paths.codexConfigFile
         case .opencode: return paths.openCodePluginFile
+        case .antigravity: return paths.antigravityHooksFile
         }
     }
 
@@ -42,11 +47,13 @@ public enum HookProvider: String, CaseIterable, Sendable {
         case .claude: return paths.claudeDir
         case .codex: return paths.codexDir
         case .opencode: return paths.openCodeConfigDir
+        case .antigravity: return paths.antigravityConfigDir
         }
     }
 
     /// Whether the agent looks installed; OpenCode only creates its config directory on first run.
     public func isDetected(_ paths: SidePulsePaths) -> Bool {
+        if self == .antigravity { return AntigravityHookInstaller.isDetected(paths: paths) }
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: configDir(paths).path, isDirectory: &isDir), isDir.boolValue { return true }
         return self == .opencode && OpenCodePluginInstaller.findOpenCodeBinary(paths: paths) != nil
@@ -133,12 +140,14 @@ public enum HookInstaller {
         case (.uninstall, .claude): return try ClaudeHookInstaller.uninstall(paths: paths, dryRun: dryRun)
         case (.uninstall, .codex): return try CodexHookInstaller.uninstall(paths: paths, dryRun: dryRun)
         case (.uninstall, .opencode): return try OpenCodePluginInstaller.uninstall(paths: paths, dryRun: dryRun)
+        case (.uninstall, .antigravity): return try AntigravityHookInstaller.uninstall(paths: paths, dryRun: dryRun)
         case (.install, _):
             guard let cliPath else { throw HookCLINotFound() }
             switch provider {
             case .claude: return try ClaudeHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
             case .codex: return try CodexHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun, trust: trust)
             case .opencode: return try OpenCodePluginInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
+            case .antigravity: return try AntigravityHookInstaller.install(paths: paths, cliPath: cliPath, dryRun: dryRun)
             }
         }
     }

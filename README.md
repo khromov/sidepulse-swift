@@ -1,7 +1,7 @@
 # sidepulse-swift
 
 A lightweight replacement for the official Python [`sidepulse`](https://github.com/inteliwear/sidepulse) project.
-macOS-native CLI and app with support for status notifications for Claude Code, Codex and OpenCode for SidePulse LEDs:
+macOS-native CLI and app with support for status notifications for Claude Code, Codex, OpenCode and Antigravity for SidePulse LEDs:
 
 - **SidePulse Pro**: an 8-LED device for the MacBook Pro SD card slot.
 - **SidePulse Dot**: a 2-LED USB-C device.
@@ -34,10 +34,10 @@ Both mount as FAT volumes. You drive the LEDs by writing a small program to
 
 ### Differences from the Python version
 
-- **Claude Code, Codex and OpenCode.** Hooks are installed into
-  `~/.claude/settings.json` and `~/.codex/config.toml`, and Codex hooks are
-  marked trusted automatically. OpenCode, which the Python version does not
-  hook, gets a SidePulse plugin (see [How hooks work](#how-hooks-work)).
+- **Claude Code, Codex, OpenCode and Antigravity.** Hooks are installed into
+  `~/.claude/settings.json`, `~/.codex/config.toml` and `~/.gemini/config/hooks.json`,
+  and Codex hooks are marked trusted automatically. OpenCode, which the Python
+  version does not hook, gets a SidePulse plugin (see [How hooks work](#how-hooks-work)).
 - **No Python.** It ships as one app bundle containing the menu-bar app and the
   CLI. Its only third-party dependency is [Sparkle](https://sparkle-project.org),
   which the menu-bar app uses for updates. The agent hook runs the native CLI
@@ -141,12 +141,15 @@ with `scripts/install.sh` does not, so upgrade it by running the script again.
 ### What `sidepulse setup` does
 
 ```sh
-sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]
+sidepulse setup [claude|codex|opencode|antigravity|all]... [--no-app] [--dry-run] [--no-trust]
 ```
 
 1. **Installs hooks** for every agent that looks installed (`~/.claude`,
-   `~/.codex`, and for OpenCode its config directory or an `opencode` binary in
-   `~/.opencode/bin` or on `PATH`), or only for the providers you name. The
+   `~/.codex`, for OpenCode its config directory or an `opencode` binary in
+   `~/.opencode/bin` or on `PATH`, and for Antigravity `~/.gemini/antigravity*`,
+   an existing `~/.gemini/config/hooks.json`, `~/Applications/Antigravity.app`,
+   or an `agy` binary in `~/.antigravity/antigravity/bin`, `~/.local/bin` or on
+   `PATH`), or only for the providers you name. The
    same edit removes Python-era SidePulse hooks: those that call `hook_entry.py`
    or `hook-log --provider`, plus Codex `# >>> agent-monitor hooks >>>` blocks.
    It also marks the Codex hooks trusted (skip with `--no-trust`).
@@ -213,7 +216,7 @@ for `leds` without `--once`. An option that takes a value never takes the next
 | `leds`      | Mirror agent status to the LEDs (headless)                                     |
 | `run`       | Run the headless SidePulse runtime in the foreground (`leds` without `--once`) |
 | `firmware`  | Show or upgrade the firmware of a SidePulse device                             |
-| `install`   | Install agent hooks (Claude Code, Codex, OpenCode)                             |
+| `install`   | Install agent hooks (Claude Code, Codex, OpenCode, Antigravity)                |
 | `uninstall` | Remove agent hooks                                                             |
 | `doctor`    | Check hook installation and the app                                            |
 | `app`       | Start, stop or inspect the menu-bar app                                        |
@@ -221,7 +224,7 @@ for `leds` without `--once`. An option that takes a value never takes the next
 | `version`   | Print the version                                                              |
 | `help`      | Show help for sidepulse or one command                                         |
 
-**`sidepulse setup [claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]`**
+**`sidepulse setup [claude|codex|opencode|antigravity|all]... [--no-app] [--dry-run] [--no-trust]`**
 
 - `--no-app`: only install hooks. Do not install or start the menu-bar app.
 - `--dry-run`: show what would change without changing anything.
@@ -302,11 +305,12 @@ needs a writable volume.
 - `--dry-run`: `upgrade` only. Downloads and verifies the package without
   writing it.
 
-**`sidepulse install [claude|codex|opencode|all]... [--dry-run] [--no-trust]`**
+**`sidepulse install [claude|codex|opencode|antigravity|all]... [--dry-run] [--no-trust]`**
 With no provider named, installs hooks for each agent that looks installed (see
 `setup`). Python-era SidePulse hooks are replaced. For OpenCode, install writes
 the SidePulse plugin `~/.config/opencode/plugins/sidepulse.js` and notes when
-the installed OpenCode is older than 2.0, which cannot load it. Hook commands
+the installed OpenCode is older than 2.0, which cannot load it. For Antigravity,
+install manages a `"sidepulse"` named hook in `~/.gemini/config/hooks.json`. Hook commands
 call `~/.local/bin/sidepulse` when it links to the CLI inside a `SidePulse.app`,
 else that bundled CLI directly (or the running CLI for a development build).
 A `~/.local/bin/sidepulse` that is anything else, such as the Python install's,
@@ -316,7 +320,7 @@ is ignored with a note. `$SIDEPULSE_CLI_PATH` overrides all of this.
 - `--no-trust`: do not mark the Codex hooks trusted. Install then reminds you to
   approve them with `/hooks` in Codex.
 
-**`sidepulse uninstall [claude|codex|opencode|all]... [--dry-run]`**
+**`sidepulse uninstall [claude|codex|opencode|antigravity|all]... [--dry-run]`**
 Removes SidePulse hooks, current and Python-era, from every provider by
 default, and deletes the SidePulse OpenCode plugin. Other hooks are left
 untouched, and a `sidepulse.js` that SidePulse did not write stays with a note.
@@ -338,7 +342,9 @@ that Codex warns about loading hooks from both files, which is harmless. When
 the feature is off it reports `hooks feature: disabled ([features] turns hooks
 off, so Codex runs no hooks)`, and for Claude Code under `"disableAllHooks":
 true` it reports `hooks feature: disabled ("disableAllHooks": true, so Claude
-Code runs no hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
+Code runs no hooks)`. For Antigravity, when `"sidepulse"` has `"enabled": false`
+it reports `hooks feature: disabled ("enabled": false on "sidepulse", so
+Antigravity runs no SidePulse hooks)`. For OpenCode, `config` is the plugin file and `hooks` counts the
 events the installed plugin emits. It reports `error:` for a `sidepulse.js`
 that SidePulse did not write, for a plugin that differs from the one this
 SidePulse writes (`written by another SidePulse version; run 'sidepulse install
@@ -376,7 +382,7 @@ otherwise for this session only. It never changes the login item. If a headless
 **`sidepulse version`** and **`sidepulse help [COMMAND]`** print the version
 and the help text.
 
-`sidepulse hook-log --provider <claude|codex|opencode>` is the internal entry
+`sidepulse hook-log --provider <claude|codex|opencode|antigravity>` is the internal entry
 point that agent hooks and the OpenCode plugin call. See
 [How hooks work](#how-hooks-work).
 
@@ -387,13 +393,13 @@ animation.
 
 | Mode               | Priority | Menu bar | Default LED (Signal profile) | Set by                                                                                                                                        |
 | ------------------ | -------- | -------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Blocked / Error    | 1        | Ask      | `red-double-blink`           | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response                                            |
-| Waiting for Input  | 2        | Ask      | `solid-red`                  | `PermissionRequest`, a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` or `idle_prompt` Notification |
+| Blocked / Error    | 1        | Ask      | `red-double-blink`           | `PostToolUseFailure`, `PermissionDenied`, `StopFailure`, `PostToolUse` with a failed tool response (or non-empty `error` in Antigravity), Antigravity `Stop` with `ERROR` or limit `terminationReason` |
+| Waiting for Input  | 2        | Ask      | `solid-red`                  | `PermissionRequest` (including Antigravity `ask_question` and blocking `notify_user` `PreToolUse`), a `permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` or `idle_prompt` Notification |
 | Tool Running       | 3        | Working  | `ember-tide`                 | `PreToolUse`                                                                                                                                  |
 | Long Task Progress | 4        | Working  | `ember-tide`                 | Not produced by any event today                                                                                                               |
-| Working            | 5        | Working  | `ember-tide`                 | `UserPromptSubmit`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`                                                  |
+| Working            | 5        | Working  | `ember-tide`                 | `UserPromptSubmit`, `PreInvocation`, `PostInvocation`, `PreCompact`, `PostCompact`, `SubagentStart`, a successful `PostToolUse`               |
 | Completed          | 6        | Done     | `solid-green`                | `Stop`/`SubagentStop`, `SessionEnd`, a subagent closed along with its session or its parent's turn (see Subagents below)                      |
-| Idle / Ready       | 7        | Idle     | `solid-blue`                 | `SessionStart`, `Interrupt` (Codex, OpenCode)                                                                                                 |
+| Idle / Ready       | 7        | Idle     | `solid-blue`                 | `SessionStart`, `Interrupt` (Codex, OpenCode, Antigravity `Stop` with `USER_CANCELED`)                                                        |
 
 How the global display state is chosen:
 
@@ -419,10 +425,10 @@ How the global display state is chosen:
 - **Other Notifications.** A Notification type not named in the table, such as
   `auth_success` or `agent_completed`, is ignored, and so is a Notification
   without a type, so it never starts a Working row that nothing settles.
-- **Settling.** `PostToolUse` means the tool returned, not that the turn has
-  finished. If no newer event arrives, the Working row settles to Completed
-  after 2 minutes. This way a missed `Stop` cannot leave the display stuck on
-  Working.
+- **Settling.** `PostToolUse` (and Antigravity's `PostInvocation`) means the tool
+  or invocation step returned, not that the turn has finished. If no newer event
+  arrives, the Working row settles to Completed after 2 minutes. This way a missed
+  `Stop` cannot leave the display stuck on Working.
 - **Sticky permissions.** A `PermissionRequest` for a command stays Ask until
   the matching `PostToolUse` or `PostToolUseFailure` (the approved command
   finished or failed), `Stop`, `Interrupt`, `SessionEnd`, the subagent's own
@@ -439,14 +445,16 @@ How the global display state is chosen:
   listed, such as one a Workflow runs, stays open until its own `SubagentStop`
   or the idle timeout. OpenCode subagents run synchronously, so the parent's
   `Stop`, `StopFailure` or `Interrupt` closes any that are still open.
-- **Interrupt.** `Interrupt` (Codex, and OpenCode for a stopped or cancelled
-  turn) returns the session to Idle without marking it Completed.
+- **Interrupt.** `Interrupt` (Codex, OpenCode for a stopped or cancelled turn,
+  and Antigravity `Stop` with `USER_CANCELED`) returns the session to Idle
+  without marking it Completed.
 
 ### Message text
 
 SidePulse never reads what an agent writes to choose a state. A turn that ends
 is Done, and Ask comes only from the agents' own signals: permission prompts,
-question tools (Claude Code's `AskUserQuestion`, OpenCode's question tool) and
+question tools (Claude Code's `AskUserQuestion`, OpenCode's question tool,
+Antigravity's `ask_question` and blocking `notify_user`) and
 the input Notifications in the table above. A question an agent asks in plain
 text at the end of its turn therefore shows as Done. Nothing needs to go into
 your projects' `CLAUDE.md` or `AGENTS.md`.
@@ -485,7 +493,7 @@ The Settings window has four tabs:
 | General    | **Idle timeout** (15 min to 4 hours, default 1 hour). **Keep recent sessions for** (12 hours to 7 days, default 48 hours). The Keep Awake policy. **Let Mac sleep on battery below** (0 to 100 % in steps of 5, default 20 %, 0 = off). **Turn off LEDs whenever the Mac sleeps** (off by default; see Sleep below). **SidePulse Pro Eject Prevention** (on by default; see Eject prevention below). **Launch at Login** (adds or removes the LaunchAgent plist). **Open Logs Folder** (reveals `logs/` in Finder). **Command-line tool**: whether `~/.local/bin/sidepulse` runs this app, **Install**, and a check that your shell finds it, with **Add to PATH** when it does not (see Command-line tool below). **Updates**: **Check for updates automatically**, **Download and install updates automatically**, the version and **Check Now** (a build from source shows only its version) |
 | Animations | Profile picker: **Signal** (the default: solid blue idle, ember roll while working, solid red when waiting, a red double blink on error, a blue double blink when unknown, solid green when done), **Cyan**, **Ember** or **Purple**. It shows **Current** when your picks match no profile. Per-state pickers for Idle / Ready, Working / Tool / Long Task (shared), Waiting for Input, Blocked / Error, Completed and Unknown. **Mac goes to sleep**, the animation that turns the LEDs off as the Mac sleeps (see Sleep below). **Show** plays a pick on connected Agent-mode devices for 3 seconds, then restores live status                                                                                                                                                                                                                                                                                    |
 | Devices    | For each device: connection state, LED count, firmware version, path, a **Display** switch (Agent Status / Manual), a **Brightness** slider, the last error or permission notice, and **Remove** when not connected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch or Claude Code's `disableAllHooks`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh**                                                                                                                                                                                                                           |
+| Hooks      | For each provider: status (Installed; Needs repair when the hooks call a missing or non-SidePulse CLI; Installed, not trusted when Codex has no trust entry, so approve with `/hooks` in Codex or reinstall; Installed, but <Provider> hooks are disabled, for Codex's `[features]` switch, Claude Code's `disableAllHooks` or Antigravity's `"enabled": false`; Installed, but turned off with /hooks in Codex; Partial; Not installed; Not detected; Error), config path, the CLI its hooks call (**Hooks call**), and **Install** / **Uninstall**. **Install writes** shows the command new hooks get, with **Refresh** |
 
 The built-in animations are Slow Off, Immediate Off, Fade Off, Idle Pulse, Cyan
 Roll, Cyan Complete, Amber Pulse, Solid Green, Solid Red, Solid Blue, Red Double
@@ -661,9 +669,9 @@ until the agent's next step. Working turns and Ask pulses, two frames a second. 
 draws a key, Stream Deck shows the SidePulse logo there. The key's settings (the
 property inspector) have:
 
-- **Agents**: All agents (default), or only Claude Code, Codex or OpenCode. A
-  key for one agent names it above the icon and shows that agent's own state,
-  so its Done stays visible while another agent works.
+- **Agents**: All agents (default), or only Claude Code, Codex, OpenCode or
+  Antigravity. A key for one agent names it above the icon and shows that agent's
+  own state, so its Done stays visible while another agent works.
 - **Animation**: Animate Working and Ask (on by default).
 
 Pressing the key opens SidePulse Settings, like `sidepulse settings`. When the
@@ -700,7 +708,7 @@ scripts/build-streamdeck.sh --link
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `~/Library/Application Support/SidePulse/settings.json`                    | Settings: devices, animations, timeouts, keep-awake, eject prevention. Hand edits are picked up at the next refresh. An unreadable file is backed up before it is replaced                                                                                                                                                                                                   |
 | `…/SidePulse/latest.json`                                                  | Restart snapshot of agent rows, written with a short delay                                                                                                                                                                                                                                                                                                                   |
-| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB                                                                                                                                                                                                                                                                                                                     |
+| `…/SidePulse/logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl`, `logs/antigravity.jsonl` | Trimmed hook records, mode 0600. Rotated to `.1` at 8 MB |
 | `…/SidePulse/events.sock`, `events.sock.lock`                              | Unix socket served by the app, and the lock the serving instance holds. If the path is too long, the socket falls back to `/tmp/sidepulse-<uid>/events-<hash>.sock`, one per data root. That directory must be a real directory owned by you with mode 0700                                                                                                                  |
 | `…/SidePulse/app.log`, `app.out.log`, `app.err.log`                        | App diagnostics, and the LaunchAgent's stdout and stderr                                                                                                                                                                                                                                                                                                                     |
 | `~/Library/LaunchAgents/io.sidepulse.swift.plist`                          | Launch at login                                                                                                                                                                                                                                                                                                                                                              |
@@ -708,7 +716,7 @@ scripts/build-streamdeck.sh --link
 | `~/Library/Caches/io.sidepulse.swift/`                                     | Update downloads, kept only until the update is installed                                                                                                                                                                                                                                                                                                                  |
 | `~/Applications/SidePulse.app`                                             | The app (`--app-dir` changes the location). `sidepulse` also finds it in `/Applications`                                                                                                                                                                                                                                                                                     |
 | `~/.local/bin/sidepulse`                                                   | Symlink to `SidePulse.app/Contents/Helpers/sidepulse`, kept pointed at the running app at each launch (and made by `scripts/install.sh`). This is the path written into hook commands when it links into a `SidePulse.app`; otherwise hooks call the bundled CLI directly                                                                                                    |
-| `~/.claude/settings.json`, `~/.codex/config.toml`                          | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
+| `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/config/hooks.json` | Agent configs. `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` are honored. Every change backs up the old file as `<file>.bak.<stamp>`, and the newest 3 are kept. A symlinked config (dotfiles) keeps its link, and the real file behind it is updated. A read-only config is never rewritten: install and uninstall fail with `<path> is read-only; make it writable and try again` |
 | `~/.config/opencode/plugins/sidepulse.js`                                  | The SidePulse OpenCode plugin, in OpenCode's global config directory (`$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as OpenCode resolves it). Install rewrites it and backs up a changed older copy as `sidepulse.js.bak.<stamp>`, which OpenCode does not load. Uninstall deletes it. A file without SidePulse's marker line is never replaced or deleted       |
 | `~/Library/Application Support/com.elgato.StreamDeck/Plugins/io.sidepulse.swift.streamdeck.sdPlugin` | The Stream Deck plugin, installed by Stream Deck, or a link to `build/io.sidepulse.swift.streamdeck.sdPlugin` made by `scripts/build-streamdeck.sh --link` |
 | `~/Library/Logs/ElgatoStreamDeck/io.sidepulse.swift.streamdeck0.log`      | The Stream Deck plugin's messages, written by Stream Deck |
@@ -789,6 +797,23 @@ hand, then retry`. They do the same for any other key SidePulse did not write
 - **OpenCode.** OpenCode has no hook settings, so the installer writes a
   plugin that calls the same command. See
   [The OpenCode plugin](#the-opencode-plugin).
+- **Antigravity.** The installer manages a `"sidepulse"` named hook inside
+  `~/.gemini/config/hooks.json` (which applies across Antigravity CLI,
+  Antigravity 2.0 and Antigravity IDE). Flat handler lists are written for
+  `SessionStart`, `PreInvocation`, `PostInvocation` and `Stop`, and
+  `{"matcher": "*", "hooks": [...]}` groups for `PreToolUse` and `PostToolUse`.
+  Other named hooks and any `"enabled": false` flag on `"sidepulse"` are
+  preserved; install notes a disabled hook and doctor and Settings report it.
+  `hook-log --provider antigravity` translates Antigravity's camelCase
+  protojson payloads (`conversationId`, `hookEventName`, `toolCall`,
+  `lastUserInput`, `error`, `terminationReason`, `workspacePaths`) into
+  SidePulse's trimmed snake_case records and infers the surface (`Antigravity
+  CLI`, `Antigravity App` or `Antigravity IDE`) from `transcriptPath` or
+  `artifactDirectoryPath`. Interactive `ask_question` and blocking
+  `notify_user` (`BlockedOnUser: true`) `PreToolUse` calls map to Ask
+  (`PermissionRequest`), `PostToolUse` with a non-empty `error` maps to
+  `PostToolUseFailure`, `Stop` with `USER_CANCELED` maps to `Interrupt`, and
+  `Stop` with an error or invocation/token limit maps to `StopFailure`.
 - **Identification.** SidePulse finds its own hooks, current and Python-era,
   by command markers such as `hook-log --provider`. It never goes by log
   paths, so your other hooks are never touched. The OpenCode plugin is ours
@@ -954,6 +979,10 @@ device, so only a write to that device counts. When the app is not running,
 - OpenCode: an approved shell command stays Ask until it finishes, as with
   Claude, although OpenCode reports the approval. A subagent whose session
   started before the plugin loaded shows as a session of its own.
+- Antigravity: Antigravity's `hooks.json` has no `PermissionRequest` or
+  `Notification` event, so tool-approval prompts show as Working until the tool
+  completes or fails; interactive `ask_question` and blocking `notify_user`
+  calls still show as Ask.
 
 ## Development
 
@@ -998,8 +1027,9 @@ sibling `.build` CLI, and it never changes that link. Opening a bundle such as
 copy of SidePulse starts.
 
 The tests use temporary homes and `SIDEPULSE_HOME`. They never modify your real
-`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/Library/LaunchAgents` or data directory (a few
-legacy-hook tests read copies of your agent configs).
+`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.gemini/config/hooks.json`,
+`~/Library/LaunchAgents` or data directory (a few legacy-hook tests read copies
+of your agent configs).
 `PowerKeepAwakeAssertionTests` always run and hold a real power assertion in the
 test process for a moment.
 

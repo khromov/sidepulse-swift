@@ -31,7 +31,7 @@ enum HelpCommand: CLICommand {
         var lines = [
             "usage: sidepulse <command> [options]",
             "",
-            "SidePulse shows Claude Code, Codex and OpenCode agent status on SidePulse",
+            "SidePulse shows Claude Code, Codex, OpenCode and Antigravity agent status on SidePulse",
             "Pro / Dot LEDs and in the menu bar.",
             "",
             "commands:",

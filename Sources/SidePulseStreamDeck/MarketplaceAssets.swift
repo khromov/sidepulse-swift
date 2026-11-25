@@ -150,6 +150,7 @@ public enum MarketplaceAssets {
             1: tile(.ask, heading: HookProvider.claude.label, active: 1),
             2: tile(.working, heading: HookProvider.codex.label, active: 1),
             3: tile(.idle, heading: HookProvider.opencode.label),
+            4: tile(.done, heading: HookProvider.antigravity.label),
         ]
         for index in 0..<15 {
             let column = CGFloat(index % 5), row = CGFloat(2 - index / 5)
@@ -162,7 +163,7 @@ public enum MarketplaceAssets {
         }
         let left = body.maxX + 90, width = wide.width - left - 90
         var baseline = wide.height - 300
-        for (index, text) in ["Glanceable agent status", "Claude Code, Codex and OpenCode",
+        for (index, text) in ["Glanceable agent status", "Claude Code, Codex, OpenCode & Antigravity",
                               "Press the key to open SidePulse", "Needs the free SidePulse Swift app"].enumerated() {
             let size: CGFloat = index == 0 ? 64 : 38
             let color = index == 0 ? TileRenderer.white.cg() : TileRenderer.secondaryText.cg()
@@ -178,8 +179,9 @@ public enum MarketplaceAssets {
                 in: context)
         let tiles = [tile(.working, heading: HookProvider.claude.label, active: 1),
                      tile(.ask, heading: HookProvider.codex.label, active: 1),
-                     tile(.done, heading: HookProvider.opencode.label)]
-        row(tiles, size: 320, gap: 90, bottom: 170, in: context)
+                     tile(.done, heading: HookProvider.opencode.label),
+                     tile(.idle, heading: HookProvider.antigravity.label)]
+        row(tiles, size: 300, gap: 70, bottom: 170, in: context)
     }
 
     /// Centers the keys horizontally and returns each key's left edge.

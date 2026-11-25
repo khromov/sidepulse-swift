@@ -24,9 +24,27 @@ public enum OriginDetector {
         switch provider {
         case .codex where ["openai", "chatgpt", "codex"].contains(where: bundleID.contains): return .app
         case .claude where bundleID.contains("anthropic"): return .app
+        case .antigravity where bundleID.contains("antigravity"): return .app
         default: break
         }
         return value("TERM_PROGRAM").isEmpty && value("TERM").isEmpty ? nil : .cli
+    }
+
+    /// Antigravity encodes its surface in `transcriptPath` and `artifactDirectoryPath` (`~/.gemini/<product>/...`).
+    public static func antigravityOrigin(from payload: JSONObject) -> String? {
+        for key in ["transcriptPath", "artifactDirectoryPath"] {
+            guard case .string(let path)? = payload[key], !path.isEmpty else { continue }
+            let parts = path.split(separator: "/")
+            for index in parts.indices where parts[index] == ".gemini" && index + 1 < parts.endIndex {
+                switch parts[index + 1] {
+                case "antigravity-cli": return "Antigravity CLI"
+                case "antigravity-ide": return "Antigravity IDE"
+                case "antigravity": return "Antigravity App"
+                default: break
+                }
+            }
+        }
+        return nil
     }
 
     public static func label(provider: HookProvider, surface: Surface) -> String {
@@ -39,6 +57,9 @@ public enum OriginDetector {
         case (.codex, .vscode): return "Codex in VS Code"
         // The OpenCode plugin always sends its own origin, so this only labels hand-run hooks.
         case (.opencode, _): return "OpenCode"
+        case (.antigravity, .app): return "Antigravity App"
+        case (.antigravity, .cli): return "Antigravity CLI"
+        case (.antigravity, .vscode): return "Antigravity IDE"
         }
     }
 
@@ -47,6 +68,7 @@ public enum OriginDetector {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .opencode: return "OpenCode"
+        case .antigravity: return "Antigravity"
         }
     }
 

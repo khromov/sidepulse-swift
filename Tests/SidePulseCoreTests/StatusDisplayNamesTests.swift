@@ -4,7 +4,7 @@ import XCTest
 final class StatusDisplayNamesTests: XCTestCase {
     func testFallbackProviderLabels() {
         let vectors: [(String, String)] = [
-            ("codex", "Codex"), ("claude", "Claude"), ("opencode", "OpenCode"), ("grok", "Grok"), ("", ""),
+            ("codex", "Codex"), ("claude", "Claude"), ("opencode", "OpenCode"), ("antigravity", "Antigravity"), ("grok", "Grok"), ("", ""),
         ]
         for (provider, label) in vectors {
             XCTAssertEqual(DisplayNames.fallbackProviderLabel(provider), label, provider)

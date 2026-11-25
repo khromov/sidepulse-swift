@@ -7,8 +7,15 @@ public enum HookRuntime {
     public static func run(arguments: [String], stdin: Data, environment: [String: String],
                            paths: SidePulsePaths, now: Date = Date()) -> Int32 {
         guard let provider = providerArgument(arguments) else { return 0 }
-        let record = makeRecord(provider: provider, payload: stdin, now: now,
+        let record: JSONObject
+        if provider == .antigravity {
+            let explicit = OriginDetector.cleanLabel(environment["SIDEPULSE_AGENT_ORIGIN"])
+            let fallback = explicit == nil ? OriginDetector.detect(provider: provider, environment: environment) : nil
+            record = makeRecord(provider: provider, payload: stdin, now: now, origin: explicit, fallbackOrigin: fallback)
+        } else {
+            record = makeRecord(provider: provider, payload: stdin, now: now,
                                 origin: OriginDetector.detect(provider: provider, environment: environment))
+        }
         // A payload without an event name, such as a hand-run command with no input, carries no status.
         guard record["hook_event_name"] != nil else { return 0 }
         let line = JSONValue.object(record).serialized()
@@ -88,6 +95,11 @@ public enum HookRuntime {
     /// Every field is length-capped so a hostile payload can never produce an oversized record; an origin in the
     /// payload, such as the OpenCode plugin's, wins over the detected one.
     public static func makeRecord(provider: HookProvider, payload: Data, now: Date, origin: String?) -> JSONObject {
+        makeRecord(provider: provider, payload: payload, now: now, origin: origin, fallbackOrigin: nil)
+    }
+
+    static func makeRecord(provider: HookProvider, payload: Data, now: Date, origin: String?,
+                           fallbackOrigin: String?) -> JSONObject {
         var record = JSONObject()
         record["logged_at"] = .string(TimeFormat.iso8601Millis(now))
 
@@ -104,16 +116,15 @@ public enum HookRuntime {
         guard case .object(var raw) = parsed else {
             return parseErrorRecord(record, message: "Expected a JSON object, got \(typeName(parsed))")
         }
+        if provider == .antigravity {
+            return makeAntigravityRecord(raw: raw, base: record, origin: origin, fallbackOrigin: fallbackOrigin)
+        }
         if provider == .codex, case .object(let inner)? = raw["event"], raw["hook_event_name"] == nil {
             raw = inner
         }
 
         func scalar(_ key: String, limit: Int = defaultFieldLimit) -> JSONValue? {
-            switch raw[key] {
-            case .string(let s)? where !s.isEmpty: return .string(truncated(s, to: limit))
-            case .number(let n)? where n.utf8.count <= limit: return .number(n)
-            default: return nil
-            }
+            boundedScalar(raw[key], limit: limit)
         }
 
         record["hook_event_name"] = scalar("hook_event_name")
@@ -153,6 +164,149 @@ public enum HookRuntime {
 
         record["agent_origin"] = scalar("agent_origin") ?? origin.map(JSONValue.string)
         return record
+    }
+
+    private static let antigravityFailureReasons: Set<String> = [
+        "ERROR", "MAX_INVOCATIONS", "MAX_FORCED_INVOCATIONS", "MAX_TOKEN_BUDGET_EXCEEDED",
+    ]
+
+    /// Antigravity sends camelCase protojson payloads and has no PermissionRequest/StopFailure/Interrupt hooks,
+    /// so user-blocking tools and terminal Stop reasons are mapped onto SidePulse's canonical events here.
+    private static func makeAntigravityRecord(raw: JSONObject, base: JSONObject, origin: String?,
+                                              fallbackOrigin: String?) -> JSONObject {
+        var record = base
+        func scalar(_ key: String, limit: Int = defaultFieldLimit) -> JSONValue? {
+            boundedScalar(raw[key], limit: limit)
+        }
+
+        let toolCall = raw["toolCall"]?.objectValue
+        let toolArgs = toolCall?["args"]?.objectValue
+        let toolName = boundedScalar(toolCall?["name"], limit: defaultFieldLimit) ?? scalar("tool_name")
+        let rawEvent = scalar("hookEventName") ?? scalar("hook_event_name")
+
+        var mappedEvent = rawEvent
+        var synthesizedMessage: JSONValue?
+        var synthesizedError: JSONValue?
+        if case .string(let name)? = rawEvent {
+            switch name {
+            case "PreToolUse":
+                let lowerTool = toolName?.stringValue?.lowercased()
+                if lowerTool == "ask_question" {
+                    mappedEvent = .string("PermissionRequest")
+                    if let q = toolArgs?["questions"]?.arrayValue?.first?["question"]?.stringValue, !q.isEmpty {
+                        synthesizedMessage = .string(truncated(q, to: 2000))
+                    }
+                } else if lowerTool == "notify_user", isBlockingNotifyUser(toolArgs) {
+                    mappedEvent = .string("PermissionRequest")
+                    let text = nonEmptyString(toolArgs?["Message"]) ?? nonEmptyString(toolArgs?["message"])
+                    if let text { synthesizedMessage = .string(truncated(text, to: 2000)) }
+                }
+            case "PostToolUse":
+                if let error = nonEmptyString(raw["error"]) ?? nonEmptyString(raw["error_details"]) {
+                    mappedEvent = .string("PostToolUseFailure")
+                    synthesizedError = .string(truncated(error, to: 500))
+                }
+            case "Stop":
+                let reason = normalizedTerminationReason(raw["terminationReason"]?.stringValue)
+                let error = nonEmptyString(raw["error"]) ?? nonEmptyString(raw["error_details"])
+                if reason == "USER_CANCELED" {
+                    mappedEvent = .string("Interrupt")
+                } else if let error {
+                    mappedEvent = .string("StopFailure")
+                    synthesizedError = .string(truncated(error, to: 500))
+                } else if let reason, antigravityFailureReasons.contains(reason) {
+                    mappedEvent = .string("StopFailure")
+                    synthesizedError = .string(truncated(reason, to: 500))
+                }
+            default:
+                break
+            }
+        }
+
+        record["hook_event_name"] = mappedEvent
+        record["session_id"] = scalar("conversationId") ?? scalar("session_id")
+        record["agent_id"] = scalar("agentId") ?? scalar("agent_id")
+        record["cwd"] = scalar("cwd") ?? firstWorkspacePath(raw["workspacePaths"])
+        record["tool_name"] = toolName
+
+        if mappedEvent != .string("PermissionRequest") {
+            let command = nonEmptyString(toolArgs?["CommandLine"])
+                ?? nonEmptyString(toolArgs?["commandLine"])
+                ?? nonEmptyString(toolArgs?["command"])
+                ?? nonEmptyString(raw["tool_input"]?["command"])
+            if let command {
+                record["tool_input"] = .object(["command": .string(truncated(command, to: 2000))])
+            }
+        }
+
+        if let response = raw["tool_response"], !response.isNull {
+            switch response {
+            case .object(let object):
+                var kept = JSONObject()
+                for key in ["interrupted", "success", "exit_code"] {
+                    if let value = object[key].flatMap({ bounded($0, limit: defaultFieldLimit) }) { kept[key] = value }
+                }
+                if !kept.isEmpty { record["tool_response"] = .object(kept) }
+            case .string(let text):
+                record["tool_response"] = .string(truncated(text, to: 500))
+            default:
+                break
+            }
+            record["tool_response_failed"] = .bool(ModeClassifier.toolResponseLooksFailed(response))
+        }
+
+        if mappedEvent == .string("PreInvocation") || mappedEvent == .string("UserPromptSubmit") {
+            record["prompt"] = scalar("lastUserInput", limit: 4000) ?? scalar("prompt", limit: 4000)
+        } else {
+            record["prompt"] = scalar("prompt", limit: 4000)
+        }
+        record["last_assistant_message"] = scalar("last_assistant_message", limit: 2000)
+        record["message"] = synthesizedMessage ?? scalar("message", limit: 2000)
+        record["notification_type"] = scalar("notification_type")
+        record["error_details"] = synthesizedError ?? scalar("error_details", limit: 500)
+        record["agent_origin"] = scalar("agent_origin")
+            ?? origin.map(JSONValue.string)
+            ?? OriginDetector.antigravityOrigin(from: raw).map(JSONValue.string)
+            ?? fallbackOrigin.map(JSONValue.string)
+        return record
+    }
+
+    private static func boundedScalar(_ value: JSONValue?, limit: Int) -> JSONValue? {
+        switch value {
+        case .string(let s)? where !s.isEmpty: return .string(truncated(s, to: limit))
+        case .number(let n)? where n.utf8.count <= limit: return .number(n)
+        default: return nil
+        }
+    }
+
+    private static func nonEmptyString(_ value: JSONValue?) -> String? {
+        guard case .string(let s)? = value, !s.isEmpty else { return nil }
+        return s
+    }
+
+    private static func isBlockingNotifyUser(_ args: JSONObject?) -> Bool {
+        guard let args else { return false }
+        return args["BlockedOnUser"] == .bool(true)
+            || args["blockedOnUser"] == .bool(true)
+            || args["blocked_on_user"] == .bool(true)
+    }
+
+    private static func normalizedTerminationReason(_ value: String?) -> String? {
+        guard let value else { return nil }
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let prefix = "EXECUTOR_TERMINATION_REASON_"
+        if normalized.hasPrefix(prefix) { normalized = String(normalized.dropFirst(prefix.count)) }
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private static func firstWorkspacePath(_ value: JSONValue?) -> JSONValue? {
+        guard case .array(let paths)? = value else { return nil }
+        for item in paths {
+            if case .string(let path) = item, !path.isEmpty {
+                return .string(truncated(path, to: defaultFieldLimit))
+            }
+        }
+        return nil
     }
 
     private static func parseErrorRecord(_ base: JSONObject, message: String) -> JSONObject {

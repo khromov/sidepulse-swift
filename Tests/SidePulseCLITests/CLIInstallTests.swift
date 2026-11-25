@@ -55,7 +55,7 @@ final class CLIInstallTests: XCTestCase {
         let harness = CLIHarness()
         let paths = harness.paths
         XCTAssertEqual(ProviderSelection.resolve([], paths: paths, defaultToDetected: true), [])
-        XCTAssertEqual(ProviderSelection.resolve([], paths: paths, defaultToDetected: false), [.claude, .codex, .opencode])
+        XCTAssertEqual(ProviderSelection.resolve([], paths: paths, defaultToDetected: false), [.claude, .codex, .opencode, .antigravity])
         try FileManager.default.createDirectory(at: paths.codexDir, withIntermediateDirectories: true)
         XCTAssertEqual(ProviderSelection.resolve([], paths: paths, defaultToDetected: true), [.codex])
         try FileManager.default.createDirectory(at: paths.claudeDir, withIntermediateDirectories: true)
@@ -64,7 +64,8 @@ final class CLIInstallTests: XCTestCase {
                        [.claude, .codex])
         XCTAssertEqual(ProviderSelection.resolve(["codex"], paths: paths, defaultToDetected: true), [.codex])
         XCTAssertEqual(ProviderSelection.resolve(["opencode"], paths: paths, defaultToDetected: true), [.opencode])
-        XCTAssertEqual(ProviderSelection.resolve(["all"], paths: paths, defaultToDetected: true), [.claude, .codex, .opencode])
+        XCTAssertEqual(ProviderSelection.resolve(["antigravity"], paths: paths, defaultToDetected: true), [.antigravity])
+        XCTAssertEqual(ProviderSelection.resolve(["all"], paths: paths, defaultToDetected: true), [.claude, .codex, .opencode, .antigravity])
     }
 
     func testOpenCodeIsDetectedByItsConfigDirectoryOrBinary() throws {
@@ -79,14 +80,33 @@ final class CLIInstallTests: XCTestCase {
         XCTAssertEqual(ProviderSelection.resolve([], paths: harness.paths, defaultToDetected: true), [.opencode])
     }
 
+    func testAntigravityIsDetectedByDataDirectoryHooksFileOrBinary() throws {
+        let harness = CLIHarness()
+        let dir = harness.home.appendingPathComponent(".gemini/antigravity-cli", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        XCTAssertEqual(ProviderSelection.resolve([], paths: harness.paths, defaultToDetected: true), [.antigravity])
+        try FileManager.default.removeItem(at: dir)
+        XCTAssertEqual(ProviderSelection.resolve([], paths: harness.paths, defaultToDetected: true), [])
+
+        let binary = harness.home.appendingPathComponent(".local/bin/agy")
+        harness.makeExecutable(binary)
+        XCTAssertEqual(ProviderSelection.resolve([], paths: harness.paths, defaultToDetected: true), [.antigravity])
+        try FileManager.default.removeItem(at: binary)
+
+        try FileManager.default.createDirectory(at: harness.paths.antigravityConfigDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: harness.paths.antigravityHooksFile.path, contents: Data("{}".utf8))
+        XCTAssertEqual(ProviderSelection.resolve([], paths: harness.paths, defaultToDetected: true), [.antigravity])
+    }
+
     func testProviderPositionalsAcceptEveryProvider() {
         let harness = CLIHarness()
         let log = HookLog()
         harness.env.hooks = hooks(log)
-        XCTAssertEqual(harness.run(["install", "opencode", "claude", "codex", "all", "--dry-run"]), 0)
-        XCTAssertEqual(log.installs.map(\.0), [.claude, .codex, .opencode])
+        XCTAssertEqual(harness.run(["install", "antigravity", "opencode", "claude", "codex", "all", "--dry-run"]), 0)
+        XCTAssertEqual(log.installs.map(\.0), [.claude, .codex, .opencode, .antigravity])
         XCTAssertEqual(harness.run(["uninstall", "grok"]), 2)
-        XCTAssertTrue(harness.stderr.text.contains("(choose from 'claude', 'codex', 'opencode', 'all')"), harness.stderr.text)
+        XCTAssertTrue(harness.stderr.text.contains("(choose from 'claude', 'codex', 'opencode', 'antigravity', 'all')"),
+                      harness.stderr.text)
     }
 
     func testAFileNamedLikeTheConfigDirDoesNotCountAsDetected() {
@@ -151,7 +171,7 @@ final class CLIInstallTests: XCTestCase {
         let log = HookLog()
         harness.env.hooks = hooks(log)
         XCTAssertEqual(harness.run(["install", "all", "--dry-run", "--no-trust"]), 0)
-        XCTAssertEqual(log.installs.map(\.0), [.claude, .codex, .opencode])
+        XCTAssertEqual(log.installs.map(\.0), [.claude, .codex, .opencode, .antigravity])
         XCTAssertTrue(log.installs.allSatisfy { $0.2 && !$0.3 })
         XCTAssertTrue(harness.stdout.text.contains("claude: would update\n"))
         XCTAssertTrue(harness.stdout.text.contains("codex: would update\n"))
@@ -189,7 +209,7 @@ final class CLIInstallTests: XCTestCase {
         let log = HookLog()
         harness.env.hooks = hooks(log)
         XCTAssertEqual(harness.run(["uninstall", "--dry-run"]), 0)
-        XCTAssertEqual(log.uninstalls.map(\.0), [.claude, .codex, .opencode])
+        XCTAssertEqual(log.uninstalls.map(\.0), [.claude, .codex, .opencode, .antigravity])
         XCTAssertTrue(log.uninstalls.allSatisfy(\.1))
         XCTAssertEqual(harness.stdout.text, """
             claude: already uninstalled
@@ -198,6 +218,8 @@ final class CLIInstallTests: XCTestCase {
               config: \(harness.paths.codexConfigFile.path)
             opencode: already uninstalled
               config: \(harness.paths.openCodePluginFile.path)
+            antigravity: already uninstalled
+              config: \(harness.paths.antigravityHooksFile.path)
 
             """)
     }

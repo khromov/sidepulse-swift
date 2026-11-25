@@ -14,6 +14,7 @@ public enum DisplayNames {
         case "codex": return "Codex"
         case "claude": return "Claude"
         case "opencode": return "OpenCode"
+        case "antigravity": return "Antigravity"
         default: return provider.capitalized
         }
     }

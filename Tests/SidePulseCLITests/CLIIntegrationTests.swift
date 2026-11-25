@@ -236,7 +236,26 @@ final class CLIIntegrationTests: XCTestCase {
         let row = value["statuses"]?.arrayValue?.first
         XCTAssertEqual(row?["provider"]?.stringValue, "opencode")
         XCTAssertEqual(row?["origin"]?.stringValue, "OpenCode")
-        XCTAssertEqual(value["sources"]?.arrayValue?.compactMap { $0["provider"]?.stringValue }, ["claude", "codex", "opencode"])
+        XCTAssertEqual(value["sources"]?.arrayValue?.compactMap { $0["provider"]?.stringValue },
+                       ["claude", "codex", "opencode", "antigravity"])
+    }
+
+    func testAntigravityHookLogThenOfflineStatus() throws {
+        let h = makeHarness(["SIDEPULSE_DISABLE_EVENT_SOCKET": "1"])
+        h.env.stdin = .data(Data((#"{"hookEventName":"PreToolUse","conversationId":"ag-1","cwd":"/tmp/proj","#
+            + #""transcriptPath":"/Users/k/.gemini/antigravity-cli/brain/ag-1/transcript.jsonl","#
+            + #""toolCall":{"id":"t1","name":"ask_question","args":{"questions":[{"question":"Continue?"}]}}}"#).utf8))
+        XCTAssertEqual(h.run(["hook-log", "--provider", "antigravity"]), 0)
+        XCTAssertEqual(h.stdout.text, "")
+        XCTAssertEqual((read(h.paths.logFile(for: "antigravity")) ?? "").split(separator: "\n").count, 1)
+
+        XCTAssertEqual(h.run(["status", "--offline", "--json"]), 0)
+        let value = try JSONValue.parse(h.stdout.text)
+        XCTAssertEqual(value["aggregate"]?["mode"]?.stringValue, "waiting_for_input")
+        let row = value["statuses"]?.arrayValue?.first
+        XCTAssertEqual(row?["provider"]?.stringValue, "antigravity")
+        XCTAssertEqual(row?["origin"]?.stringValue, "Antigravity CLI")
+        XCTAssertEqual(row?["tool_name"]?.stringValue, "ask_question")
     }
 
     func testOfflineStatusOverTempLogs() throws {
@@ -440,6 +459,7 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.codexConfigFile.path),
                        "codex is not installed, so its config must not be created")
         XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.openCodePluginFile.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.antigravityHooksFile.path))
         XCTAssertTrue(h.stdout.text.hasPrefix("claude: updated\n"))
 
         let again = makeHarness()
@@ -463,13 +483,24 @@ final class CLIIntegrationTests: XCTestCase {
 
             """)
 
+        let antigravity = makeHarness()
+        antigravity.env.paths = h.paths
+        XCTAssertEqual(antigravity.run(["install", "antigravity"]), 0, antigravity.stderr.text)
+        XCTAssertTrue((read(h.paths.antigravityHooksFile) ?? "").contains("hook-log --provider antigravity"))
+        XCTAssertEqual(antigravity.stdout.text, """
+            antigravity: updated
+              config: \(h.paths.antigravityHooksFile.path)
+              log: \(h.paths.logFile(for: "antigravity").path)
+
+            """)
+
         let doctor = makeHarness()
         doctor.env.paths = h.paths
         doctor.env.app = .socket(path: h.paths.socketPath)
         XCTAssertEqual(doctor.run(["doctor", "--json"]), 0)
         let report = try JSONValue.parse(doctor.stdout.text)
         let providers = report["providers"]?.arrayValue ?? []
-        XCTAssertEqual(providers.compactMap { $0["provider"]?.stringValue }, ["claude", "codex", "opencode"])
+        XCTAssertEqual(providers.compactMap { $0["provider"]?.stringValue }, ["claude", "codex", "opencode", "antigravity"])
         XCTAssertEqual(providers.first?["missing_events"]?.arrayValue?.count, 0)
         XCTAssertEqual(providers.last?["missing_events"]?.arrayValue?.count, 0)
         XCTAssertEqual(providers.last?["hook_cli_paths"], .array([.string(CLIHarness.cliPath)]))
@@ -487,9 +518,11 @@ final class CLIIntegrationTests: XCTestCase {
         XCTAssertEqual(remove.run(["uninstall"]), 0, remove.stderr.text)
         XCTAssertFalse((read(h.paths.claudeSettingsFile) ?? "").contains("hook-log"))
         XCTAssertFalse((read(h.paths.codexConfigFile) ?? "").contains("sidepulse hooks"))
+        XCTAssertFalse((read(h.paths.antigravityHooksFile) ?? "").contains("hook-log"))
         XCTAssertTrue(remove.stdout.text.contains("claude: removed\n"))
         XCTAssertTrue(remove.stdout.text.contains("codex: removed\n"))
         XCTAssertTrue(remove.stdout.text.contains("opencode: removed\n"))
+        XCTAssertTrue(remove.stdout.text.contains("antigravity: removed\n"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: h.paths.openCodePluginFile.path))
     }
 

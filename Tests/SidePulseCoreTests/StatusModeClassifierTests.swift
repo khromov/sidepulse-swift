@@ -18,7 +18,7 @@ final class StatusModeClassifierTests: XCTestCase {
         XCTAssertNil(mode("Notification"))
         XCTAssertEqual(mode("PreToolUse"), .toolRunning)
         XCTAssertEqual(mode("PostToolUse"), .working)
-        for name in ["UserPromptSubmit", "PreCompact", "PostCompact", "SubagentStart"] {
+        for name in ["UserPromptSubmit", "PreInvocation", "PostInvocation", "PreCompact", "PostCompact", "SubagentStart"] {
             XCTAssertEqual(mode(name), .working, name)
         }
         XCTAssertEqual(mode("Stop"), .completed)

@@ -291,6 +291,7 @@ final class StatusPersistenceTests: XCTestCase {
             SourceInfo(provider: "codex", path: paths.logFile(for: "codex").path),
             SourceInfo(provider: "claude", path: paths.logFile(for: "claude").path),
             SourceInfo(provider: "opencode", path: paths.logFile(for: "opencode").path),
+            SourceInfo(provider: "antigravity", path: paths.logFile(for: "antigravity").path),
         ])
         try FileManager.default.createDirectory(at: paths.logsDir, withIntermediateDirectories: true)
         try Data().write(to: paths.logsDir.appendingPathComponent("claude.jsonl.1"))
@@ -299,6 +300,7 @@ final class StatusPersistenceTests: XCTestCase {
             paths.logsDir.appendingPathComponent("claude.jsonl.1").path,
             paths.logFile(for: "claude").path,
             paths.logFile(for: "opencode").path,
+            paths.logFile(for: "antigravity").path,
         ])
     }
 

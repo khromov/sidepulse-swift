@@ -95,6 +95,15 @@ public struct SidePulsePaths: Sendable, Equatable {
     /// OpenCode loads every `.js` file in `plugins/` without a config entry.
     public var openCodePluginFile: URL { openCodeConfigDir.appendingPathComponent("plugins/sidepulse.js") }
 
+    /// Antigravity reads global customizations (including `hooks.json`) from `~/.gemini/config/`.
+    public var antigravityConfigDir: URL { home.appendingPathComponent(".gemini/config", isDirectory: true) }
+    public var antigravityHooksFile: URL { antigravityConfigDir.appendingPathComponent("hooks.json") }
+    public var antigravityDataDirs: [URL] {
+        [".gemini/antigravity", ".gemini/antigravity-cli", ".gemini/antigravity-ide"].map {
+            home.appendingPathComponent($0, isDirectory: true)
+        }
+    }
+
     public var launchAgentsDir: URL { home.appendingPathComponent("Library/LaunchAgents", isDirectory: true) }
     public func launchAgentPlist(label: String = SidePulseConstants.launchAgentLabel) -> URL {
         launchAgentsDir.appendingPathComponent("\(label).plist")

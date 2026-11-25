@@ -9,9 +9,10 @@ mount as FAT volumes and are driven by writing a small DSL to `LEDS.LED`
 ## Scope
 
 In scope:
-- Agent status monitoring through hooks, for **Claude Code**, **Codex** and **OpenCode**.
-  - Hook install and uninstall, including Codex trust hashes and the OpenCode
-    plugin (OpenCode has no hook settings).
+- Agent status monitoring through hooks, for **Claude Code**, **Codex**, **OpenCode** and **Antigravity**.
+  - Hook install and uninstall, including Codex trust hashes, the OpenCode
+    plugin (OpenCode has no hook settings), and the Antigravity `"sidepulse"`
+    hook in `~/.gemini/config/hooks.json`.
   - Removal of Python-era hooks.
   - `doctor`.
 - The full status state machine from the Python collector:
@@ -66,7 +67,7 @@ Out of scope (dropped on purpose):
 ## Processes
 
 ```
-agent (claude/codex) ──hook──▶ sidepulse hook-log --provider P ; true
+agent (claude/codex/antigravity) ──hook──▶ sidepulse hook-log --provider P ; true
                                   │ 1. append trimmed JSON line to logs/P.jsonl
                                   │ 2. send {"provider","line"} to events.sock (0.2 s timeout)
                                   ▼
@@ -173,14 +174,16 @@ always agree. `SIDEPULSE_HOME` overrides the root; tests use it. A relative
 working directory. Agent config locations follow the agent's own overrides:
 `CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex, and
 `OPENCODE_CONFIG_DIR`, then `XDG_CONFIG_HOME/opencode`, then
-`~/.config/opencode` for OpenCode (plugin: `plugins/sidepulse.js`). An app
+`~/.config/opencode` for OpenCode (plugin: `plugins/sidepulse.js`). Antigravity
+reads global hooks from `~/.gemini/config/hooks.json`. An app
 started by launchd does not see a variable exported only in a shell, so it then
 uses the default location.
 
 Files under the root (`~/Library/Application Support/SidePulse/`):
 - `settings.json`
 - `latest.json`
-- `logs/claude.jsonl`, `logs/codex.jsonl` and `logs/opencode.jsonl` (rotated at
+- `logs/claude.jsonl`, `logs/codex.jsonl`, `logs/opencode.jsonl` and
+  `logs/antigravity.jsonl` (rotated at
   8 MB to `.1`). The hook's append never blocks: it refuses anything but a
   regular file, skips a rotation when another process holds the log's `flock`,
   and starts on a new line when an interrupted write left the last one
@@ -357,7 +360,7 @@ Foundation, Core Graphics, Core Text and ImageIO, no AppKit.
 | Status | `SidePulseCore/Status/*` | models, `EventParser`, `ModeClassifier`, `DisplayNames`, `StatusEngine`, `SnapshotBuilder`, `LatestStore`, `LogScanner`, `CodexSessionIndex` |
 | LED | `SidePulseCore/LED/*` | `LedText`, `DeviceDiscovery`, `LedWriter`, `KeepaliveReader`, `AnimationLibrary`, `AnimationProfiles`, `LedProgram`, `AgentLedController`; `Firmware.swift`: `DeviceStatusFile` (uncached `STATUS.TXT` reads), `FirmwareInfo`, `FirmwareWriter` |
 | Settings | `SidePulseCore/Settings/*` | `SidePulseSettings` (tolerant JSON), `SettingsStore` (locked update) |
-| Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
+| Hooks | `SidePulseCore/Hooks/*` | installers (Claude JSON, Codex TOML text, Antigravity `hooks.json`, the OpenCode plugin generated from a JS template in `OpenCodePluginInstaller`), `HookInstaller.perform` (install/uninstall dispatch shared by the CLI and the app), `CodexTrust`, `HookDoctor`, `HookRuntime`, `OriginDetector`, `HookLogStore` |
 | IPC | `SidePulseCore/IPC/*` | `IPCMessage`, `EventSocketClient`, `EventSocketServer` (accept-order delivery) |
 | System | `SidePulseCore/System/{Power,SleepWatcher,LaunchAgent,SDEjectGuardRule,CLILink}.swift` | battery, keep-awake policy and `ProcessInfo` activity (`KeepAwakeAssertion`), sleep, wake and lid notifications (`SystemSleepWatcher`), launchd, the eject guard's card match, the `~/.local/bin/sidepulse` link (`CLILink`, `ShellPATH`, `ShellProfile`) |
 | Runtime | `SidePulseCore/Runtime/*` | `LedSyncService`, `SidePulseRuntime` |
@@ -376,7 +379,8 @@ fast.
 - Tests use XCTest (`swift test`), in `SidePulseCoreTests`, `SidePulseCLITests`
   and `SidePulseStreamDeckTests`.
 - Tests never modify the real `~/.claude`, `~/.codex`, `~/.config/opencode`,
-  `~/Library/LaunchAgents` or `~/Library/Application Support/SidePulse` (a few legacy-hook tests read
+  `~/.gemini/config/hooks.json`, `~/Library/LaunchAgents` or
+  `~/Library/Application Support/SidePulse` (a few legacy-hook tests read
   copies of the real agent configs). Use a temporary directory with
   `SidePulsePaths(environment: [...], home: tmp)` and `SIDEPULSE_HOME`.
 - The hook path never writes to stdout and always exits 0.

@@ -17,7 +17,7 @@ public enum ModeClassifier {
             return .toolRunning
         case "PostToolUse":
             return toolFailed(raw: raw) ? .blockedError : .working
-        case "UserPromptSubmit", "PreCompact", "PostCompact", "SubagentStart":
+        case "UserPromptSubmit", "PreInvocation", "PostInvocation", "PreCompact", "PostCompact", "SubagentStart":
             return .working
         case "Stop", "SubagentStop", "SessionEnd":
             return .completed

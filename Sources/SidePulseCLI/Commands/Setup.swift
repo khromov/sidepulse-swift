@@ -6,7 +6,7 @@ import SidePulseCore
 enum SetupCommand: CLICommand {
     static let spec = CommandSpec(
         name: "setup",
-        synopsis: "[claude|codex|opencode|all]... [--no-app] [--dry-run] [--no-trust]",
+        synopsis: "[claude|codex|opencode|antigravity|all]... [--no-app] [--dry-run] [--no-trust]",
         summary: "Install agent hooks and start the menu-bar app",
         details: "Installs hooks for the detected agents (or the named ones) and installs the\n"
             + "SidePulse app LaunchAgent (starts at login).",
@@ -41,7 +41,7 @@ enum SetupCommand: CLICommand {
             env.stdout.line("Setup finished with errors (see above). Run 'sidepulse doctor' for details.")
         } else if providers.isEmpty {
             env.stdout.line("SidePulse is not set up yet: no agent hooks were installed. Install Claude Code, "
-                + "Codex or OpenCode, then run 'sidepulse setup' again (or name the agent: 'sidepulse setup claude').")
+                + "Codex, OpenCode or Antigravity, then run 'sidepulse setup' again (or name the agent: 'sidepulse setup claude').")
             return app == .installed ? ExitCode.ok : ExitCode.failure
         } else if app == .notFound {
             env.stdout.line("Hooks are installed, but the SidePulse app was not found, so nothing shows their "

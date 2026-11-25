@@ -4,11 +4,11 @@ import SidePulseCore
 enum UninstallCommand: CLICommand {
     static let spec = CommandSpec(
         name: "uninstall",
-        synopsis: "[claude|codex|opencode|all]... [--dry-run]",
+        synopsis: "[claude|codex|opencode|antigravity|all]... [--dry-run]",
         summary: "Remove agent hooks",
-        details: "Removes SidePulse hooks (including Python-era ones) from ~/.claude/settings.json\n"
-            + "and ~/.codex/config.toml, and deletes the SidePulse OpenCode plugin. Other hooks\n"
-            + "are left untouched.",
+        details: "Removes SidePulse hooks (including Python-era ones) from ~/.claude/settings.json,\n"
+            + "~/.codex/config.toml and ~/.gemini/config/hooks.json, and deletes the SidePulse\n"
+            + "OpenCode plugin. Other hooks are left untouched.",
         positionals: ProviderSelection.positionals,
         options: [OptionSpec("dry-run", help: "show what would change without writing")]
     )

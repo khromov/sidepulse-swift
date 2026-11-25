@@ -6,12 +6,14 @@ import SidePulseCore
 enum InstallCommand: CLICommand {
     static let spec = CommandSpec(
         name: "install",
-        synopsis: "[claude|codex|opencode|all]... [--dry-run] [--no-trust]",
-        summary: "Install agent hooks (Claude Code, Codex, OpenCode)",
+        synopsis: "[claude|codex|opencode|antigravity|all]... [--dry-run] [--no-trust]",
+        summary: "Install agent hooks (Claude Code, Codex, OpenCode, Antigravity)",
         details: "Without a provider, installs hooks for each agent that looks installed\n"
-            + "(~/.claude, ~/.codex, ~/.config/opencode or an opencode binary).\n"
+            + "(~/.claude, ~/.codex, ~/.config/opencode or an opencode binary,\n"
+            + "~/.gemini/antigravity* or an agy binary).\n"
             + "Python-era SidePulse hooks are replaced. OpenCode gets the SidePulse plugin\n"
-            + "~/.config/opencode/plugins/sidepulse.js.",
+            + "~/.config/opencode/plugins/sidepulse.js, and Antigravity gets a sidepulse\n"
+            + "hook in ~/.gemini/config/hooks.json.",
         positionals: ProviderSelection.positionals,
         options: [
             OptionSpec("dry-run", help: "show what would change without writing"),
@@ -68,8 +70,9 @@ enum ProviderSelection {
     static let positionals = PositionalSpec(name: "provider", maxCount: HookProvider.allCases.count + 1,
                                             choices: HookProvider.allCases.map(\.rawValue) + ["all"])
 
-    static let noAgentsMessage = "No Claude Code (~/.claude), Codex (~/.codex) or OpenCode (~/.config/opencode) found, "
-        + "so no hooks were installed. Install an agent first, or name it explicitly (sidepulse install claude)."
+    static let noAgentsMessage = "No Claude Code (~/.claude), Codex (~/.codex), OpenCode (~/.config/opencode) or "
+        + "Antigravity (~/.gemini/antigravity*) found, so no hooks were installed. Install an agent first, or name "
+        + "it explicitly (sidepulse install claude)."
 
     static func resolve(_ names: [String], paths: SidePulsePaths, defaultToDetected: Bool) -> [HookProvider] {
         if names.contains("all") { return HookProvider.allCases }

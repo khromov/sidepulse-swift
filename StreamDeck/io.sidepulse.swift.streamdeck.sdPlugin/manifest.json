@@ -4,7 +4,7 @@
   "Name": "SidePulse Swift",
   "Version": "1.0.0.0",
   "Author": "Stanislav Khromov",
-  "Description": "Shows whether your Claude Code, Codex and OpenCode agents are working, finished or waiting for you, on a Stream Deck key. Needs the free SidePulse Swift app for macOS.",
+  "Description": "Shows whether your Claude Code, Codex, OpenCode and Antigravity agents are working, finished or waiting for you, on a Stream Deck key. Needs the free SidePulse Swift app for macOS.",
   "URL": "https://github.com/khromov/sidepulse-swift",
   "SupportURL": "https://github.com/khromov/sidepulse-swift/issues",
   "Icon": "imgs/plugin/icon",

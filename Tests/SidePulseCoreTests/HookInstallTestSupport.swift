@@ -61,6 +61,7 @@ enum HookInstallTestData {
     static let cli = "/Users/tester/.local/bin/sidepulse"
     static var claudeCommand: String { HookCommand.command(cliPath: cli, provider: .claude) }
     static var codexCommand: String { HookCommand.command(cliPath: cli, provider: .codex) }
+    static var antigravityCommand: String { HookCommand.command(cliPath: cli, provider: .antigravity) }
 
     /// A SidePulse command in any shape but the one written today, i.e. a Python-era hook.
     static func isPythonEra(_ command: String) -> Bool {

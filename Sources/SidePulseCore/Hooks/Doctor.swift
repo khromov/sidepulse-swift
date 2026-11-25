@@ -96,6 +96,23 @@ public enum HookDoctor {
             if info.error == nil, cli.map({ text != OpenCodePluginInstaller.source(cliPath: $0) }) ?? true {
                 info.error = OpenCodePluginInstaller.outdatedProblem
             }
+        case .antigravity:
+            if !ClaudeHookInstaller.isBlank(text) {
+                do {
+                    guard case .object = try JSONValue.parse(text) else {
+                        info.error = "the top level is not a JSON object"
+                        info.hooksEnabled = false
+                        return info
+                    }
+                } catch {
+                    info.error = String(describing: error)
+                    info.hooksEnabled = false
+                    return info
+                }
+            }
+            info.hooksEnabled = !AntigravityHookInstaller.hooksDisabled(in: text)
+            info.installedEvents = AntigravityHookInstaller.installedEvents(in: text)
+            info.hookCLIPaths = AntigravityHookInstaller.hookCLIPaths(in: text)
         }
         info.missingEvents = provider.events.filter { !info.installedEvents.contains($0) }
         // `install` writes an explicit $SIDEPULSE_CLI_PATH as is, so only its existence is checked.
@@ -155,6 +172,9 @@ public enum HookDoctor {
                 case .claude: lines.append("  hooks feature: disabled (\"disableAllHooks\": true, so Claude Code runs no hooks)")
                 case .codex: lines.append("  hooks feature: disabled ([features] turns hooks off, so Codex runs no hooks)")
                 case .opencode: break
+                case .antigravity:
+                    lines.append("  hooks feature: disabled (\"enabled\": false on \"\(AntigravityHookInstaller.hookName)\", "
+                        + "so Antigravity runs no SidePulse hooks)")
                 }
             }
             lines += info.notes.map { "  note: \($0)" }

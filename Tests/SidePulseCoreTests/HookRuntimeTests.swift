@@ -332,6 +332,7 @@ final class HookRuntimeRunTests: XCTestCase {
         XCTAssertEqual(HookRuntime.providerArgument(["--provider", "claude"]), .claude)
         XCTAssertEqual(HookRuntime.providerArgument(["--provider=codex"]), .codex)
         XCTAssertEqual(HookRuntime.providerArgument(["hook-log", "--provider", "opencode"]), .opencode)
+        XCTAssertEqual(HookRuntime.providerArgument(["hook-log", "--provider", "antigravity"]), .antigravity)
         XCTAssertEqual(HookRuntime.providerArgument(["--provider", "CODEX"]), .codex)
         XCTAssertEqual(HookRuntime.providerArgument(["hook-log", "--provider", "claude", "--log", "/tmp/x.jsonl", "--event", "Stop"]), .claude)
         XCTAssertEqual(HookRuntime.providerArgument(["--unknown", "--provider", "codex", "--verbose"]), .codex)
@@ -750,6 +751,7 @@ final class HookRuntimeOriginTests: XCTestCase {
     func testVSCodeEnvironment() {
         XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "vscode"]), "Claude in VS Code")
         XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": " VSCode "]), "Codex in VS Code")
+        XCTAssertEqual(detect(.antigravity, ["TERM_PROGRAM": "vscode"]), "Antigravity IDE")
         XCTAssertEqual(detect(.claude, ["VSCODE_PID": "1"]), "Claude in VS Code")
         XCTAssertEqual(detect(.claude, ["VSCODE_GIT_IPC_HANDLE": "x", "TERM_PROGRAM": "iTerm.app"]), "Claude in VS Code")
     }
@@ -758,6 +760,7 @@ final class HookRuntimeOriginTests: XCTestCase {
         XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.chat"]), "Codex UI")
         XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.openai.codex", "TERM": "xterm-256color"]), "Codex UI")
         XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.anthropic.claudefordesktop"]), "Claude App")
+        XCTAssertEqual(detect(.antigravity, ["__CFBundleIdentifier": "com.google.antigravity"]), "Antigravity App")
         // A bundle that is not the agent's own falls through to the next rules.
         XCTAssertEqual(detect(.claude, ["__CFBundleIdentifier": "com.openai.chat", "TERM_PROGRAM": "ghostty"]), "Claude Code CLI")
         XCTAssertEqual(detect(.codex, ["__CFBundleIdentifier": "com.apple.Terminal"]), "Codex")
@@ -766,16 +769,19 @@ final class HookRuntimeOriginTests: XCTestCase {
     func testTerminalAndUnknown() {
         XCTAssertEqual(detect(.claude, ["TERM_PROGRAM": "Apple_Terminal"]), "Claude Code CLI")
         XCTAssertEqual(detect(.codex, ["TERM_PROGRAM": "iTerm.app"]), "Codex CLI")
+        XCTAssertEqual(detect(.antigravity, ["TERM_PROGRAM": "iTerm.app"]), "Antigravity CLI")
         XCTAssertEqual(detect(.claude, ["TERM": "xterm-256color"]), "Claude Code CLI", "tmux and ssh set only TERM")
         XCTAssertEqual(detect(.claude), "Claude", "no terminal, such as a launchd job")
         XCTAssertEqual(detect(.codex, ["TERM": " "]), "Codex")
         XCTAssertEqual(detect(.opencode, ["TERM_PROGRAM": "ghostty"]), "OpenCode")
+        XCTAssertEqual(detect(.antigravity), "Antigravity")
     }
 
     func testAllLabels() {
         let expected: [HookProvider: [String]] = [
             .claude: ["Claude App", "Claude Code CLI", "Claude in VS Code"],
             .codex: ["Codex UI", "Codex CLI", "Codex in VS Code"],
+            .antigravity: ["Antigravity App", "Antigravity CLI", "Antigravity IDE"],
         ]
         for (provider, labels) in expected {
             XCTAssertEqual(OriginDetector.Surface.allCases.map { OriginDetector.label(provider: provider, surface: $0) }, labels)

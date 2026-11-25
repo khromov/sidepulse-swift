@@ -3,8 +3,8 @@ import Foundation
 /// Reads the records `HookRuntime.makeRecord` writes.
 public enum EventParser {
     public static let knownEvents: [String] = [
-        "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest",
-        "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop", "Interrupt",
+        "SessionStart", "UserPromptSubmit", "PreInvocation", "PostInvocation", "PreToolUse", "PostToolUse",
+        "PermissionRequest", "PreCompact", "PostCompact", "SubagentStart", "SubagentStop", "Stop", "Interrupt",
         "PostToolUseFailure", "Notification", "SessionEnd", "StopFailure",
     ]
 

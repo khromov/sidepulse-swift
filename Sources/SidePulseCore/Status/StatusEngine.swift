@@ -166,7 +166,7 @@ public final class StatusEngine {
         if event.provider == "codex", let sessionID = event.sessionID, let title = codexSessionTitle(sessionID) {
             return EventTitle(text: title, overrides: true)
         }
-        guard event.eventName == "UserPromptSubmit",
+        guard event.eventName == "UserPromptSubmit" || event.eventName == "PreInvocation",
               let summary = DisplayNames.summarizePrompt(event.raw["prompt"]?.stringValue) else { return nil }
         return EventTitle(text: summary, overrides: false)
     }
@@ -387,7 +387,8 @@ public enum SnapshotBuilder {
         var stale: [AgentStatus] = []
         for original in statuses {
             var status = original
-            if status.mode == .working, status.eventName == "PostToolUse", status.age(now: now) > postToolWorkingVisible {
+            if status.mode == .working, status.eventName == "PostToolUse" || status.eventName == "PostInvocation",
+               status.age(now: now) > postToolWorkingVisible {
                 status.mode = .completed
             }
             status.stale = isStale(status, config: config, now: now)

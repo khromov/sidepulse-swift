@@ -55,6 +55,8 @@ final class PresentationStreamDeckTileTests: XCTestCase {
                        StreamDeckTile(glyph: .working, heading: "Claude Code", label: "Working", detail: "1 active"))
         XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: .opencode, config: config),
                        StreamDeckTile(glyph: .idle, heading: "OpenCode", label: "Idle"))
+        XCTAssertEqual(StreamDeckTilePresentation.tile(snapshot: shared, provider: .antigravity, config: config),
+                       StreamDeckTile(glyph: .idle, heading: "Antigravity", label: "Idle"))
     }
 
     func testProviderKeyUsesTheConfiguredStaleness() {
@@ -66,6 +68,7 @@ final class PresentationStreamDeckTileTests: XCTestCase {
 
     func testProviderSetting() {
         XCTAssertEqual(StreamDeckTilePresentation.provider(fromSetting: "codex"), .codex)
+        XCTAssertEqual(StreamDeckTilePresentation.provider(fromSetting: "antigravity"), .antigravity)
         XCTAssertNil(StreamDeckTilePresentation.provider(fromSetting: "all"))
         XCTAssertNil(StreamDeckTilePresentation.provider(fromSetting: "cursor"))
         XCTAssertNil(StreamDeckTilePresentation.provider(fromSetting: nil))

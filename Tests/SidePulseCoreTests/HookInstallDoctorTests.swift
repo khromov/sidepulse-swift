@@ -7,7 +7,7 @@ final class HookInstallDoctorTests: XCTestCase {
     func testEmptyHome() throws {
         let box = try HookInstallSandbox()
         let infos = HookDoctor.inspectAll(paths: box.paths)
-        XCTAssertEqual(infos.map(\.provider), [.claude, .codex, .opencode])
+        XCTAssertEqual(infos.map(\.provider), [.claude, .codex, .opencode, .antigravity])
         for info in infos {
             XCTAssertFalse(info.configExists)
             XCTAssertFalse(info.agentDetected)
@@ -19,6 +19,7 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertTrue(infos[0].hooksEnabled)
         XCTAssertFalse(infos[1].hooksEnabled)
         XCTAssertTrue(infos[2].hooksEnabled)
+        XCTAssertTrue(infos[3].hooksEnabled)
         XCTAssertEqual(HookDoctor.renderText(infos), """
         claude:
           config: \(box.paths.claudeSettingsFile.path) (missing)
@@ -32,6 +33,10 @@ final class HookInstallDoctorTests: XCTestCase {
           config: \(box.paths.openCodePluginFile.path) (missing)
           hooks: not installed
           log: \(box.paths.logFile(for: "opencode").path) (missing)
+        antigravity:
+          config: \(box.paths.antigravityHooksFile.path) (missing)
+          hooks: not installed
+          log: \(box.paths.logFile(for: "antigravity").path) (missing)
         """)
     }
 
@@ -41,6 +46,7 @@ final class HookInstallDoctorTests: XCTestCase {
         _ = try ClaudeHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
         _ = try CodexHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false, trust: false)
         _ = try OpenCodePluginInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
+        _ = try AntigravityHookInstaller.install(paths: box.paths, cliPath: cli, dryRun: false)
         try box.trustCodexHooks()
         try box.write("", to: box.paths.logFile(for: "claude"))
         let infos = HookDoctor.inspectAll(paths: box.paths)
@@ -48,7 +54,8 @@ final class HookInstallDoctorTests: XCTestCase {
         XCTAssertTrue(infos.allSatisfy(\.agentDetected))
         XCTAssertEqual(infos[1].installedEvents, HookProvider.codex.events)
         XCTAssertEqual(infos[2].installedEvents, HookProvider.opencode.events)
-        XCTAssertEqual(infos.map(\.hookCLIPaths), [[cli], [cli], [cli]])
+        XCTAssertEqual(infos[3].installedEvents, HookProvider.antigravity.events)
+        XCTAssertEqual(infos.map(\.hookCLIPaths), [[cli], [cli], [cli], [cli]])
         XCTAssertEqual(HookDoctor.renderText(infos), """
         claude:
           config: \(box.paths.claudeSettingsFile.path) (found)
@@ -66,6 +73,11 @@ final class HookInstallDoctorTests: XCTestCase {
           hooks: installed (14/14 events)
           hook cli: \(cli) (ok)
           log: \(box.paths.logFile(for: "opencode").path) (missing)
+        antigravity:
+          config: \(box.paths.antigravityHooksFile.path) (found)
+          hooks: installed (6/6 events)
+          hook cli: \(cli) (ok)
+          log: \(box.paths.logFile(for: "antigravity").path) (missing)
         """)
 
         let json = HookDoctor.renderJSON(infos)
@@ -274,7 +286,7 @@ final class HookInstallDoctorTests: XCTestCase {
         try box.write(HookInstallFixtures.pythonClaudeSettings, to: box.paths.claudeSettingsFile)
         try box.write(HookInstallFixtures.pythonCodexConfigReinstalled, to: box.paths.codexConfigFile)
         let infos = HookDoctor.inspectAll(paths: box.paths)
-        XCTAssertEqual(infos.map(\.installedEvents), [[], [], []])
+        XCTAssertEqual(infos.map(\.installedEvents), [[], [], [], []])
         XCTAssertTrue(infos[1].hooksEnabled)
     }
 }
